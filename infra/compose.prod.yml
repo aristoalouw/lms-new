@@ -8,6 +8,7 @@ services:
       dockerfile: infra/Dockerfile
       args:
         APP_VERSION: ${APP_VERSION:-development}
+        APP_FEATURE_PROFILE: ${APP_FEATURE_PROFILE:?Set APP_FEATURE_PROFILE}
     env_file:
       - ../.env.production
     environment:

@@ -4,6 +4,8 @@ FROM node:22.23.1-bookworm-slim AS build
 
 WORKDIR /app
 
+ARG APP_FEATURE_PROFILE=lms-mvp
+
 # Keeping dependency installation in its own layer makes production builds
 # reproducible as long as package-lock.json is committed.
 COPY package.json package-lock.json ./
@@ -26,20 +28,25 @@ COPY public ./public
 COPY server ./server
 COPY shared ./shared
 COPY types ./types
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    APP_FEATURE_PROFILE=${APP_FEATURE_PROFILE}
 RUN npm run build
 
 FROM node:22.23.1-bookworm-slim AS runtime
 
 ARG APP_VERSION=development
+ARG APP_FEATURE_PROFILE=lms-mvp
+ARG SOURCE_URL
 
 ENV NODE_ENV=production \
     NITRO_HOST=0.0.0.0 \
     NITRO_PORT=3000 \
-    APP_VERSION=${APP_VERSION}
+    APP_VERSION=${APP_VERSION} \
+    APP_FEATURE_PROFILE=${APP_FEATURE_PROFILE}
 
 LABEL org.opencontainers.image.title="Nusa Campus" \
-      org.opencontainers.image.version=${APP_VERSION}
+      org.opencontainers.image.version=${APP_VERSION} \
+      org.opencontainers.image.source=${SOURCE_URL}
 
 WORKDIR /app
 

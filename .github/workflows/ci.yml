@@ -48,3 +48,99 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  container-smoke:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      APP_IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build immutable LMS image
+        run: |
+          docker build \
+            --build-arg APP_VERSION="${GITHUB_SHA}" \
+            --build-arg APP_FEATURE_PROFILE=lms-mvp \
+            --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --file infra/Dockerfile \
+            --tag "${APP_IMAGE}" \
+            .
+      - name: Start Nitro and Nginx
+        run: |
+          set -euo pipefail
+          mkdir -p .ci-tls
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+            -keyout .ci-tls/privkey.pem \
+            -out .ci-tls/fullchain.pem \
+            -days 1 \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+          sudo cp .ci-tls/fullchain.pem /usr/local/share/ca-certificates/lms-ci.crt
+          sudo update-ca-certificates
+          docker network create lms-ci
+          docker run --detach --name app --network lms-ci \
+            --env NODE_ENV=production \
+            --env APP_VERSION="${GITHUB_SHA}" \
+            --env APP_FEATURE_PROFILE=lms-mvp \
+            --env CAMPUS_DATA_MODE=mock \
+            --env ALLOW_PRODUCTION_MOCK=true \
+            --env ENABLE_DEMO_AUTH=false \
+            --env NUXT_PUBLIC_DEMO_MODE=false \
+            "${APP_IMAGE}"
+          for attempt in {1..30}; do
+            if [ "$(docker inspect --format '{{.State.Health.Status}}' app)" = healthy ]; then
+              break
+            fi
+            if [ "$attempt" = 30 ]; then
+              docker logs app
+              exit 1
+            fi
+            sleep 2
+          done
+          docker run --detach --name nginx --network lms-ci \
+            --publish 8080:80 \
+            --publish 8443:443 \
+            --env SERVER_NAME=localhost \
+            --env NGINX_ENVSUBST_FILTER=SERVER_NAME \
+            --volume "$PWD/infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            --volume "$PWD/infra/nginx/conf.d/campus.conf:/etc/nginx/templates/default.conf.template:ro" \
+            --volume "$PWD/.ci-tls/fullchain.pem:/etc/nginx/tls/fullchain.pem:ro" \
+            --volume "$PWD/.ci-tls/privkey.pem:/etc/nginx/tls/privkey.pem:ro" \
+            nginx:1.30.4-alpine
+          for attempt in {1..30}; do
+            if curl --silent --show-error --fail --cacert .ci-tls/fullchain.pem https://localhost:8443/nginx-health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 30 ]; then
+              docker logs nginx
+              exit 1
+            fi
+            sleep 1
+          done
+          docker exec nginx nginx -t
+          redirect_status="$(curl --silent --output /dev/null --write-out '%{http_code}' http://localhost:8080/login)"
+          test "$redirect_status" = 308
+          pwsh -NoProfile -File scripts/smoke-production.ps1 -BaseUrl https://localhost:8443
+      - name: Publish immutable image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+          docker push "${APP_IMAGE}"
+          image_digest="$(docker image inspect --format '{{index .RepoDigests 0}}' "${APP_IMAGE}")"
+          printf 'Published image: `%s`\n' "$image_digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Collect container logs
+        if: failure()
+        run: |
+          docker logs app 2>&1 || true
+          docker logs nginx 2>&1 || true
+      - name: Remove smoke containers
+        if: always()
+        run: |
+          docker rm --force nginx app 2>/dev/null || true
+          docker network rm lms-ci 2>/dev/null || true

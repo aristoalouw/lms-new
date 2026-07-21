@@ -1,0 +1,859 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "krs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "advisorId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "krs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentId", "order": "ASCENDING" },
+        { "fieldPath": "periodId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "krs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentUid", "order": "ASCENDING" },
+        { "fieldPath": "periodId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "issuedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "payments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "invoiceId", "order": "ASCENDING" },
+        { "fieldPath": "recordedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "billingPaymentProofs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "billingInvoiceAdjustments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "invoiceId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "billingInstallmentPlans",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "invoiceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "billingDepositTransactions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicLeaveRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicLeaveRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentId", "order": "ASCENDING" },
+        { "fieldPath": "submittedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicAdvisingSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "advisorId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicAdvisingSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicRpsVersions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicTheses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicMbkmActivities",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentId", "order": "ASCENDING" },
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicMbkmActivities",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicGradeRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentId", "order": "ASCENDING" },
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "courseCode", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiSyncJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiSyncJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiSyncJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiSyncJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiSyncJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "leaseExpiresAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiReconciliations",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiSourceRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "periodId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiEntityMappings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiStudentDataChanges",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "auditLogs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "resource.type", "order": "ASCENDING" },
+        { "fieldPath": "resource.id", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "fileVersions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fileId", "order": "ASCENDING" },
+        { "fieldPath": "version", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "fileUploadSessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdBy", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "expiresAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dataset", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dataset", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "dataset", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "importRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "dataset", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "paymentGatewayEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "provider", "order": "ASCENDING" },
+        { "fieldPath": "receivedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "paymentGatewayEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "provider", "order": "ASCENDING" },
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "receivedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "paymentGatewayEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "provider", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "receivedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "paymentGatewayEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "provider", "order": "ASCENDING" },
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "receivedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "waveId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "waveId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "waveId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "waveId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionDocuments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "applicationId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionDocuments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "emailOutbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "emailOutbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "leaseExpiresAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "evaluationForms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "evaluationFormVersions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "formId", "order": "ASCENDING" },
+        { "fieldPath": "version", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "evaluationPeriods",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "opensAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "classEnrollments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "studentUid", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "auditLogs",
+      "fieldPath": "before",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "auditLogs",
+      "fieldPath": "after",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "idempotencyKeys",
+      "fieldPath": "response",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "emailOutbox",
+      "fieldPath": "textBody",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "inAppNotifications",
+      "fieldPath": "body",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "fieldPath": "identityFingerprint",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "fieldPath": "reviewNotes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "admissionDocuments",
+      "fieldPath": "reviewNote",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "evaluationResponses",
+      "fieldPath": "answers",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "evaluationIdempotency",
+      "fieldPath": "response",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationPeriods",
+      "fieldPath": "currentRequirements",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationPeriods",
+      "fieldPath": "requirementHistory",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationEligibilitySnapshots",
+      "fieldPath": "academic",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationApplications",
+      "fieldPath": "eligibilitySnapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationApplications",
+      "fieldPath": "eligibilityEvaluation",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationApplications",
+      "fieldPath": "history",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationParticipants",
+      "fieldPath": "history",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationDocumentTemplates",
+      "fieldPath": "layout",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "issuedGraduationDocuments",
+      "fieldPath": "templateSnapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "issuedGraduationDocuments",
+      "fieldPath": "renderPayload",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "issuedGraduationDocuments",
+      "fieldPath": "history",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "graduationIdempotency",
+      "fieldPath": "response",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "krs",
+      "fieldPath": "classSelections",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicClasses",
+      "fieldPath": "schedule",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicClasses",
+      "fieldPath": "rosterStudentIds",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "studentAcademicStates",
+      "fieldPath": "completedCourseCodes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "studentAcademicStates",
+      "fieldPath": "holds",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tracerQuestionnaireVersions",
+      "fieldPath": "questions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tracerDistributionPeriods",
+      "fieldPath": "consentNotice",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tracerOpaqueTokens",
+      "fieldPath": "tokenHash",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tracerResponses",
+      "fieldPath": "answers",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tracerResponses",
+      "fieldPath": "career",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tracerConsents",
+      "fieldPath": "noticeSnapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "tracerStudyIdempotency",
+      "fieldPath": "response",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "studentPortfolio",
+      "fieldPath": "evidence",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "studentPointPolicies",
+      "fieldPath": "rules",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "studentCases",
+      "fieldPath": "evidence",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "studentCases",
+      "fieldPath": "staffNotes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "studentCases",
+      "fieldPath": "resolution",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "scholarshipPrograms",
+      "fieldPath": "checklist",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "scholarshipApplications",
+      "fieldPath": "eligibilitySnapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "activeStudentLetterRequests",
+      "fieldPath": "eligibilitySnapshot",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "activeStudentLetterIssuances",
+      "fieldPath": "file",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "admissionSelectionScores",
+      "fieldPath": "components",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "admissionApplicationSchedules",
+      "fieldPath": "sessions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "admissionSelectionIdempotency",
+      "fieldPath": "response",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "billingTariffPlans",
+      "fieldPath": "applicability",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "billingTariffPlans",
+      "fieldPath": "components",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "invoices",
+      "fieldPath": "lineItems",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "billingInstallmentPlans",
+      "fieldPath": "schedules",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "pddiktiSourceRecords",
+      "fieldPath": "data",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "pddiktiJobPayloads",
+      "fieldPath": "records",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "pddiktiReconciliations",
+      "fieldPath": "rows",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "pddiktiStudentDataChanges",
+      "fieldPath": "changes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "pddiktiStudentDataChanges",
+      "fieldPath": "evidenceFileIds",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "learningMaterials",
+      "fieldPath": "content",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "learningAssignments",
+      "fieldPath": "instructions",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "learningSubmissions",
+      "fieldPath": "draftContent",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "learningSubmissionAttempts",
+      "fieldPath": "content",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "learningGrades",
+      "fieldPath": "feedback",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicStudentProfiles",
+      "fieldPath": "statusHistory",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicRpsVersions",
+      "fieldPath": "description",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicRpsVersions",
+      "fieldPath": "courseLearningOutcomes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicRpsVersions",
+      "fieldPath": "sections",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicRpsVersions",
+      "fieldPath": "assessmentWeights",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicTheses",
+      "fieldPath": "abstract",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicTheses",
+      "fieldPath": "guidance",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicMbkmActivities",
+      "fieldPath": "logbook",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicMbkmActivities",
+      "fieldPath": "evaluation",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "academicMbkmActivities",
+      "fieldPath": "conversions",
+      "indexes": []
+    }
+  ]
+}

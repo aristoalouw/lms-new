@@ -1,0 +1,50 @@
+# Dependencies and generated Nuxt output
+node_modules/
+.nuxt/
+.output/
+.nitro/
+dist/
+coverage/
+
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*service-account*.json
+*firebase-admin*.json
+credentials*.json
+secrets/
+infra/secrets/
+
+# Backup, restore, import, and operational output
+backups/
+recovery-report-*.json
+import-report-*.json
+*.export_metadata
+
+# Logs and runtime data
+*.log
+logs/
+.firebase/
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Test and local tooling
+.cache/
+.eslintcache
+playwright-report/
+test-results/

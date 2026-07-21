@@ -1,0 +1,704 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasRole(role) {
+      return signedIn()
+        && request.auth.token.roles is list
+        && role in request.auth.token.roles;
+    }
+
+    function isAdmin() {
+      return hasRole('administrator');
+    }
+
+    function hasProgramScope(programStudyId) {
+      return isAdmin()
+        || (signedIn()
+          && request.auth.token.scope is map
+          && request.auth.token.scope.programStudyIds is list
+          && programStudyId in request.auth.token.scope.programStudyIds);
+    }
+
+    function hasStudentScope(studentId) {
+      return isAdmin()
+        || (signedIn()
+          && request.auth.token.scope is map
+          && request.auth.token.scope.studentIds is list
+          && studentId in request.auth.token.scope.studentIds);
+    }
+
+    function isAcademicReader(data) {
+      return hasRole('leader')
+        || (hasRole('academic_staff') && hasProgramScope(data.programStudyId))
+        || (hasRole('student_affairs_staff') && hasProgramScope(data.programStudyId));
+    }
+
+    function isFinanceReader(data) {
+      return hasRole('leader')
+        || (hasRole('finance_staff') && hasProgramScope(data.programStudyId));
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin()
+        || (signedIn()
+          && request.auth.uid == userId
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'phone', 'photoURL', 'updatedAt']));
+    }
+
+    match /students/{studentId} {
+      allow read: if signedIn()
+        && (resource.data.userUid == request.auth.uid
+          || hasStudentScope(studentId)
+          || isAcademicReader(resource.data)
+          || isFinanceReader(resource.data));
+      allow write: if false;
+    }
+
+    match /krs/{krsId} {
+      allow read: if signedIn()
+        && (resource.data.studentUid == request.auth.uid
+          || resource.data.advisorId == request.auth.uid
+          || isAcademicReader(resource.data));
+      // Status transitions and credit validation are transactionally enforced by the Nuxt server.
+      allow write: if false;
+    }
+
+    match /invoices/{invoiceId} {
+      allow read: if signedIn()
+        && (resource.data.studentUid == request.auth.uid || isFinanceReader(resource.data));
+      allow write: if false;
+    }
+
+    match /payments/{paymentId} {
+      allow read: if signedIn()
+        && (resource.data.studentUid == request.auth.uid || isFinanceReader(resource.data));
+      allow write: if false;
+    }
+
+    match /pddiktiSyncJobs/{jobId} {
+      allow read: if hasRole('leader')
+        || isAdmin()
+        || (hasRole('academic_staff') && hasProgramScope(resource.data.programStudyId));
+      allow write: if false;
+    }
+
+    // PDDIKTI source projections, frozen payloads, mapping definitions,
+    // adapter results, worker leases, and reconciliation decisions are
+    // validated and scoped by the server. Direct client access could bypass
+    // eligibility, contract-version, or no-overwrite reconciliation controls.
+    match /pddiktiSourceRecords/{recordId} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiMappingDefinitions/{definitionId} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiMappingPointers/{entityType} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiJobPayloads/{jobId} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiBatchResults/{resultId} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiEntityMappings/{mappingId} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiReconciliations/{reconciliationId} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiWorkerRuns/{runId} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiStudentDataChanges/{changeId} {
+      allow read, write: if false;
+    }
+
+    match /pddiktiStudentDataChangeKeys/{studentKey} {
+      allow read, write: if false;
+    }
+
+    match /auditLogs/{auditId} {
+      allow read: if hasRole('leader') || isAdmin();
+      // Audit entries are append-only and written exclusively through Firebase Admin.
+      allow create, update, delete: if false;
+    }
+
+    match /dashboardSnapshots/{snapshotId} {
+      // Snapshots combine sections with different classifications; the server filters them per role.
+      allow read, write: if false;
+    }
+
+    match /idempotencyKeys/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /paymentReferences/{referenceId} {
+      allow read, write: if false;
+    }
+
+    // Account lifecycle, uniqueness, recovery idempotency, and distributed
+    // rate limiting are enforced transactionally by the Nuxt server.
+    match /accounts/{accountId} {
+      allow read, write: if false;
+    }
+
+    match /accountEmailIndex/{emailHash} {
+      allow read, write: if false;
+    }
+
+    match /rateLimitBuckets/{bucketId} {
+      allow read, write: if false;
+    }
+
+    // Import previews contain row-level validation details and mutation
+    // ledgers. They must never be queried or changed directly by clients.
+    match /importRuns/{runId} {
+      allow read, write: if false;
+    }
+
+    match /importRuns/{runId}/{privateDocument=**} {
+      allow read, write: if false;
+    }
+
+    match /paymentGatewayEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /paymentReversalReferences/{referenceId} {
+      allow read, write: if false;
+    }
+
+    // Billing tariff snapshots, invoice keys, adjustments, installment
+    // schedules, deposits, vouchers, and proof-review state are mutated only
+    // through transactional server workflows. Invoice/payment summaries above
+    // remain the only narrowly client-readable finance documents.
+    match /billingStudentProfiles/{studentId} {
+      allow read, write: if false;
+    }
+
+    match /billingTariffPlans/{planId} {
+      allow read, write: if false;
+    }
+
+    match /billingTariffPlanHeads/{logicalId} {
+      allow read, write: if false;
+    }
+
+    match /billingCounters/{counterId} {
+      allow read, write: if false;
+    }
+
+    match /billingInvoiceKeys/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /billingInvoiceAdjustments/{adjustmentId} {
+      allow read, write: if false;
+    }
+
+    match /billingInstallmentPlans/{planId} {
+      allow read, write: if false;
+    }
+
+    match /billingInstallmentKeys/{invoiceId} {
+      allow read, write: if false;
+    }
+
+    match /billingDepositAccounts/{studentId} {
+      allow read, write: if false;
+    }
+
+    match /billingDepositTransactions/{transactionId} {
+      allow read, write: if false;
+    }
+
+    match /billingDepositReferences/{referenceId} {
+      allow read, write: if false;
+    }
+
+    match /billingVouchers/{voucherId} {
+      allow read, write: if false;
+    }
+
+    match /billingVoucherRedemptions/{redemptionId} {
+      allow read, write: if false;
+    }
+
+    match /billingVoucherRedemptionKeys/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /billingPaymentProofs/{proofId} {
+      allow read, write: if false;
+    }
+
+    match /billingPaymentProofReferences/{referenceId} {
+      allow read, write: if false;
+    }
+
+    // Notification content, delivery state, and service tickets are filtered
+    // by recipient, requester, role, and program scope on the server.
+    match /notificationTemplates/{templateId} {
+      allow read, write: if false;
+    }
+
+    match /notificationPreferences/{userId} {
+      allow read, write: if false;
+    }
+
+    match /inAppNotifications/{notificationId} {
+      allow read, write: if false;
+    }
+
+    match /emailOutbox/{messageId} {
+      allow read, write: if false;
+    }
+
+    match /communicationIdempotency/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /serviceTickets/{ticketId} {
+      allow read, write: if false;
+    }
+
+    match /serviceTickets/{ticketId}/{privateDocument=**} {
+      allow read, write: if false;
+    }
+
+    // PMB contains applicant PII, identity fingerprints, financial validation,
+    // and enrollment saga state. All views are redacted/scoped by the server.
+    match /admissionApplications/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /admissionIdempotency/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /admissionRegistrationNumbers/{numberId} {
+      allow read, write: if false;
+    }
+
+    match /admissionIdentityIndex/{identityHash} {
+      allow read, write: if false;
+    }
+
+    match /admissionPaymentReferences/{referenceHash} {
+      allow read, write: if false;
+    }
+
+    match /admissionDocuments/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /admissionDocumentKeys/{documentKey} {
+      allow read, write: if false;
+    }
+
+    match /studentNumberSequences/{sequenceId} {
+      allow read, write: if false;
+    }
+
+    match /admissionSelectionSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /admissionSelectionAssignments/{assignmentId} {
+      allow read, write: if false;
+    }
+
+    match /admissionSelectionScores/{scoreId} {
+      allow read, write: if false;
+    }
+
+    match /admissionApplicationSchedules/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /admissionLetters/{letterId} {
+      allow read, write: if false;
+    }
+
+    match /admissionLetterAssignments/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /admissionLetterCounters/{counterId} {
+      allow read, write: if false;
+    }
+
+    match /admissionSelectionIdempotency/{keyId} {
+      allow read, write: if false;
+    }
+
+    // Rosters, QR challenges/nonces, unpublished grades, and publication
+    // snapshots are only exposed through role- and ownership-aware APIs.
+    match /academicClasses/{classId} {
+      allow read, write: if false;
+    }
+
+    match /academicClasses/{classId}/{privateDocument=**} {
+      allow read, write: if false;
+    }
+
+    match /studentAcademicStates/{studentId} {
+      allow read, write: if false;
+    }
+
+    match /academicPeriods/{periodId} {
+      allow read, write: if false;
+    }
+
+    // Academic master versions, histories, leave decisions, confidential
+    // advising notes, manual RPS snapshots, thesis guidance, MBKM logbooks,
+    // and published-grade projections are all scoped and redacted by APIs.
+    match /academicProgramStudies/{programStudyId} {
+      allow read, write: if false;
+    }
+
+    match /academicPeriodDefinitions/{periodId} {
+      allow read, write: if false;
+    }
+
+    match /academicCourseVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /academicCourseHeads/{courseId} {
+      allow read, write: if false;
+    }
+
+    match /academicCurriculumVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /academicCurriculumHeads/{curriculumId} {
+      allow read, write: if false;
+    }
+
+    match /academicStudentProfiles/{studentId} {
+      allow read, write: if false;
+    }
+
+    match /academicCalendarEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /academicLeaveRequests/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /academicLeaveKeys/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /academicAdvisingSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /academicRpsHeads/{rpsId} {
+      allow read, write: if false;
+    }
+
+    match /academicRpsVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /academicTheses/{thesisId} {
+      allow read, write: if false;
+    }
+
+    match /academicMbkmActivities/{activityId} {
+      allow read, write: if false;
+    }
+
+    match /academicMbkmKeys/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /academicGradeRecords/{recordId} {
+      allow read, write: if false;
+    }
+
+    // LMS definitions, private submission drafts, immutable attempts, grades,
+    // forum moderation state, and opt-in activity points are only exposed by
+    // membership-aware server APIs.
+    match /learningSpaces/{spaceId} {
+      allow read, write: if false;
+    }
+
+    match /learningModules/{moduleId} {
+      allow read, write: if false;
+    }
+
+    match /learningModuleVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /learningMaterials/{materialId} {
+      allow read, write: if false;
+    }
+
+    match /learningMaterialVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /learningAssignments/{assignmentId} {
+      allow read, write: if false;
+    }
+
+    match /learningAssignmentVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /learningSubmissions/{submissionId} {
+      allow read, write: if false;
+    }
+
+    match /learningSubmissionAttempts/{attemptId} {
+      allow read, write: if false;
+    }
+
+    match /learningGrades/{gradeId} {
+      allow read, write: if false;
+    }
+
+    match /learningAnnouncements/{announcementId} {
+      allow read, write: if false;
+    }
+
+    match /learningForumThreads/{threadId} {
+      allow read, write: if false;
+    }
+
+    match /learningForumPosts/{postId} {
+      allow read, write: if false;
+    }
+
+    match /learningGamificationPreferences/{preferenceId} {
+      allow read, write: if false;
+    }
+
+    match /learningActivityEvents/{eventId} {
+      allow read, write: if false;
+    }
+
+    match /learningIdempotency/{keyId} {
+      allow read, write: if false;
+    }
+
+    // Evaluation eligibility identities are deliberately separated from
+    // anonymous answers; neither side is directly readable by clients.
+    match /evaluationForms/{formId} {
+      allow read, write: if false;
+    }
+
+    match /evaluationFormVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /evaluationPeriods/{periodId} {
+      allow read, write: if false;
+    }
+
+    match /evaluationResponses/{responseId} {
+      allow read, write: if false;
+    }
+
+    match /evaluationRespondentIdentities/{identityId} {
+      allow read, write: if false;
+    }
+
+    match /evaluationIdempotency/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /classEnrollments/{enrollmentId} {
+      allow read, write: if false;
+    }
+
+    // Graduation eligibility snapshots contain cross-domain academic, finance,
+    // library, and student-affairs state. Approval assignments, counters,
+    // templates, and issued-document history are server-only so that dual
+    // control, immutable numbering, and revocation rules cannot be bypassed.
+    match /graduationPeriods/{periodId} {
+      allow read, write: if false;
+    }
+
+    match /graduationEligibilitySnapshots/{snapshotId} {
+      allow read, write: if false;
+    }
+
+    match /graduationApplications/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /graduationApplicationAssignments/{assignmentId} {
+      allow read, write: if false;
+    }
+
+    match /graduationParticipants/{participantId} {
+      allow read, write: if false;
+    }
+
+    match /graduationDocumentTemplates/{templateId} {
+      allow read, write: if false;
+    }
+
+    match /issuedGraduationDocuments/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /graduationDocumentCounters/{counterId} {
+      allow read, write: if false;
+    }
+
+    match /graduationDocumentAssignments/{assignmentId} {
+      allow read, write: if false;
+    }
+
+    match /graduationIdempotency/{keyId} {
+      allow read, write: if false;
+    }
+
+    // Tracer identity, consent, opaque-token, delivery, and response records
+    // are separated server-side. Browser access would enable respondent
+    // re-identification or campaign tampering, so every collection is API-only.
+    match /tracerQuestionnaires/{questionnaireId} {
+      allow read, write: if false;
+    }
+
+    match /tracerQuestionnaireVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /tracerDistributionPeriods/{periodId} {
+      allow read, write: if false;
+    }
+
+    match /tracerAlumniProfiles/{profileId} {
+      allow read, write: if false;
+    }
+
+    match /tracerRecipients/{recipientId} {
+      allow read, write: if false;
+    }
+
+    match /tracerOpaqueTokens/{tokenId} {
+      allow read, write: if false;
+    }
+
+    match /tracerResponses/{responseId} {
+      allow read, write: if false;
+    }
+
+    match /tracerConsents/{consentId} {
+      allow read, write: if false;
+    }
+
+    match /tracerCampaigns/{campaignId} {
+      allow read, write: if false;
+    }
+
+    match /tracerDeliveries/{deliveryId} {
+      allow read, write: if false;
+    }
+
+    match /tracerStudyIdempotency/{keyId} {
+      allow read, write: if false;
+    }
+
+    // Student-affairs portfolios, disciplinary due-process notes, scholarship
+    // snapshots, point ledgers, and official-letter counters are redacted and
+    // authorized by the server. Direct browser access could bypass immutable
+    // ledger and staff-note separation guarantees.
+    match /studentAffairsProfiles/{studentId} {
+      allow read, write: if false;
+    }
+
+    match /studentPortfolio/{recordId} {
+      allow read, write: if false;
+    }
+
+    match /studentPointPolicies/{programStudyId} {
+      allow read, write: if false;
+    }
+
+    match /studentPointLedger/{entryId} {
+      allow read, write: if false;
+    }
+
+    match /studentCases/{caseId} {
+      allow read, write: if false;
+    }
+
+    match /scholarshipPrograms/{programId} {
+      allow read, write: if false;
+    }
+
+    match /scholarshipApplications/{applicationId} {
+      allow read, write: if false;
+    }
+
+    match /studentRequirementDocuments/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /activeStudentLetterRequests/{requestId} {
+      allow read, write: if false;
+    }
+
+    match /activeStudentLetterIssuances/{issuanceId} {
+      allow read, write: if false;
+    }
+
+    match /studentAffairsCounters/{counterId} {
+      allow read, write: if false;
+    }
+
+    // Metadata, quota, and upload-state for private files are server-authorized.
+    // Clients only receive short-lived signed object URLs after the Nuxt server
+    // verifies ownership/scope and appends an audit entry.
+    match /files/{fileId} {
+      allow read, write: if false;
+    }
+
+    match /fileVersions/{versionId} {
+      allow read, write: if false;
+    }
+
+    match /fileUploadSessions/{sessionId} {
+      allow read, write: if false;
+    }
+
+    match /fileQuotas/{userId} {
+      allow read, write: if false;
+    }
+
+    match /publicContent/{contentId} {
+      allow read: if resource.data.status == 'PUBLISHED';
+      allow write: if hasRole('admissions_staff') || isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

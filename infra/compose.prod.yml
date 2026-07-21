@@ -1,0 +1,113 @@
+name: campus-platform
+
+services:
+  app:
+    image: ${APP_IMAGE:-campus-platform:local}
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-development}
+    env_file:
+      - ../.env.production
+    environment:
+      NODE_ENV: production
+      APP_VERSION: ${APP_VERSION:?Set APP_VERSION}
+      NITRO_HOST: 0.0.0.0
+      NITRO_PORT: "3000"
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/firebase-admin.json
+    secrets:
+      - firebase_admin
+    expose:
+      - "3000"
+    init: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.5
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    networks:
+      - private
+
+  nginx:
+    image: nginx:1.30.4-alpine
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SERVER_NAME: ${SERVER_NAME:?Set SERVER_NAME}
+      NGINX_ENVSUBST_FILTER: SERVER_NAME
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d/campus.conf:/etc/nginx/templates/default.conf.template:ro
+      - type: bind
+        source: ${TLS_FULLCHAIN_FILE:?Set TLS_FULLCHAIN_FILE}
+        target: /etc/nginx/tls/fullchain.pem
+        read_only: true
+      - type: bind
+        source: ${TLS_PRIVATE_KEY_FILE:?Set TLS_PRIVATE_KEY_FILE}
+        target: /etc/nginx/tls/privkey.pem
+        read_only: true
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /etc/nginx/conf.d:size=1m,mode=0755
+      - /var/cache/nginx:size=128m,mode=0755
+      - /var/run:size=8m,mode=0755
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - wget --quiet --no-check-certificate --spider https://127.0.0.1/nginx-health || exit 1
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging: *default-logging
+    networks:
+      - private
+
+secrets:
+  firebase_admin:
+    file: ${FIREBASE_ADMIN_CREDENTIALS_FILE:?Set FIREBASE_ADMIN_CREDENTIALS_FILE}
+
+networks:
+  private:
+    driver: bridge
+    internal: false

@@ -1,0 +1,51 @@
+{
+  "name": "nusa-campus",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Platform sistem informasi kampus terpadu berbasis Nuxt, Vue, Bootstrap, dan Firebase.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0 <25"
+  },
+  "scripts": {
+    "dev": "nuxt dev",
+    "build": "node --max-old-space-size=8192 ./node_modules/nuxt/bin/nuxt.mjs build",
+    "generate": "nuxt generate",
+    "preview": "nuxt preview",
+    "prepare": "nuxt prepare",
+    "typecheck": "nuxt typecheck",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@popperjs/core": "2.11.8",
+    "@sentry/node": "10.67.0",
+    "@sentry/vue": "10.67.0",
+    "axios": "1.18.1",
+    "bootstrap": "5.3.8",
+    "choices.js": "11.2.3",
+    "core-js": "3.49.0",
+    "firebase": "12.16.0",
+    "firebase-admin": "14.2.0",
+    "jquery": "3.7.1",
+    "lodash": "4.18.1",
+    "moment": "2.30.1",
+    "nuxt": "3.21.9",
+    "quill": "2.0.2",
+    "select2": "4.1.0",
+    "vue": "3.5.40"
+  },
+  "devDependencies": {
+    "@nuxt/webpack-builder": "3.21.9",
+    "@types/jquery": "4.0.1",
+    "@types/lodash": "4.17.24",
+    "@types/node": "24.13.3",
+    "@vue/test-utils": "2.4.11",
+    "happy-dom": "20.11.0",
+    "sass": "1.101.0",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10",
+    "vue-tsc": "3.3.7"
+  }
+}

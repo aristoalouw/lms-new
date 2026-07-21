@@ -1,0 +1,71 @@
+<template>
+  <div class="sidebar-fragment">
+    <div v-if="sidebarOpen" class="sidebar-backdrop" aria-hidden="true" @click="closeSidebar" />
+    <aside class="app-sidebar" :class="{ 'app-sidebar--open': sidebarOpen }" aria-label="Navigasi utama">
+      <div class="app-sidebar__brand">
+        <NuxtLink to="/" class="brand-lockup" aria-label="Nusa Campus — beranda" @click="closeSidebar">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <span class="brand-copy">
+            <strong>Nusa Campus</strong>
+            <small>Sistem terpadu</small>
+          </span>
+        </NuxtLink>
+        <button class="sidebar-close d-lg-none" type="button" aria-label="Tutup navigasi" @click="closeSidebar">
+          <i class="uil uil-times" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div class="semester-context">
+        <span class="semester-context__icon"><i class="uil uil-calendar-alt" aria-hidden="true" /></span>
+        <span class="semester-context__copy">
+          <small>Periode aktif</small>
+          <strong>Genap 2025/2026</strong>
+        </span>
+        <i class="uil uil-angle-down semester-context__chevron" aria-hidden="true" />
+      </div>
+
+      <nav class="app-sidebar__nav">
+        <section v-for="group in visibleNavigation" :key="group.label" class="nav-group">
+          <p class="nav-group__label">{{ group.label }}</p>
+          <NuxtLink
+            v-for="item in group.items"
+            :key="item.to"
+            :to="item.to"
+            class="nav-item"
+            :title="sidebarCompact ? item.label : undefined"
+            @click="closeSidebar"
+          >
+            <i class="uil nav-item__icon" :class="item.icon" aria-hidden="true" />
+            <span class="nav-item__label">{{ item.label }}</span>
+            <span v-if="item.badge" class="nav-item__badge">{{ item.badge }}</span>
+          </NuxtLink>
+        </section>
+      </nav>
+
+      <div class="app-sidebar__footer">
+        <div class="system-status">
+          <span class="system-status__dot" aria-hidden="true" />
+          <span>
+            <strong>Semua layanan normal</strong>
+            <small>Diperiksa 2 menit lalu</small>
+          </span>
+        </div>
+        <button class="compact-toggle d-none d-lg-flex" type="button" :aria-label="sidebarCompact ? 'Perluas navigasi' : 'Ringkas navigasi'" @click="toggleCompact">
+          <i class="uil" :class="sidebarCompact ? 'uil-angle-double-right' : 'uil-angle-double-left'" aria-hidden="true" />
+          <span>Ringkas menu</span>
+        </button>
+      </div>
+    </aside>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { navigation } from '~/config/navigation'
+
+const { sidebarOpen, sidebarCompact, closeSidebar, toggleCompact } = useAppShell()
+const { can } = useAuth()
+
+const visibleNavigation = computed(() => navigation
+  .map(group => ({ ...group, items: group.items.filter(item => can(item.permission)) }))
+  .filter(group => group.items.length))
+</script>

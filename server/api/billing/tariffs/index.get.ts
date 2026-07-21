@@ -1,0 +1,9 @@
+import { getQuery } from 'h3'
+import { listTariffPlans, parseBillingListQuery } from '../../../services/billing'
+import { requireAuth } from '../../../utils/auth'
+import { defineCampusHandler, markPrivateResponse } from '../../../utils/security'
+
+export default defineCampusHandler(async (event) => {
+  markPrivateResponse(event)
+  return listTariffPlans(await requireAuth(event), parseBillingListQuery(getQuery(event)))
+})

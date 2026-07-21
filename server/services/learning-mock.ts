@@ -41,7 +41,7 @@ export interface LearningMockState {
 }
 
 const space: LearningSpace = {
-  id: 'learning-space-class-mgt-401-a', kind: 'ACADEMIC_CLASS', title: 'Manajemen Strategik · Kelas A',
+  id: 'class-mgt-401-a', kind: 'ACADEMIC_CLASS', title: 'Manajemen Strategik · Kelas A',
   description: 'Ruang materi, tugas, pengumuman, dan diskusi kelas Manajemen Strategik.', academicClassId: 'class-mgt-401-a',
   courseCode: 'MGT401', section: 'A', periodId: '2025-2026-2', programStudyId: 'management-s1', unitId: 'faculty-economics',
   lecturerIds: ['advisor-001'], participantUserIds: [], status: 'ACTIVE', gamificationAvailable: true, version: 1,

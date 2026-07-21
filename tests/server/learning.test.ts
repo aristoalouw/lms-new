@@ -17,12 +17,12 @@ import {
   moderateLearningForumThread,
 } from '../../server/services/learning-forum'
 import { learningMockState, resetLearningMockState } from '../../server/services/learning-mock'
-import { finalizeLearningSubmission, gradeLearningSubmission, listLearningAssignmentSubmissions, saveLearningSubmissionDraft } from '../../server/services/learning-submissions'
+import { finalizeLearningSubmission, gradeLearningSubmission, listLearningAssignmentSubmissions, listLearningAssignmentSubmissionsPage, saveLearningSubmissionDraft } from '../../server/services/learning-submissions'
 import { CampusError } from '../../server/utils/errors'
 import { resetMockState } from '../../server/utils/mock-store'
 import { authContext } from './fixtures'
 
-const spaceId = 'learning-space-class-mgt-401-a'
+const spaceId = 'class-mgt-401-a'
 const assignmentId = 'learning-assignment-case-analysis'
 const lecturer = () => authContext('advisor-001', ['lecturer', 'advisor'], ['management-s1'])
 const student = (id = 'student-001') => authContext(id, ['student'], ['management-s1'])
@@ -84,6 +84,25 @@ describe('learning spaces, assignments, submissions, and forums', () => {
     expect(grade.grade).toMatchObject({ attemptId: final.attempt.id, score: 88.5, status: 'PUBLISHED', version: 1 })
     expect((await getLearningSpaceDetail(student(), spaceId)).ownGrades).toEqual([expect.objectContaining({ score: 88.5 })])
     expect((await listLearningAssignmentSubmissions(lecturer(), assignmentId))[0]).toMatchObject({ attempts: [{ id: final.attempt.id }], grade: { score: 88.5 } })
+  })
+
+  it('paginates lecturer submission review with an opaque cursor', async () => {
+    for (const [index, learner] of ['student-001', 'student-002'].entries()) {
+      const draft = await saveLearningSubmissionDraft(student(learner), {
+        assignmentId, expectedVersion: 0,
+        content: { format: 'PLAIN_TEXT', text: `Jawaban halaman ${index + 1}.` }, fileIds: [],
+      }, `learning-page-draft-000${index + 1}`, undefined, openedAt)
+      await finalizeLearningSubmission(student(learner), {
+        assignmentId, expectedVersion: draft.submission.version,
+      }, `learning-page-final-000${index + 1}`, undefined, openedAt)
+    }
+    const first = await listLearningAssignmentSubmissionsPage(lecturer(), assignmentId, { limit: 1 })
+    const second = await listLearningAssignmentSubmissionsPage(lecturer(), assignmentId, { limit: 1, cursor: first.nextCursor })
+    expect(first.items).toHaveLength(1)
+    expect(first.nextCursor).toBeTruthy()
+    expect(second.items).toHaveLength(1)
+    expect(second.items[0]?.submission.id).not.toBe(first.items[0]?.submission.id)
+    expect(second.nextCursor).toBeUndefined()
   })
 
   it('limits forum nesting to two levels and hides moderated content from learners', async () => {

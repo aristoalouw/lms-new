@@ -1,5 +1,5 @@
 import { getRouterParam, getHeader } from 'h3'
-import { getMockUploadLimit, storeMockUploadContent } from '../../../../services/files'
+import { getMockUploadLimit, storeMockUploadContent } from '../../../../modules/files'
 import { requireAuth } from '../../../../utils/auth'
 import { CampusError, invalidInput } from '../../../../utils/errors'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../../utils/security'

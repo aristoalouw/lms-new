@@ -1,9 +1,12 @@
+import type { Feature } from '~/shared/features'
+
 export type NavigationItem = {
   label: string
   to: string
   icon: string
   permission?: string
   badge?: string
+  feature: Feature
 }
 
 export type NavigationGroup = {
@@ -15,36 +18,37 @@ export const navigation: NavigationGroup[] = [
   {
     label: 'Ruang kerja',
     items: [
-      { label: 'Ikhtisar', to: '/', icon: 'uil-grid', permission: 'dashboard.read' },
-      { label: 'Penerimaan', to: '/pmb', icon: 'uil-user-plus', permission: 'pmb.read', badge: '128' },
-      { label: 'Administrasi akademik', to: '/akademik/administrasi', icon: 'uil-book-open', permission: 'academic.read' },
-      { label: 'KRS', to: '/akademik/krs', icon: 'uil-clipboard-alt', permission: 'academic.read' },
-      { label: 'Pelaksanaan kelas', to: '/akademik/kelas', icon: 'uil-presentation-check', permission: 'academic.read' },
-      { label: 'Pembelajaran', to: '/pembelajaran', icon: 'uil-presentation-play', permission: 'learning.read' },
-      { label: 'Keuangan', to: '/keuangan', icon: 'uil-receipt', permission: 'finance.read' },
-      { label: 'Rekonsiliasi', to: '/keuangan/rekonsiliasi', icon: 'uil-exchange', permission: 'finance.write' },
-      { label: 'PDDIKTI', to: '/pddikti', icon: 'uil-sync', permission: 'pddikti.read', badge: '12' },
+      { label: 'Ikhtisar', to: '/', icon: 'uil-grid', permission: 'dashboard.read', feature: 'dashboard' },
+      { label: 'Kelas & enrolment', to: '/admin/kelas', icon: 'uil-presentation-check', permission: 'classes:manage', feature: 'classes' },
+      { label: 'Penerimaan', to: '/pmb', icon: 'uil-user-plus', permission: 'pmb.read', badge: '128', feature: 'admissions' },
+      { label: 'Administrasi akademik', to: '/akademik/administrasi', icon: 'uil-book-open', permission: 'academic.read', feature: 'academic-admin' },
+      { label: 'KRS', to: '/akademik/krs', icon: 'uil-clipboard-alt', permission: 'academic.read', feature: 'krs' },
+      { label: 'Pelaksanaan kelas', to: '/akademik/kelas', icon: 'uil-presentation-check', permission: 'academic.read', feature: 'academic-admin' },
+      { label: 'Pembelajaran', to: '/pembelajaran', icon: 'uil-presentation-play', permission: 'learning.read', feature: 'learning' },
+      { label: 'Keuangan', to: '/keuangan', icon: 'uil-receipt', permission: 'finance.read', feature: 'finance' },
+      { label: 'Rekonsiliasi', to: '/keuangan/rekonsiliasi', icon: 'uil-exchange', permission: 'finance.write', feature: 'finance' },
+      { label: 'PDDIKTI', to: '/pddikti', icon: 'uil-sync', permission: 'pddikti.read', badge: '12', feature: 'pddikti' },
     ],
   },
   {
     label: 'Layanan kampus',
     items: [
-      { label: 'Kemahasiswaan', to: '/kemahasiswaan', icon: 'uil-award', permission: 'student_affairs.read' },
-      { label: 'Evaluasi dosen', to: '/evaluasi', icon: 'uil-favorite', permission: 'evaluation.read' },
-      { label: 'Kelulusan', to: '/kelulusan', icon: 'uil-graduation-cap', permission: 'graduation.read' },
-      { label: 'Tracer study', to: '/tracer-study', icon: 'uil-chart-growth', permission: 'tracer.read' },
-      { label: 'Tata usaha', to: '/layanan', icon: 'uil-file-check-alt', permission: 'service.read', badge: '8' },
+      { label: 'Kemahasiswaan', to: '/kemahasiswaan', icon: 'uil-award', permission: 'student_affairs.read', feature: 'student-affairs' },
+      { label: 'Evaluasi dosen', to: '/evaluasi', icon: 'uil-favorite', permission: 'evaluation.read', feature: 'evaluation' },
+      { label: 'Kelulusan', to: '/kelulusan', icon: 'uil-graduation-cap', permission: 'graduation.read', feature: 'graduation' },
+      { label: 'Tracer study', to: '/tracer-study', icon: 'uil-chart-growth', permission: 'tracer.read', feature: 'tracer-study' },
+      { label: 'Tata usaha', to: '/layanan', icon: 'uil-file-check-alt', permission: 'service.read', badge: '8', feature: 'services' },
     ],
   },
   {
     label: 'Sistem',
     items: [
-      { label: 'Notifikasi', to: '/notifikasi', icon: 'uil-bell', permission: 'notification.read' },
-      { label: 'Berkas', to: '/berkas', icon: 'uil-folder-open', permission: 'file.read' },
-      { label: 'Impor data', to: '/impor', icon: 'uil-import', permission: 'academic.write' },
-      { label: 'Pengguna & akses', to: '/pengguna', icon: 'uil-users-alt', permission: 'settings.read' },
-      { label: 'Audit & backup', to: '/modul/audit-backup', icon: 'uil-shield-check', permission: 'audit.read' },
-      { label: 'Pengaturan', to: '/modul/pengaturan', icon: 'uil-setting', permission: 'settings.read' },
+      { label: 'Notifikasi', to: '/notifikasi', icon: 'uil-bell', permission: 'notification.read', feature: 'notifications' },
+      { label: 'Berkas', to: '/berkas', icon: 'uil-folder-open', permission: 'file.read', feature: 'files' },
+      { label: 'Impor data', to: '/impor', icon: 'uil-import', permission: 'academic.write', feature: 'imports' },
+      { label: 'Pengguna & akses', to: '/admin/pengguna', icon: 'uil-users-alt', permission: 'accounts:manage', feature: 'accounts' },
+      { label: 'Audit & backup', to: '/modul/audit-backup', icon: 'uil-shield-check', permission: 'audit.read', feature: 'audit' },
+      { label: 'Pengaturan', to: '/modul/pengaturan', icon: 'uil-setting', permission: 'settings.read', feature: 'accounts' },
     ],
   },
 ]

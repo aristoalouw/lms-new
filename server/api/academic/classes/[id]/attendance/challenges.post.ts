@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { issueAttendanceChallenge } from '../../../../../services/academic-classes'
+import { issueAttendanceChallenge } from '../../../../../modules/attendance'
 import { requireAuth } from '../../../../../utils/auth'
 import { enforceRateLimit, rateLimitSubject } from '../../../../../utils/rate-limit'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../../../utils/security'

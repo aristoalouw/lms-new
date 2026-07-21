@@ -46,7 +46,7 @@ export interface LearningModule {
   title: string
   description?: SafeRichContent
   order: number
-  status: 'DRAFT' | 'PUBLISHED'
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
   currentVersion: number
   version: number
   createdAt: string
@@ -89,7 +89,7 @@ export interface LearningMaterial {
   file?: LearningFileReference
   externalUrl?: string
   order: number
-  status: 'DRAFT' | 'PUBLISHED'
+  status: 'DRAFT' | 'PUBLISHED' | 'ARCHIVED'
   duplicatedFromId?: string
   currentVersion: number
   version: number
@@ -317,7 +317,7 @@ export interface LearningProgressDashboard {
   lateSubmissions: number
   completionPercent: number
   recentActivity: LearningActivityEvent[]
-  gamification: {
+  gamification?: {
     available: boolean
     optedIn: boolean
     preferenceVersion: number
@@ -325,7 +325,7 @@ export interface LearningProgressDashboard {
     rules: LearningGamificationRule[]
     explanation: string
   }
-  method: 'DESCRIPTIVE_ONLY'
+  method?: 'DESCRIPTIVE_ONLY'
 }
 
 export interface LearningPage<T> {

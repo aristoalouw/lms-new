@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { updateLearningGamificationPreference } from '../../../../services/learning-dashboard'
+import { updateLearningGamificationPreference } from '../../../../modules/learning'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../../utils/security'
 import { requireInteger, requireRecord, requireString } from '../../../../utils/validation'

@@ -3,6 +3,7 @@ export default defineNuxtConfig({
   builder: 'webpack',
   ssr: true,
   devtools: { enabled: false },
+  components: [{ path: '~/components', pathPrefix: false }],
   css: [
     'bootstrap/dist/css/bootstrap.min.css',
     'choices.js/public/assets/styles/choices.min.css',
@@ -27,6 +28,7 @@ export default defineNuxtConfig({
     },
   },
   runtimeConfig: {
+    featureProfile: process.env.APP_FEATURE_PROFILE || 'full-campus',
     sessionSecret: process.env.NUXT_SESSION_SECRET || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
     firebaseClientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
@@ -35,7 +37,10 @@ export default defineNuxtConfig({
     neoFeederUsername: process.env.NEO_FEEDER_USERNAME || '',
     neoFeederPassword: process.env.NEO_FEEDER_PASSWORD || '',
     sentryDsn: process.env.SENTRY_DSN || '',
+    sentryEnvironment: process.env.SENTRY_ENVIRONMENT || process.env.NUXT_PUBLIC_APP_ENVIRONMENT || 'development',
+    sentryRelease: process.env.SENTRY_RELEASE || process.env.APP_VERSION || '',
     public: {
+      featureProfile: process.env.APP_FEATURE_PROFILE || 'full-campus',
       appName: process.env.NUXT_PUBLIC_APP_NAME || 'Nusa Campus',
       appEnvironment: process.env.NUXT_PUBLIC_APP_ENVIRONMENT || 'development',
       demoMode: process.env.NODE_ENV !== 'production' && process.env.NUXT_PUBLIC_DEMO_MODE !== 'false',
@@ -47,6 +52,7 @@ export default defineNuxtConfig({
       firebaseMessagingSenderId: process.env.NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '',
       firebaseAppId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID || '',
       sentryDsn: process.env.NUXT_PUBLIC_SENTRY_DSN || '',
+      sentryRelease: process.env.NUXT_PUBLIC_SENTRY_RELEASE || process.env.SENTRY_RELEASE || process.env.APP_VERSION || '',
       analyticsEnabled: process.env.NUXT_PUBLIC_ANALYTICS_ENABLED === 'true',
       analyticsPrivateEnabled: process.env.NUXT_PUBLIC_ANALYTICS_PRIVATE_ENABLED === 'true',
       googleAnalyticsId: process.env.NUXT_PUBLIC_GOOGLE_ANALYTICS_ID || '',
@@ -57,6 +63,11 @@ export default defineNuxtConfig({
   },
   routeRules: {
     '/login': { headers: { 'cache-control': 'no-store, max-age=0' } },
+    '/admin/**': { headers: { 'cache-control': 'no-store, private, max-age=0' } },
+    '/pembelajaran/**': { headers: { 'cache-control': 'no-store, private, max-age=0' } },
+    '/presensi': { headers: { 'cache-control': 'no-store, private, max-age=0' } },
+    '/berkas/**': { headers: { 'cache-control': 'no-store, private, max-age=0' } },
+    '/notifikasi/**': { headers: { 'cache-control': 'no-store, private, max-age=0' } },
     '/api/**': { headers: { 'cache-control': 'no-store, max-age=0' } },
     '/_nuxt/**': { headers: { 'cache-control': 'public, max-age=31536000, immutable' } },
   },

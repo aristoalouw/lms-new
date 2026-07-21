@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { gradeLearningSubmission } from '../../../../services/learning-submissions'
+import { gradeLearningSubmission } from '../../../../modules/learning'
 import type { LearningGrade, SafeRichContent } from '../../../../types/learning'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../../utils/security'

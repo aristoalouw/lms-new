@@ -8,6 +8,8 @@ import { cloneValue, mockState } from '../utils/mock-store'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireRecord, requireString } from '../utils/validation'
+import { LMS_MVP_USER_ROLES } from '../../shared/auth'
+import { normalizeFeatureProfile } from '../../shared/features'
 
 export const ACCOUNT_STATUSES = ['active', 'disabled', 'blocked'] as const
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number]
@@ -245,6 +247,10 @@ function parseRoles(value: unknown): UserRole[] {
     return normalized as UserRole
   })
   if (new Set(roles).size !== roles.length) invalidInput('roles tidak boleh berisi nilai duplikat.')
+  if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp') {
+    const mvpRoles = new Set<UserRole>(LMS_MVP_USER_ROLES)
+    if (roles.some(role => !mvpRoles.has(role))) invalidInput('Profil LMS MVP hanya menerima role student, lecturer, atau administrator.')
+  }
   return roles
 }
 
@@ -591,7 +597,7 @@ export function parseAccountListQuery(value: Record<string, unknown>): AccountLi
     return String(item)
   }
   const page = requireInteger(Number(scalar(value.page, 'page') ?? 1), 'page', 1, 100_000)
-  const pageSize = requireInteger(Number(scalar(value.pageSize, 'pageSize') ?? 20), 'pageSize', 1, 100)
+  const pageSize = requireInteger(Number(scalar(value.pageSize, 'pageSize') ?? 20), 'pageSize', 1, 50)
   const statusValue = scalar(value.status, 'status')
   const roleValue = scalar(value.role, 'role')
   const searchValue = scalar(value.search, 'search')

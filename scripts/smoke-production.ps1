@@ -38,6 +38,7 @@ Require-Header $login "X-Content-Type-Options" "nosniff"
 Require-Header $login "X-Frame-Options" "DENY"
 Require-Header $login "Content-Security-Policy" "default-src"
 Require-Header $login "Cache-Control" "no-store"
+Require-Header $login "X-Request-ID" ""
 
 $health = Invoke-Probe "/api/health"
 if ([int]$health.StatusCode -ne 200) { $failures.Add("Liveness endpoint returned HTTP $([int]$health.StatusCode).") }

@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { saveLearningSubmissionDraft } from '../../../../services/learning-submissions'
+import { saveLearningSubmissionDraft } from '../../../../modules/learning'
 import type { SafeRichContent } from '../../../../types/learning'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../../utils/security'

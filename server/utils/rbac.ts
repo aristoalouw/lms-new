@@ -1,62 +1,14 @@
 import type { AuthContext, Permission, UserRole } from '../types/auth'
 import type { InvoiceRecord, KrsRecord } from '../types/domain'
-import { USER_ROLES } from '../types/auth'
+import { ROLE_PERMISSIONS, normalizeUserRoles, permissionsForRoles } from '../../shared/auth'
 import { forbidden, invalidInput } from './errors'
 
-const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
-  applicant: ['dashboard:view'],
-  student: ['dashboard:view'],
-  lecturer: ['dashboard:view', 'dashboard:view_academic'],
-  advisor: ['dashboard:view', 'dashboard:view_academic', 'krs:approve'],
-  academic_staff: [
-    'dashboard:view',
-    'dashboard:view_academic',
-    'dashboard:view_pddikti',
-    'krs:approve',
-    'pddikti:queue',
-    'pddikti:retry',
-    'pddikti:view',
-  ],
-  finance_staff: ['dashboard:view', 'dashboard:view_finance', 'payments:record'],
-  student_affairs_staff: ['dashboard:view', 'dashboard:view_academic', 'dashboard:view_outcomes'],
-  admissions_staff: ['dashboard:view', 'dashboard:view_admissions'],
-  leader: [
-    'dashboard:view',
-    'dashboard:view_academic',
-    'dashboard:view_finance',
-    'dashboard:view_admissions',
-    'dashboard:view_pddikti',
-    'dashboard:view_outcomes',
-    'dashboard:view_accreditation',
-    'pddikti:view',
-    'audit:view',
-  ],
-  administrator: [
-    'dashboard:view',
-    'dashboard:view_academic',
-    'dashboard:view_finance',
-    'dashboard:view_admissions',
-    'dashboard:view_pddikti',
-    'dashboard:view_outcomes',
-    'dashboard:view_accreditation',
-    'krs:approve',
-    'payments:record',
-    'pddikti:queue',
-    'pddikti:retry',
-    'pddikti:view',
-    'audit:view',
-  ],
-  guardian: ['dashboard:view'],
-}
-
 export function normalizeRoles(value: unknown): UserRole[] {
-  const candidates = Array.isArray(value) ? value : typeof value === 'string' ? [value] : []
-  const allowed = new Set<string>(USER_ROLES)
-  return [...new Set(candidates.filter((role): role is UserRole => typeof role === 'string' && allowed.has(role)))]
+  return normalizeUserRoles(value)
 }
 
 export function permissionsFor(roles: readonly UserRole[]): Permission[] {
-  return [...new Set(roles.flatMap((role) => ROLE_PERMISSIONS[role]))]
+  return permissionsForRoles(roles)
 }
 
 export function hasRole(context: AuthContext, ...roles: UserRole[]): boolean {

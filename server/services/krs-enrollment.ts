@@ -248,7 +248,7 @@ export async function listKrsCatalog(
     student,
     classes: classes.map(classRecord => {
       const missingPrerequisiteCodes = (classRecord.prerequisiteCourseCodes || []).filter(code => !completed.has(code))
-      const used = classRecord.reservedSeatCount ?? classRecord.rosterStudentIds.length
+      const used = classRecord.reservedSeatCount ?? classRecord.rosterStudentIds?.length ?? 0
       return {
         classRecord: structuredClone(classRecord),
         availableSeats: Math.max(0, (classRecord.capacity ?? 0) - used),
@@ -421,14 +421,14 @@ export async function submitKrs(
     for (const classRecord of selection.classes) {
       const reservation = krsModuleState().reservations.get(reservationId(classRecord.id, studentId))
       if (reservation && reservation.planId !== record.id) conflict('SEAT_ALREADY_RESERVED', 'Kursi kelas telah dipesan oleh KRS lain.')
-      const used = classRecord.reservedSeatCount ?? classRecord.rosterStudentIds.length
+      const used = classRecord.reservedSeatCount ?? classRecord.rosterStudentIds?.length ?? 0
       const capacity = classRecord.capacity ?? 0
       if (!reservation && (capacity < 1 || used >= capacity)) conflict('CLASS_FULL', 'Kapasitas kelas telah penuh.', { classId: classRecord.id })
     }
     for (const classRecord of selection.classes) {
       const id = reservationId(classRecord.id, studentId)
       if (!krsModuleState().reservations.has(id)) {
-        krsModuleState().classes.set(classRecord.id, { ...classRecord, reservedSeatCount: (classRecord.reservedSeatCount ?? classRecord.rosterStudentIds.length) + 1, updatedAt: now })
+        krsModuleState().classes.set(classRecord.id, { ...classRecord, reservedSeatCount: (classRecord.reservedSeatCount ?? classRecord.rosterStudentIds?.length ?? 0) + 1, updatedAt: now })
         krsModuleState().reservations.set(id, { id, classId: classRecord.id, studentId, planId: record.id, status: 'RESERVED', createdAt: now, updatedAt: now })
       }
     }
@@ -490,13 +490,13 @@ export async function submitKrs(
       selection.classes.forEach((classRecord, index) => {
         const reservation = reservationSnapshots[index]
         if (reservation?.exists && reservation.data()?.planId !== record.id) conflict('SEAT_ALREADY_RESERVED', 'Kursi kelas telah dipesan oleh KRS lain.')
-        const used = classRecord.reservedSeatCount ?? classRecord.rosterStudentIds.length
+        const used = classRecord.reservedSeatCount ?? classRecord.rosterStudentIds?.length ?? 0
         const capacity = classRecord.capacity ?? 0
         if (!reservation?.exists && (capacity < 1 || used >= capacity)) conflict('CLASS_FULL', 'Kapasitas kelas telah penuh.', { classId: classRecord.id })
       })
       selection.classes.forEach((classRecord, index) => {
         if (!reservationSnapshots[index]?.exists) {
-          transaction.update(classRefs[index]!, { reservedSeatCount: (classRecord.reservedSeatCount ?? classRecord.rosterStudentIds.length) + 1, updatedAt: now })
+          transaction.update(classRefs[index]!, { reservedSeatCount: (classRecord.reservedSeatCount ?? classRecord.rosterStudentIds?.length ?? 0) + 1, updatedAt: now })
           const reservation: KrsSeatReservation = {
             id: studentId, classId: classRecord.id, studentId, planId: record.id,
             status: 'RESERVED', createdAt: now, updatedAt: now,
@@ -557,7 +557,7 @@ export function releaseMockKrsReservations(record: KrsRecord, now: string): void
     if (classRecord) {
       krsModuleState().classes.set(classId, {
         ...classRecord,
-        reservedSeatCount: Math.max(classRecord.rosterStudentIds.length, (classRecord.reservedSeatCount ?? classRecord.rosterStudentIds.length) - 1),
+        reservedSeatCount: Math.max(classRecord.rosterStudentIds?.length ?? 0, (classRecord.reservedSeatCount ?? classRecord.rosterStudentIds?.length ?? 0) - 1),
         updatedAt: now,
       })
     }
@@ -572,8 +572,8 @@ export function enrollMockKrsReservations(record: KrsRecord, now: string): void 
     if (!reservation || reservation.planId !== record.id) continue
     krsModuleState().reservations.set(id, { ...reservation, status: 'ENROLLED', updatedAt: now })
     const classRecord = krsModuleState().classes.get(classId)
-    if (classRecord && !classRecord.rosterStudentIds.includes(record.studentId)) {
-      krsModuleState().classes.set(classId, { ...classRecord, rosterStudentIds: [...classRecord.rosterStudentIds, record.studentId], updatedAt: now })
+    if (classRecord && !(classRecord.rosterStudentIds ?? []).includes(record.studentId)) {
+      krsModuleState().classes.set(classId, { ...classRecord, rosterStudentIds: [...(classRecord.rosterStudentIds ?? []), record.studentId], updatedAt: now })
     }
   }
 }

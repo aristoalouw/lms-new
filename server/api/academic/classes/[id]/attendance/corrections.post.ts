@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { correctAttendance } from '../../../../../services/academic-classes'
+import { correctAttendance } from '../../../../../modules/attendance'
 import { requireAuth } from '../../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../../../utils/security'
 import { requireString } from '../../../../../utils/validation'

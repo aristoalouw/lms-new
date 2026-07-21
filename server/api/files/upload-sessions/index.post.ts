@@ -1,8 +1,8 @@
 import { readBody } from 'h3'
-import { createFileUploadSession } from '../../../services/files'
+import { createFileUploadSession } from '../../../modules/files'
 import type { FileAccessPolicy } from '../../../types/files'
 import { requireAuth } from '../../../utils/auth'
-import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../utils/security'
+import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../utils/security'
 import { optionalString, requireInteger, requireRecord, requireString } from '../../../utils/validation'
 
 export default defineCampusHandler(async (event) => {
@@ -17,5 +17,5 @@ export default defineCampusHandler(async (event) => {
     declaredMimeType: requireString(body.declaredMimeType, 'declaredMimeType', { max: 80 }),
     sizeBytes: requireInteger(body.sizeBytes, 'sizeBytes', 1, 25 * 1024 * 1024),
     access,
-  }, event)
+  }, requireIdempotencyKey(event), event)
 })

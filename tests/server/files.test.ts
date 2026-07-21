@@ -21,6 +21,8 @@ import {
 import { resetFileStorageForTests } from '../../server/services/files-storage'
 import { CampusError } from '../../server/utils/errors'
 import { resetMockState } from '../../server/utils/mock-store'
+import { resetAcademicClassStateForTests, updateClassEnrollment } from '../../server/services/academic-classes'
+import { resetLearningMockState } from '../../server/services/learning-mock'
 import { authContext } from './fixtures'
 
 function bytes(value: string): Uint8Array {
@@ -46,6 +48,8 @@ describe('private file management', () => {
     process.env.CAMPUS_DATA_MODE = 'mock'
     delete process.env.FILE_QUOTA_BYTES
     resetMockState()
+    resetAcademicClassStateForTests()
+    resetLearningMockState()
     resetFileServiceForTests()
     resetFileStorageForTests()
     configureMalwareScanner(new DevelopmentSignatureScanner())
@@ -69,6 +73,41 @@ describe('private file management', () => {
 
     const actions = (await import('../../server/utils/mock-store')).mockState().auditEntries.map(entry => entry.action)
     expect(actions).toEqual(expect.arrayContaining(['FILE_UPLOAD_RESERVED', 'FILE_QUARANTINED', 'FILE_ACCEPTED']))
+  })
+
+  it('replays an upload reservation by idempotency key without double-reserving quota', async () => {
+    const owner = authContext('student-owner', ['student'])
+    const input = { name: 'Materi kelas.pdf', declaredMimeType: 'application/pdf', sizeBytes: cleanPdf.byteLength }
+    const first = await createFileUploadSession(owner, input, 'file-upload-idem-0001')
+    const replay = await createFileUploadSession(owner, input, 'file-upload-idem-0001')
+
+    expect(replay.session.id).toBe(first.session.id)
+    expect(replay.file.id).toBe(first.file.id)
+    expect(replay.quota.reservedBytes).toBe(cleanPdf.byteLength)
+    expect(fileMockStateForTests().sessions.size).toBe(1)
+    await expect(createFileUploadSession(owner, { ...input, name: 'File berbeda.pdf' }, 'file-upload-idem-0001'))
+      .rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' } satisfies Partial<CampusError>)
+  })
+
+  it('revalidates class membership on every class-scoped download, including for the owner', async () => {
+    const owner = authContext('student-001', ['student'], ['management-s1'])
+    owner.scope.studentIds = ['student-001']
+    const created = await createFileUploadSession(owner, {
+      name: 'Tugas kelas.pdf', declaredMimeType: 'application/pdf', sizeBytes: cleanPdf.byteLength,
+      access: {
+        visibility: 'SCOPED', allowedRoles: ['student', 'lecturer'], allowedUserIds: [],
+        unitIds: [], programStudyIds: [], studentIds: [], learningSpaceIds: ['class-mgt-401-a'],
+      },
+    })
+    await storeMockUploadContent(owner, created.session.id, cleanPdf, 'application/pdf')
+    await finalizeFileUpload(owner, created.session.id)
+    await expect(issuePrivateFileDownload(owner, created.file.id)).resolves.toMatchObject({ fileName: 'Tugas kelas.pdf' })
+
+    await updateClassEnrollment(authContext('admin-001', ['administrator'], []), 'class-mgt-401-a', 'student-001', {
+      status: 'WITHDRAWN', reason: 'Akses ditarik untuk pengujian membership terbaru.', expectedVersion: 1,
+    }, 'file-membership-withdraw-0001')
+    await expect(issuePrivateFileDownload(owner, created.file.id))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
   })
 
   it('rejects extension/MIME mismatch before reserving quota', async () => {

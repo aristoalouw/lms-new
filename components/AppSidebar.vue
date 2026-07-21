@@ -64,8 +64,9 @@ import { navigation } from '~/config/navigation'
 
 const { sidebarOpen, sidebarCompact, closeSidebar, toggleCompact } = useAppShell()
 const { can } = useAuth()
+const { enabled } = useFeatureFlags()
 
 const visibleNavigation = computed(() => navigation
-  .map(group => ({ ...group, items: group.items.filter(item => can(item.permission)) }))
+  .map(group => ({ ...group, items: group.items.filter(item => enabled(item.feature) && can(item.permission)) }))
   .filter(group => group.items.length))
 </script>

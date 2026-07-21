@@ -7,9 +7,11 @@ import {
   type H3Event,
 } from 'h3'
 import { DEMO_PROFILES } from '../data/mock-data'
-import type { AccessScope, AuthContext, PublicSession } from '../types/auth'
+import type { AccessScope, AuthContext, PublicSession, UserRole } from '../types/auth'
 import { CampusError, forbidden } from './errors'
 import { authAdmin } from './firebase-admin'
+import { LMS_MVP_USER_ROLES, permissionsForRole } from '../../shared/auth'
+import { normalizeFeatureProfile } from '../../shared/features'
 import { normalizeRoles, permissionsFor } from './rbac'
 
 export const SESSION_COOKIE_NAME = 'campus_session'
@@ -60,6 +62,14 @@ function signedDemoToken(context: AuthContext): string {
   return `demo.${encoded}.${sign(encoded)}`
 }
 
+export function contextForFeatureProfile(context: AuthContext): AuthContext {
+  if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) !== 'lms-mvp') return context
+  const allowed = new Set<UserRole>(LMS_MVP_USER_ROLES)
+  const roles = context.roles.filter(role => allowed.has(role))
+  if (!roles.length) forbidden('Akun tidak memiliki role yang tersedia pada profil aplikasi ini.')
+  return roles.length === context.roles.length ? context : { ...context, roles }
+}
+
 export function verifyDemoSessionToken(token: string): AuthContext | null {
   if (!isDemoAuthEnabled()) return null
   const [prefix, encoded, signature] = token.split('.')
@@ -72,7 +82,7 @@ export function verifyDemoSessionToken(token: string): AuthContext | null {
     const roles = normalizeRoles(value.roles)
     if (!value.uid || !value.displayName || value.provider !== 'demo' || !value.expiresAt || value.expiresAt <= Date.now()) return null
     if (!roles.length) return null
-    return {
+    return contextForFeatureProfile({
       uid: String(value.uid).slice(0, 128),
       email: typeof value.email === 'string' ? value.email.slice(0, 254) : undefined,
       displayName: String(value.displayName).slice(0, 150),
@@ -81,7 +91,7 @@ export function verifyDemoSessionToken(token: string): AuthContext | null {
       provider: 'demo',
       issuedAt: Number(value.issuedAt) || Date.now(),
       expiresAt: Number(value.expiresAt),
-    }
+    })
   } catch {
     return null
   }
@@ -91,7 +101,7 @@ export function createDemoSession(profileId: string, now = Date.now()): { contex
   if (!isDemoAuthEnabled()) forbidden('Autentikasi demo tidak tersedia.')
   const profile = DEMO_PROFILES.find((item) => item.profileId === profileId)
   if (!profile) throw new CampusError(400, 'UNKNOWN_DEMO_PROFILE', 'Profil demo tidak valid.')
-  const context: AuthContext = {
+  const context = contextForFeatureProfile({
     uid: profile.uid,
     email: profile.email,
     displayName: profile.displayName,
@@ -100,7 +110,7 @@ export function createDemoSession(profileId: string, now = Date.now()): { contex
     provider: 'demo',
     issuedAt: now,
     expiresAt: now + SESSION_DURATION_MS,
-  }
+  })
   return { context, token: signedDemoToken(context) }
 }
 
@@ -126,7 +136,7 @@ export async function authenticate(event: H3Event): Promise<AuthContext | null> 
   const admin = authAdmin()
   if (cookie && admin) {
     try {
-      return firebaseContext(await admin.verifySessionCookie(cookie, true) as unknown as Record<string, unknown>)
+      return contextForFeatureProfile(firebaseContext(await admin.verifySessionCookie(cookie, true) as unknown as Record<string, unknown>))
     } catch {
       return null
     }
@@ -136,7 +146,7 @@ export async function authenticate(event: H3Event): Promise<AuthContext | null> 
   const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]
   if (bearer && admin) {
     try {
-      return firebaseContext(await admin.verifyIdToken(bearer, true) as unknown as Record<string, unknown>)
+      return contextForFeatureProfile(firebaseContext(await admin.verifyIdToken(bearer, true) as unknown as Record<string, unknown>))
     } catch {
       return null
     }
@@ -162,7 +172,7 @@ export async function createFirebaseSession(
   } catch {
     throw new CampusError(401, 'INVALID_ID_TOKEN', 'Token identitas tidak valid.')
   }
-  const context = firebaseContext({ ...decoded, exp: Math.floor((Date.now() + SESSION_DURATION_MS) / 1000) })
+  const context = contextForFeatureProfile(firebaseContext({ ...decoded, exp: Math.floor((Date.now() + SESSION_DURATION_MS) / 1000) }))
   await options.onVerified?.(context)
   const authTime = Number(decoded.auth_time) * 1000
   if (!authTime || Date.now() - authTime > 5 * 60 * 1000) {
@@ -192,19 +202,25 @@ export function clearSessionCookie(event: H3Event): void {
 }
 
 export function publicSession(context: AuthContext): PublicSession {
+  const roles = [...contextForFeatureProfile(context).roles]
   return {
     uid: context.uid,
     email: context.email,
     displayName: context.displayName,
-    roles: [...context.roles],
+    roles,
     scope: structuredClone(context.scope),
     provider: context.provider,
     expiresAt: new Date(context.expiresAt).toISOString(),
-    permissions: permissionsFor(context.roles),
+    permissions: permissionsFor(roles),
+    rolePermissions: Object.fromEntries(roles.map(role => [role, permissionsForRole(role)])),
   }
 }
 
 export function availableDemoProfiles(): Array<{ id: string; label: string; roles: string[] }> {
   if (!isDemoAuthEnabled()) return []
-  return DEMO_PROFILES.map((profile) => ({ id: profile.profileId, label: profile.label, roles: [...profile.roles] }))
+  const allowed = new Set<UserRole>(LMS_MVP_USER_ROLES)
+  return DEMO_PROFILES
+    .map(profile => ({ ...profile, roles: normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp' ? profile.roles.filter(role => allowed.has(role)) : [...profile.roles] }))
+    .filter(profile => profile.roles.length > 0)
+    .map(profile => ({ id: profile.profileId, label: profile.label, roles: [...profile.roles] }))
 }

@@ -1,15 +1,6 @@
-export type UserRole =
-  | 'applicant'
-  | 'administrator'
-  | 'leader'
-  | 'academic_staff'
-  | 'finance_staff'
-  | 'admissions_staff'
-  | 'student_affairs_staff'
-  | 'lecturer'
-  | 'advisor'
-  | 'student'
-  | 'guardian'
+import type { Permission, UserRole } from '../shared/auth'
+
+export type { UserRole } from '../shared/auth'
 
 export type CampusUser = {
   id: string
@@ -21,7 +12,8 @@ export type CampusUser = {
   unitId?: string
   programStudyId?: string
   studentId?: string
-  permissions: string[]
+  permissions: Permission[]
+  rolePermissions: Partial<Record<UserRole, Permission[]>>
 }
 
 export type TableColumn = {

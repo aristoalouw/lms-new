@@ -24,6 +24,7 @@ COPY pages ./pages
 COPY plugins ./plugins
 COPY public ./public
 COPY server ./server
+COPY shared ./shared
 COPY types ./types
 ENV NODE_ENV=production
 RUN npm run build

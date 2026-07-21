@@ -7,6 +7,7 @@ import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { cloneValue, mockState } from '../utils/mock-store'
 import { requireKrsApprovalScope } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
+import { classEnrollmentId, upsertMockKrsClassEnrollment } from './academic-classes'
 import { enrollMockKrsReservations, releaseMockKrsReservations } from './krs-enrollment'
 
 export interface ReviewKrsInput {
@@ -64,7 +65,23 @@ export async function reviewKrs(
     if (!stored) notFound('KRS')
     before = cloneValue(stored)
     after = reviewedRecord(before, context, input, now)
-    if (input.decision === 'APPROVE') enrollMockKrsReservations(before, now)
+    if (input.decision === 'APPROVE') {
+      enrollMockKrsReservations(before, now)
+      for (const classId of before.classIds ?? []) {
+        upsertMockKrsClassEnrollment({
+          classId,
+          studentId: before.studentId,
+          studentUid: before.studentUid ?? before.studentId,
+          studentNumber: before.studentNumber,
+          studentName: before.studentName,
+          programStudyId: before.programStudyId,
+          periodId: before.periodId,
+          sourceRef: before.id,
+          actorId: context.uid,
+          now,
+        })
+      }
+    }
     else {
       releaseMockKrsReservations(before, now)
       after = { ...after, seatsReserved: false }
@@ -92,13 +109,15 @@ export async function reviewKrs(
       const classIds = current.seatsReserved ? (current.classIds || []) : []
       const classRefs = classIds.map(classId => db.collection('academicClasses').doc(classId))
       const reservationRefs = classIds.map(classId => db.collection('academicClasses').doc(classId).collection('seatReservations').doc(current.studentId))
-      const rosterRefs = classIds.map(classId => db.collection('academicClasses').doc(classId).collection('roster').doc(current.studentId))
+      const enrollmentRefs = classIds.map(classId => db.collection('classEnrollments').doc(classEnrollmentId(classId, current.studentId)))
       const allocationSnapshots = await Promise.all([
         ...classRefs.map(reference => transaction.get(reference)),
         ...reservationRefs.map(reference => transaction.get(reference)),
+        ...enrollmentRefs.map(reference => transaction.get(reference)),
       ])
       const classSnapshots = allocationSnapshots.slice(0, classRefs.length)
-      const reservationSnapshots = allocationSnapshots.slice(classRefs.length)
+      const reservationSnapshots = allocationSnapshots.slice(classRefs.length, classRefs.length * 2)
+      const enrollmentSnapshots = allocationSnapshots.slice(classRefs.length * 2)
       classIds.forEach((classId, index) => {
         const classSnapshot = classSnapshots[index]
         const reservationSnapshot = reservationSnapshots[index]
@@ -106,20 +125,33 @@ export async function reviewKrs(
         if (!reservationSnapshot?.exists || reservationSnapshot.data()?.planId !== current.id) {
           conflict('KRS_RESERVATION_MISSING', 'Reservasi kursi KRS tidak konsisten.', { classId })
         }
-        const classData = classSnapshot.data() as { rosterStudentIds?: string[]; reservedSeatCount?: number }
+        const classData = classSnapshot.data() as { rosterStudentIds?: string[]; reservedSeatCount?: number; enrollmentCount?: number }
         const rosterStudentIds = Array.isArray(classData.rosterStudentIds) ? classData.rosterStudentIds : []
         if (input.decision === 'APPROVE') {
           transaction.update(reservationRefs[index]!, { status: 'ENROLLED', updatedAt: now })
-          transaction.set(rosterRefs[index]!, {
+          const priorEnrollment = enrollmentSnapshots[index]
+          const priorData = priorEnrollment?.exists ? priorEnrollment.data() : undefined
+          transaction.set(enrollmentRefs[index]!, {
+            id: enrollmentRefs[index]!.id,
+            classId,
             studentId: current.studentId,
+            studentUid: current.studentUid ?? current.studentId,
             studentNumber: current.studentNumber,
             studentName: current.studentName,
             programStudyId: current.programStudyId,
+            periodId: current.periodId,
             status: 'ACTIVE',
+            source: 'KRS',
+            sourceRef: current.id,
+            version: Number(priorData?.version ?? 0) + 1,
+            createdAt: priorData?.createdAt ?? now,
+            createdBy: priorData?.createdBy ?? context.uid,
+            updatedAt: now,
+            updatedBy: context.uid,
           })
-          if (!rosterStudentIds.includes(current.studentId)) {
-            transaction.update(classRefs[index]!, { rosterStudentIds: [...rosterStudentIds, current.studentId], updatedAt: now })
-          }
+          const enrollmentCount = Number(classData.enrollmentCount ?? rosterStudentIds.length)
+          const alreadyActive = priorData?.status === 'ACTIVE'
+          transaction.update(classRefs[index]!, { enrollmentCount: enrollmentCount + (alreadyActive ? 0 : 1), updatedAt: now, updatedBy: context.uid })
         } else {
           const allocated = Number.isInteger(classData.reservedSeatCount) ? Number(classData.reservedSeatCount) : rosterStudentIds.length
           transaction.update(classRefs[index]!, { reservedSeatCount: Math.max(rosterStudentIds.length, allocated - 1), updatedAt: now })

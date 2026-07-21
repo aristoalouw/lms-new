@@ -1,5 +1,5 @@
 import { getQuery } from 'h3'
-import { listPrivateFiles } from '../../services/files'
+import { listPrivateFiles } from '../../modules/files'
 import { FILE_MIME_TYPES, FILE_STATES, type AllowedFileMimeType, type FileState } from '../../types/files'
 import { requireAuth } from '../../utils/auth'
 import { invalidInput } from '../../utils/errors'
@@ -18,7 +18,7 @@ export default defineCampusHandler(async (event) => {
   if (mimeType && !FILE_MIME_TYPES.includes(mimeType)) invalidInput('mimeType file tidak valid.')
   const scope = query.scope === undefined ? 'owned' : requireString(query.scope, 'scope', { max: 20 })
   if (!['owned', 'accessible', 'all'].includes(scope)) invalidInput('scope daftar file tidak valid.')
-  const limit = query.limit === undefined ? 20 : requireInteger(Number(query.limit), 'limit', 1, 100)
+  const limit = query.limit === undefined ? 20 : requireInteger(Number(query.limit), 'limit', 1, 50)
   const search = query.search === undefined ? undefined : requireString(query.search, 'search', { max: 100 })
   const cursor = query.cursor === undefined ? undefined : requireString(query.cursor, 'cursor', { max: 500 })
   const includeDeleted = query.includeDeleted === 'true'

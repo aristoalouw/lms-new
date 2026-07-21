@@ -20,6 +20,7 @@ import { opaqueId, requestHash } from '../utils/security'
 import { loadLearningSpace, requireLearningSpaceRead } from './learning'
 import { learningMockState } from './learning-mock'
 import { cleanLearningId, cleanLearningInteger } from './learning-validation'
+import { normalizeFeatureProfile } from '../../shared/features'
 
 export const LEARNING_GAMIFICATION_RULES: LearningGamificationRule[] = [
   { id: 'ON_TIME_SUBMISSION', label: 'Mengirim tugas sebelum atau saat tenggat', points: 10, maximumPerSpace: 100 },
@@ -73,6 +74,7 @@ export async function updateLearningGamificationPreference(
 export async function getLearningProgressDashboard(context: AuthContext, spaceId: string): Promise<LearningProgressDashboard> {
   const space = await loadLearningSpace(cleanLearningId(spaceId, 'spaceId'))
   const access = await requireLearningSpaceRead(context, space)
+  const isMvp = normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp'
   const [modules, materials, assignments, submissions, attempts, events, threads, posts, preference] = await Promise.all([
     bySpace<LearningModule>(space.id, 'learningModules', () => [...learningMockState().modules.values()].filter(item => item.spaceId === space.id), 500),
     bySpace<LearningMaterial>(space.id, 'learningMaterials', () => [...learningMockState().materials.values()].filter(item => item.spaceId === space.id), 1_000),
@@ -80,9 +82,9 @@ export async function getLearningProgressDashboard(context: AuthContext, spaceId
     bySpace<LearningSubmission>(space.id, 'learningSubmissions', () => [...learningMockState().submissions.values()].filter(item => item.spaceId === space.id), 2_000),
     bySpace<LearningSubmissionAttempt>(space.id, 'learningSubmissionAttempts', () => [...learningMockState().submissionAttempts.values()].filter(item => item.spaceId === space.id), 5_000),
     bySpace<LearningActivityEvent>(space.id, 'learningActivityEvents', () => [...learningMockState().activityEvents.values()].filter(item => item.spaceId === space.id), 250),
-    bySpace<LearningForumThread>(space.id, 'learningForumThreads', () => [...learningMockState().forumThreads.values()].filter(item => item.spaceId === space.id), 250),
-    bySpace<LearningForumPost>(space.id, 'learningForumPosts', () => [...learningMockState().forumPosts.values()].filter(item => item.spaceId === space.id), 1_000),
-    preferenceFor(space.id, context.uid),
+    isMvp ? Promise.resolve([]) : bySpace<LearningForumThread>(space.id, 'learningForumThreads', () => [...learningMockState().forumThreads.values()].filter(item => item.spaceId === space.id), 250),
+    isMvp ? Promise.resolve([]) : bySpace<LearningForumPost>(space.id, 'learningForumPosts', () => [...learningMockState().forumPosts.values()].filter(item => item.spaceId === space.id), 1_000),
+    isMvp ? Promise.resolve(undefined) : preferenceFor(space.id, context.uid),
   ])
   const publishedAssignments = assignments.filter(item => item.status === 'PUBLISHED')
   const relevantSubmissions = access.canManage ? submissions : submissions.filter(item => item.studentId === access.studentId)
@@ -91,7 +93,7 @@ export async function getLearningProgressDashboard(context: AuthContext, spaceId
     return attempt ? [attempt] : []
   })
   const denominator = access.canManage
-    ? publishedAssignments.length * Math.max(access.academicClass?.rosterStudentIds.length ?? space.participantUserIds.length, 1)
+    ? publishedAssignments.length * Math.max(access.academicClass?.enrollmentCount ?? space.participantUserIds.length, 1)
     : publishedAssignments.length
   const submittedAssignments = latestAttempts.length
   const completionPercent = denominator ? Math.min(100, Math.round(submittedAssignments * 10000 / denominator) / 100) : 0
@@ -103,7 +105,7 @@ export async function getLearningProgressDashboard(context: AuthContext, spaceId
     ? Math.min(ownOnTime * 10, LEARNING_GAMIFICATION_RULES[0]!.maximumPerSpace)
       + Math.min(ownForumContributions * 2, LEARNING_GAMIFICATION_RULES[1]!.maximumPerSpace)
     : 0
-  return {
+  const dashboard: LearningProgressDashboard = {
     spaceId: space.id, generatedAt: new Date().toISOString(), roleView: access.canManage ? 'TEACHER' : 'LEARNER',
     modulesPublished: modules.filter(item => item.status === 'PUBLISHED').length,
     materialsPublished: materials.filter(item => item.status === 'PUBLISHED').length,
@@ -112,11 +114,14 @@ export async function getLearningProgressDashboard(context: AuthContext, spaceId
     lateSubmissions: latestAttempts.filter(item => item.timeliness === 'LATE').length,
     completionPercent,
     recentActivity: events.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt)).slice(0, 20),
-    gamification: {
+  }
+  if (!isMvp) {
+    dashboard.gamification = {
       available: space.gamificationAvailable, optedIn, preferenceVersion: preference?.version ?? 0, points,
       rules: clone(LEARNING_GAMIFICATION_RULES),
       explanation: 'Poin bersifat sukarela dan informatif. Poin tidak memengaruhi nilai, akses kelas, atau sanksi akademik.',
-    },
-    method: 'DESCRIPTIVE_ONLY',
+    }
+    dashboard.method = 'DESCRIPTIVE_ONLY'
   }
+  return dashboard
 }

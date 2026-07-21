@@ -15,6 +15,7 @@ import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { notificationModuleState } from './notifications-state'
+import { normalizeFeatureProfile } from '../../shared/features'
 
 const CATEGORY_ROLES: Record<NotificationCategory, UserRole[]> = {
   ACADEMIC: ['academic_staff'],
@@ -367,18 +368,62 @@ export async function enqueuePasswordResetEmail(input: {
   })
 }
 
-export async function listInAppNotifications(context: AuthContext, unreadOnly = false, limit = 50): Promise<InAppNotification[]> {
-  const safeLimit = Math.min(Math.max(limit, 1), 100)
+export interface InAppNotificationPage {
+  items: InAppNotification[]
+  nextCursor?: string
+}
+
+function encodeNotificationCursor(record: InAppNotification): string {
+  return Buffer.from(JSON.stringify({ createdAt: record.createdAt, id: record.id }), 'utf8').toString('base64url')
+}
+
+function decodeNotificationCursor(value?: string): { createdAt: string; id: string } | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Record<string, unknown>
+    const createdAt = String(parsed.createdAt ?? '')
+    const id = String(parsed.id ?? '')
+    if (Number.isNaN(Date.parse(createdAt)) || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(id)) throw new Error('cursor')
+    return { createdAt, id }
+  } catch {
+    invalidInput('Cursor notifikasi tidak valid.')
+  }
+}
+
+export async function listInAppNotificationsPage(
+  context: AuthContext,
+  options: { unreadOnly?: boolean; limit?: number; cursor?: string } = {},
+): Promise<InAppNotificationPage> {
+  const safeLimit = Math.min(Math.max(options.limit ?? 50, 1), 50)
+  const cursor = decodeNotificationCursor(options.cursor)
+  const mvp = normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp'
+  const candidateLimit = Math.min(safeLimit * 3 + 1, 151)
   let records: InAppNotification[]
   if (dataMode() === 'mock') records = [...notificationModuleState().notifications.values()].map(record => structuredClone(record))
   else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan notifikasi tidak tersedia.')
-    const snapshot = await db.collection('inAppNotifications').where('recipientUid', '==', context.uid).limit(100).get()
+    let query = db.collection('inAppNotifications').where('recipientUid', '==', context.uid)
+    if (mvp) query = query.where('category', 'in', ['LEARNING', 'SYSTEM'])
+    query = query.orderBy('createdAt', 'desc').orderBy('id', 'desc')
+    if (cursor) query = query.startAfter(cursor.createdAt, cursor.id)
+    const snapshot = await query.limit(candidateLimit).get()
     records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as InAppNotification)
   }
-  return records.filter(record => record.recipientUid === context.uid && (!unreadOnly || !record.readAt))
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, safeLimit)
+  const visible = records.filter(record => record.recipientUid === context.uid
+      && (!mvp || ['LEARNING', 'SYSTEM'].includes(record.category))
+      && (!options.unreadOnly || !record.readAt))
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))
+    .filter(record => !cursor || record.createdAt < cursor.createdAt || (record.createdAt === cursor.createdAt && record.id < cursor.id))
+  const items = visible.slice(0, safeLimit)
+  const candidateExhausted = dataMode() === 'mock' || records.length < candidateLimit
+  const hasMore = visible.length > safeLimit || !candidateExhausted
+  const cursorRecord = items.at(-1) ?? (!candidateExhausted ? records.at(-1) : undefined)
+  return { items, ...(hasMore && cursorRecord ? { nextCursor: encodeNotificationCursor(cursorRecord) } : {}) }
+}
+
+export async function listInAppNotifications(context: AuthContext, unreadOnly = false, limit = 50): Promise<InAppNotification[]> {
+  return (await listInAppNotificationsPage(context, { unreadOnly, limit })).items
 }
 
 export async function getInAppNotification(context: AuthContext, id: string): Promise<InAppNotification> {
@@ -392,6 +437,7 @@ export async function getInAppNotification(context: AuthContext, id: string): Pr
   }
   if (!record) notFound('Notifikasi')
   if (record.recipientUid !== context.uid) forbidden('Notifikasi bukan milik Anda.')
+  if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp' && !['LEARNING', 'SYSTEM'].includes(record.category)) notFound('Notifikasi')
   return structuredClone(record)
 }
 

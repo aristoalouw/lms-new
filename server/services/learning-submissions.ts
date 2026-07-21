@@ -2,6 +2,7 @@ import type { H3Event } from 'h3'
 import type { AuthContext } from '../types/auth'
 import type {
   LearningGrade,
+  LearningPage,
   LearningSubmission,
   LearningSubmissionAttempt,
   SafeRichContent,
@@ -122,7 +123,7 @@ export async function saveLearningSubmissionDraft(
   const { assignment, space, studentId } = await studentForAssignment(context, cleanLearningId(input.assignmentId, 'assignmentId'), now)
   if (input.fileIds.length > assignment.maximumFiles) invalidInput(`Tugas menerima paling banyak ${assignment.maximumFiles} file.`)
   const content = input.content ? validateSafeRichContent(input.content, 'Isi jawaban', 20_000) : undefined
-  const files = await Promise.all(input.fileIds.map(fileId => cleanLearningFileReference(context, fileId)))
+  const files = await Promise.all(input.fileIds.map(fileId => cleanLearningFileReference(context, fileId, space.id)))
   const id = submissionId(assignment.id, studentId)
   const normalizedHash = requestHash({ assignmentId: assignment.id, studentId, expectedVersion, content, files })
   const namespace = `submission:draft:${idempotencyKey}`
@@ -265,30 +266,73 @@ export async function gradeLearningSubmission(
   return { grade, auditId: audit.id }
 }
 
-export async function listLearningAssignmentSubmissions(context: AuthContext, assignmentId: string): Promise<LearningSubmissionReviewRow[]> {
+function encodeSubmissionCursor(submission: LearningSubmission): string {
+  return Buffer.from(JSON.stringify({ studentId: submission.studentId, id: submission.id }), 'utf8').toString('base64url')
+}
+
+function decodeSubmissionCursor(value?: string): { studentId: string; id: string } | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Record<string, unknown>
+    return {
+      studentId: cleanLearningId(parsed.studentId, 'cursor.studentId'),
+      id: cleanLearningId(parsed.id, 'cursor.id'),
+    }
+  } catch {
+    invalidInput('Cursor pengumpulan tugas tidak valid.')
+  }
+}
+
+export async function listLearningAssignmentSubmissionsPage(
+  context: AuthContext,
+  assignmentId: string,
+  options: { cursor?: string; limit?: number } = {},
+): Promise<LearningPage<LearningSubmissionReviewRow>> {
   const assignment = await loadLearningAssignment(cleanLearningId(assignmentId, 'assignmentId'))
   const space = await loadLearningSpace(assignment.spaceId)
   await requireLearningSpaceManage(context, space)
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 50)
+  const cursor = decodeSubmissionCursor(options.cursor)
   let submissions: LearningSubmission[], attempts: LearningSubmissionAttempt[], grades: LearningGrade[]
   if (dataMode() === 'mock') {
-    submissions = [...learningMockState().submissions.values()].filter(item => item.assignmentId === assignment.id).map(clone)
-    attempts = [...learningMockState().submissionAttempts.values()].filter(item => item.assignmentId === assignment.id).map(clone)
-    grades = [...learningMockState().grades.values()].filter(item => item.assignmentId === assignment.id).map(clone)
+    submissions = [...learningMockState().submissions.values()]
+      .filter(item => item.assignmentId === assignment.id)
+      .sort((left, right) => left.studentId.localeCompare(right.studentId) || left.id.localeCompare(right.id))
+      .filter(item => !cursor || item.studentId > cursor.studentId || (item.studentId === cursor.studentId && item.id > cursor.id))
+      .slice(0, limit + 1)
+      .map(clone)
+    const selectedIds = new Set(submissions.slice(0, limit).map(item => item.id))
+    const selectedStudents = new Set(submissions.slice(0, limit).map(item => item.studentId))
+    attempts = [...learningMockState().submissionAttempts.values()].filter(item => selectedIds.has(item.submissionId)).map(clone)
+    grades = [...learningMockState().grades.values()].filter(item => item.assignmentId === assignment.id && selectedStudents.has(item.studentId)).map(clone)
   } else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan pengumpulan tugas tidak tersedia.')
-    const [submissionSnapshot, attemptSnapshot, gradeSnapshot] = await Promise.all([
-      db.collection('learningSubmissions').where('assignmentId', '==', assignment.id).limit(500).get(),
-      db.collection('learningSubmissionAttempts').where('assignmentId', '==', assignment.id).limit(1_000).get(),
-      db.collection('learningGrades').where('assignmentId', '==', assignment.id).limit(500).get(),
-    ])
+    let query = db.collection('learningSubmissions').where('assignmentId', '==', assignment.id).orderBy('studentId').limit(limit + 1)
+    if (cursor) query = query.startAfter(cursor.studentId)
+    const submissionSnapshot = await query.get()
     submissions = submissionSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as LearningSubmission)
-    attempts = attemptSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as LearningSubmissionAttempt)
-    grades = gradeSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as LearningGrade)
+    const selected = submissions.slice(0, limit)
+    const attemptRefs = selected.flatMap(submission => Array.from({ length: submission.attemptCount }, (_, index) =>
+      db.collection('learningSubmissionAttempts').doc(opaqueId('learning_attempt', `${submission.id}:${index + 1}`))))
+    const gradeRefs = selected.map(submission => db.collection('learningGrades').doc(opaqueId('learning_grade', `${assignment.id}:${submission.studentId}`)))
+    const [attemptSnapshots, gradeSnapshots] = await Promise.all([
+      attemptRefs.length ? db.getAll(...attemptRefs) : Promise.resolve([]),
+      gradeRefs.length ? db.getAll(...gradeRefs) : Promise.resolve([]),
+    ])
+    attempts = attemptSnapshots.filter(snapshot => snapshot.exists).map(snapshot => ({ id: snapshot.id, ...snapshot.data() }) as LearningSubmissionAttempt)
+    grades = gradeSnapshots.filter(snapshot => snapshot.exists).map(snapshot => ({ id: snapshot.id, ...snapshot.data() }) as LearningGrade)
   }
-  return submissions.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map(submission => ({
+  const hasMore = submissions.length > limit
+  const selected = submissions.slice(0, limit)
+  const items = selected.map(submission => ({
     submission,
     attempts: attempts.filter(attempt => attempt.submissionId === submission.id).sort((left, right) => left.attemptNumber - right.attemptNumber),
     grade: grades.find(grade => grade.studentId === submission.studentId),
   }))
+  return { items, ...(hasMore && selected.length ? { nextCursor: encodeSubmissionCursor(selected.at(-1)!) } : {}) }
+}
+
+export async function listLearningAssignmentSubmissions(context: AuthContext, assignmentId: string): Promise<LearningSubmissionReviewRow[]> {
+  return (await listLearningAssignmentSubmissionsPage(context, assignmentId)).items
 }

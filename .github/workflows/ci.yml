@@ -1,0 +1,45 @@
+name: LMS MVP CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_FEATURE_PROFILE: lms-mvp
+      CAMPUS_DATA_MODE: mock
+      ENABLE_DEMO_AUTH: "true"
+      NUXT_PUBLIC_DEMO_MODE: "true"
+      NUXT_PUBLIC_APP_ENVIRONMENT: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - run: npm run check:no-ai
+      - run: npm run check:dependencies
+      - run: npm run typecheck
+      - run: npm run test:api
+      - run: npm run test:rules
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

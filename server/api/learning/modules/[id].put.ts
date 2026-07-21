@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { updateLearningModule } from '../../../services/learning'
+import { updateLearningModule } from '../../../modules/learning'
 import type { LearningModule, SafeRichContent } from '../../../types/learning'
 import { requireAuth } from '../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../utils/security'

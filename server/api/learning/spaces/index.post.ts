@@ -1,5 +1,5 @@
 import { readBody } from 'h3'
-import { createLearningSpace } from '../../../services/learning'
+import { createLearningSpace } from '../../../modules/learning'
 import type { LearningSpace } from '../../../types/learning'
 import { requireAuth } from '../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../utils/security'

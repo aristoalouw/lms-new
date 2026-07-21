@@ -56,6 +56,7 @@ definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Manajemen Pengguna' })
 
 const { user } = useAuth()
+const { isLmsMvp } = useFeatureFlags()
 const isAdministrator = computed(() => user.value?.roles.includes('administrator') ?? false)
 const loading = ref(false)
 const saving = ref(false)
@@ -79,7 +80,7 @@ const emptyForm = (): AccountForm => ({
 })
 const form = reactive<AccountForm>(emptyForm())
 
-const roleOptions: Array<{ value: AccountRole; label: string; group: string }> = [
+const allRoleOptions: Array<{ value: AccountRole; label: string; group: string }> = [
   { value: 'student', label: 'Mahasiswa', group: 'Pengguna' },
   { value: 'applicant', label: 'Pendaftar', group: 'Pengguna' },
   { value: 'guardian', label: 'Orang tua / wali', group: 'Pengguna' },
@@ -93,7 +94,10 @@ const roleOptions: Array<{ value: AccountRole; label: string; group: string }> =
   { value: 'administrator', label: 'Administrator', group: 'Pimpinan' },
 ]
 
-const roleLabels = Object.fromEntries(roleOptions.map((option) => [option.value, option.label])) as Record<AccountRole, string>
+const roleOptions = computed(() => isLmsMvp.value
+  ? allRoleOptions.filter(option => ['student', 'lecturer', 'administrator'].includes(option.value))
+  : allRoleOptions)
+const roleLabels = Object.fromEntries(allRoleOptions.map((option) => [option.value, option.label])) as Record<AccountRole, string>
 const statusLabels: Record<AccountStatus, string> = { active: 'Aktif', disabled: 'Dinonaktifkan', blocked: 'Diblokir' }
 const tableColumns = [
   { key: 'identity', label: 'Pengguna', sortable: true },

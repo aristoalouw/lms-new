@@ -1,5 +1,5 @@
 import { getRouterParam } from 'h3'
-import { finalizeFileUpload } from '../../../../services/files'
+import { finalizeFileUpload } from '../../../../modules/files'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../../utils/security'
 import { requireString } from '../../../../utils/validation'

@@ -13,6 +13,7 @@ export interface FileAccessPolicy {
   unitIds: string[]
   programStudyIds: string[]
   studentIds: string[]
+  learningSpaceIds: string[]
 }
 
 export interface PrivateFileRecord {
@@ -76,6 +77,7 @@ export interface FileUploadSession {
   createdAt: string
   expiresAt: string
   finalizedAt?: string
+  idempotencyHash?: string
 }
 
 export interface FileQuota {
@@ -103,7 +105,7 @@ export interface UploadTarget {
 
 export interface CreateUploadSessionResult {
   file: PrivateFileRecord
-  session: Omit<FileUploadSession, 'storagePath'>
+  session: Omit<FileUploadSession, 'storagePath' | 'idempotencyHash'>
   upload: UploadTarget
   quota: FileQuota
 }

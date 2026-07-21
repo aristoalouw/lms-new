@@ -1,5 +1,6 @@
 export type AcademicClassStatus = 'ACTIVE' | 'CLOSED'
 export type RosterStatus = 'ACTIVE' | 'WITHDRAWN'
+export type EnrollmentSource = 'KRS' | 'ADMIN'
 export type DeliveryMode = 'ONSITE' | 'ONLINE' | 'HYBRID'
 export type JournalRealization = 'ON_SCHEDULE' | 'MAKEUP'
 export type AttendanceStatus = 'PRESENT' | 'LATE' | 'EXCUSED' | 'ABSENT'
@@ -29,7 +30,9 @@ export interface AcademicClassRecord {
   totalScheduledMeetings: number
   realizedMeetingCount: number
   schedule: ClassMeetingSchedule[]
-  rosterStudentIds: string[]
+  /** @deprecated Canonical roster lives in classEnrollments. */
+  rosterStudentIds?: string[]
+  enrollmentCount?: number
   capacity?: number
   reservedSeatCount?: number
   prerequisiteCourseCodes?: string[]
@@ -39,6 +42,30 @@ export interface AcademicClassRecord {
   publishedGradebookVersion?: number
   latestPublicationId?: string
   updatedAt: string
+  updatedBy?: string
+  createdAt?: string
+  createdBy?: string
+  version?: number
+}
+
+export interface ClassEnrollment {
+  id: string
+  classId: string
+  studentId: string
+  studentUid: string
+  studentNumber: string
+  studentName: string
+  programStudyId: string
+  periodId: string
+  status: RosterStatus
+  source: EnrollmentSource
+  sourceRef?: string
+  overrideReason?: string
+  version: number
+  createdAt: string
+  createdBy: string
+  updatedAt: string
+  updatedBy: string
 }
 
 export interface ClassRosterEntry {
@@ -90,7 +117,14 @@ export interface AttendanceChallenge {
   issuedAt: string
   expiresAt: string
   issuedBy: string
-  usedStudentIds: string[]
+}
+
+export interface IssuedAttendanceChallenge {
+  challengeId: string
+  classId: string
+  meetingNumber: number
+  challengeToken: string
+  expiresAt: string
 }
 
 export interface GradeComponent {

@@ -1,5 +1,5 @@
 import { getQuery, getRouterParam } from 'h3'
-import { listLearningForumThreads } from '../../../../../services/learning-forum'
+import { listLearningForumThreads } from '../../../../../modules/learning'
 import { requireAuth } from '../../../../../utils/auth'
 import { defineCampusHandler, markPrivateResponse } from '../../../../../utils/security'
 import { requireString } from '../../../../../utils/validation'

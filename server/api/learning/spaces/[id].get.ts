@@ -1,5 +1,5 @@
 import { getRouterParam } from 'h3'
-import { getLearningSpaceDetail } from '../../../services/learning'
+import { getLearningSpaceDetail } from '../../../modules/learning'
 import { requireAuth } from '../../../utils/auth'
 import { defineCampusHandler, markPrivateResponse } from '../../../utils/security'
 import { requireString } from '../../../utils/validation'

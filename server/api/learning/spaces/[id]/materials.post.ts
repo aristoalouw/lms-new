@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { createLearningMaterial } from '../../../../services/learning'
+import { createLearningMaterial } from '../../../../modules/learning'
 import type { LearningMaterial, LearningMaterialKind, SafeRichContent } from '../../../../types/learning'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../../utils/security'

@@ -38,8 +38,10 @@ function Add-Failure {
 $envValues = Read-DotEnv -FilePath $Path
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
+$isLmsMvp = $envValues["APP_FEATURE_PROFILE"] -eq "lms-mvp"
 
 $required = @(
+    "APP_FEATURE_PROFILE",
     "APP_VERSION",
     "APP_IMAGE",
     "NUXT_SESSION_SECRET",
@@ -58,21 +60,31 @@ $required = @(
     "FIREBASE_ADMIN_CREDENTIALS_FILE",
     "FIREBASE_STORAGE_BUCKET",
     "FILE_CURSOR_SECRET",
-    "PMB_PII_HASH_SECRET",
-    "TRACER_STUDY_PUBLIC_URL",
     "CLAMAV_HOST",
     "CLAMAV_PORT",
-    "PAYMENT_GATEWAY_PROVIDER_ID",
-    "PAYMENT_GATEWAY_WEBHOOK_SECRET",
-    "PDDIKTI_CONTRACT_VERSION",
-    "PDDIKTI_OPERATION_MAP_JSON",
-    "PDDIKTI_ADAPTER_BASE_URL",
-    "PDDIKTI_ADAPTER_BEARER_TOKEN",
-    "PDDIKTI_WORKER_SECRET",
+    "SENTRY_DSN",
+    "NUXT_PUBLIC_SENTRY_DSN",
+    "SENTRY_ENVIRONMENT",
+    "SENTRY_RELEASE",
+    "NUXT_PUBLIC_SENTRY_RELEASE",
     "SERVER_NAME",
     "TLS_FULLCHAIN_FILE",
     "TLS_PRIVATE_KEY_FILE"
 )
+
+if (-not $isLmsMvp) {
+    $required += @(
+        "PMB_PII_HASH_SECRET",
+        "TRACER_STUDY_PUBLIC_URL",
+        "PAYMENT_GATEWAY_PROVIDER_ID",
+        "PAYMENT_GATEWAY_WEBHOOK_SECRET",
+        "PDDIKTI_CONTRACT_VERSION",
+        "PDDIKTI_OPERATION_MAP_JSON",
+        "PDDIKTI_ADAPTER_BASE_URL",
+        "PDDIKTI_ADAPTER_BEARER_TOKEN",
+        "PDDIKTI_WORKER_SECRET"
+    )
+}
 
 foreach ($name in $required) {
     if (-not $envValues.ContainsKey($name) -or [string]::IsNullOrWhiteSpace($envValues[$name])) {
@@ -82,6 +94,9 @@ foreach ($name in $required) {
 
 if ($envValues["NODE_ENV"] -ne "production") {
     Add-Failure "NODE_ENV must be production."
+}
+if ($envValues["APP_FEATURE_PROFILE"] -notin @("lms-mvp", "full-campus")) {
+    Add-Failure "APP_FEATURE_PROFILE must be lms-mvp or full-campus."
 }
 if ($envValues["APP_VERSION"] -eq "development" -or $envValues["APP_VERSION"] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$') {
     Add-Failure "APP_VERSION must identify the immutable production release."
@@ -123,15 +138,11 @@ if ($rateLimitSecret.Length -lt 43) {
 if ($rateLimitSecret -and @($rateLimitSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
     Add-Failure "RATE_LIMIT_KEY_SECRET does not appear sufficiently random."
 }
-$gatewaySecret = if ($envValues.ContainsKey("PAYMENT_GATEWAY_WEBHOOK_SECRET")) { $envValues["PAYMENT_GATEWAY_WEBHOOK_SECRET"] } else { "" }
-if ($gatewaySecret.Length -lt 43) {
-    Add-Failure "PAYMENT_GATEWAY_WEBHOOK_SECRET must contain at least 32 random bytes (43 base64url characters)."
-}
-if ($gatewaySecret -and @($gatewaySecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
-    Add-Failure "PAYMENT_GATEWAY_WEBHOOK_SECRET does not appear sufficiently random."
-}
-if ($envValues["PAYMENT_GATEWAY_PROVIDER_ID"] -notmatch '^[a-z][a-z0-9_-]{2,39}$') {
-    Add-Failure "PAYMENT_GATEWAY_PROVIDER_ID must be a lowercase stable identifier."
+if (-not $isLmsMvp) {
+    $gatewaySecret = if ($envValues.ContainsKey("PAYMENT_GATEWAY_WEBHOOK_SECRET")) { $envValues["PAYMENT_GATEWAY_WEBHOOK_SECRET"] } else { "" }
+    if ($gatewaySecret.Length -lt 43) { Add-Failure "PAYMENT_GATEWAY_WEBHOOK_SECRET must contain at least 32 random bytes (43 base64url characters)." }
+    if ($gatewaySecret -and @($gatewaySecret.ToCharArray() | Select-Object -Unique).Count -lt 16) { Add-Failure "PAYMENT_GATEWAY_WEBHOOK_SECRET does not appear sufficiently random." }
+    if ($envValues["PAYMENT_GATEWAY_PROVIDER_ID"] -notmatch '^[a-z][a-z0-9_-]{2,39}$') { Add-Failure "PAYMENT_GATEWAY_PROVIDER_ID must be a lowercase stable identifier." }
 }
 if ($envValues["NUXT_PUBLIC_ANALYTICS_PRIVATE_ENABLED"] -ne "false") {
     Add-Failure "Private-area analytics must remain disabled."
@@ -152,12 +163,10 @@ if ($fileCursorSecret.Length -lt 43) {
 if ($fileCursorSecret -and @($fileCursorSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
     Add-Failure "FILE_CURSOR_SECRET does not appear sufficiently random."
 }
-$pmbHashSecret = if ($envValues.ContainsKey("PMB_PII_HASH_SECRET")) { $envValues["PMB_PII_HASH_SECRET"] } else { "" }
-if ($pmbHashSecret.Length -lt 43) {
-    Add-Failure "PMB_PII_HASH_SECRET must contain at least 32 random bytes (43 base64url characters)."
-}
-if ($pmbHashSecret -and @($pmbHashSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
-    Add-Failure "PMB_PII_HASH_SECRET does not appear sufficiently random."
+if (-not $isLmsMvp) {
+    $pmbHashSecret = if ($envValues.ContainsKey("PMB_PII_HASH_SECRET")) { $envValues["PMB_PII_HASH_SECRET"] } else { "" }
+    if ($pmbHashSecret.Length -lt 43) { Add-Failure "PMB_PII_HASH_SECRET must contain at least 32 random bytes (43 base64url characters)." }
+    if ($pmbHashSecret -and @($pmbHashSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) { Add-Failure "PMB_PII_HASH_SECRET does not appear sufficiently random." }
 }
 foreach ($emailSecretName in @("EMAIL_DELIVERY_BEARER_TOKEN", "EMAIL_WORKER_SECRET")) {
     $emailSecret = if ($envValues.ContainsKey($emailSecretName)) { $envValues[$emailSecretName] } else { "" }
@@ -241,43 +250,44 @@ foreach ($pathName in @("FIREBASE_ADMIN_CREDENTIALS_FILE", "TLS_FULLCHAIN_FILE",
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($envValues["SENTRY_DSN"])) {
-    $warnings.Add("SENTRY_DSN is blank; server error telemetry will be disabled.")
+if ($envValues["SENTRY_ENVIRONMENT"] -notmatch '^[a-z][a-z0-9._-]{2,63}$' -or $envValues["SENTRY_ENVIRONMENT"] -in @("development", "test")) {
+    Add-Failure "SENTRY_ENVIRONMENT must be a stable non-development environment such as staging or production."
 }
-$pddiktiBaseUrl = [string]$envValues["PDDIKTI_ADAPTER_BASE_URL"]
-if ($pddiktiBaseUrl -and $pddiktiBaseUrl -notmatch '^https://[^/?#@]+(?::\d+)?(?:/[^?#]*)?$') {
-    Add-Failure "PDDIKTI_ADAPTER_BASE_URL must be an HTTPS URL without credentials, query parameters, or fragments."
-}
-if ([string]$envValues["PDDIKTI_CONTRACT_VERSION"] -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]{4,127}$') {
-    Add-Failure "PDDIKTI_CONTRACT_VERSION must be an immutable, versioned contract identifier."
-}
-foreach ($pddiktiSecretName in @("PDDIKTI_ADAPTER_BEARER_TOKEN", "PDDIKTI_WORKER_SECRET")) {
-    $pddiktiSecret = [string]$envValues[$pddiktiSecretName]
-    if ($pddiktiSecret.Length -lt 43) {
-        Add-Failure "$pddiktiSecretName must contain at least 32 random bytes (43 base64url characters)."
-    }
-    if ($pddiktiSecret -and @($pddiktiSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
-        Add-Failure "$pddiktiSecretName does not appear sufficiently random."
+foreach ($releaseName in @("SENTRY_RELEASE", "NUXT_PUBLIC_SENTRY_RELEASE")) {
+    if ($envValues[$releaseName] -ne $envValues["APP_VERSION"]) {
+        Add-Failure "$releaseName must match APP_VERSION."
     }
 }
-try {
-    $operationMap = [string]$envValues["PDDIKTI_OPERATION_MAP_JSON"] | ConvertFrom-Json
-    foreach ($entityType in @("student", "lecturer", "course", "class", "grade", "student_activity", "graduation")) {
-        $operation = [string]$operationMap.$entityType
-        if ([string]::IsNullOrWhiteSpace($operation)) {
-            Add-Failure "PDDIKTI_OPERATION_MAP_JSON must contain an operator-verified key for $entityType."
+if (-not $isLmsMvp) {
+    $pddiktiBaseUrl = [string]$envValues["PDDIKTI_ADAPTER_BASE_URL"]
+    if ($pddiktiBaseUrl -and $pddiktiBaseUrl -notmatch '^https://[^/?#@]+(?::\d+)?(?:/[^?#]*)?$') {
+        Add-Failure "PDDIKTI_ADAPTER_BASE_URL must be an HTTPS URL without credentials, query parameters, or fragments."
+    }
+    if ([string]$envValues["PDDIKTI_CONTRACT_VERSION"] -notmatch '^[A-Za-z0-9][A-Za-z0-9._/-]{4,127}$') {
+        Add-Failure "PDDIKTI_CONTRACT_VERSION must be an immutable, versioned contract identifier."
+    }
+    foreach ($pddiktiSecretName in @("PDDIKTI_ADAPTER_BEARER_TOKEN", "PDDIKTI_WORKER_SECRET")) {
+        $pddiktiSecret = [string]$envValues[$pddiktiSecretName]
+        if ($pddiktiSecret.Length -lt 43) {
+            Add-Failure "$pddiktiSecretName must contain at least 32 random bytes (43 base64url characters)."
+        }
+        if ($pddiktiSecret -and @($pddiktiSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
+            Add-Failure "$pddiktiSecretName does not appear sufficiently random."
         }
     }
-}
-catch {
-    Add-Failure "PDDIKTI_OPERATION_MAP_JSON must be a valid JSON object."
-}
-$legacyNeoValues = @("NEO_FEEDER_BASE_URL", "NEO_FEEDER_USERNAME", "NEO_FEEDER_PASSWORD") | ForEach-Object { -not [string]::IsNullOrWhiteSpace($envValues[$_]) }
-if (($legacyNeoValues | Where-Object { $_ }).Count -notin @(0, 3)) {
-    Add-Failure "Legacy Neo Feeder base URL, username, and password must be configured together or all left blank."
-}
-if (($legacyNeoValues | Where-Object { $_ }).Count -eq 3 -and $envValues["NEO_FEEDER_BASE_URL"] -notmatch '^https://[^/?#@]+(?::\d+)?(?:/[^?#]*)?$') {
-    Add-Failure "NEO_FEEDER_BASE_URL must be an HTTPS URL without credentials, query parameters, or fragments."
+    try {
+        $operationMap = [string]$envValues["PDDIKTI_OPERATION_MAP_JSON"] | ConvertFrom-Json
+        foreach ($entityType in @("student", "lecturer", "course", "class", "grade", "student_activity", "graduation")) {
+            $operation = [string]$operationMap.$entityType
+            if ([string]::IsNullOrWhiteSpace($operation)) {
+                Add-Failure "PDDIKTI_OPERATION_MAP_JSON must contain an operator-verified key for $entityType."
+            }
+        }
+    }
+    catch { Add-Failure "PDDIKTI_OPERATION_MAP_JSON must be a valid JSON object." }
+    $legacyNeoValues = @("NEO_FEEDER_BASE_URL", "NEO_FEEDER_USERNAME", "NEO_FEEDER_PASSWORD") | ForEach-Object { -not [string]::IsNullOrWhiteSpace($envValues[$_]) }
+    if (($legacyNeoValues | Where-Object { $_ }).Count -notin @(0, 3)) { Add-Failure "Legacy Neo Feeder base URL, username, and password must be configured together or all left blank." }
+    if (($legacyNeoValues | Where-Object { $_ }).Count -eq 3 -and $envValues["NEO_FEEDER_BASE_URL"] -notmatch '^https://[^/?#@]+(?::\d+)?(?:/[^?#]*)?$') { Add-Failure "NEO_FEEDER_BASE_URL must be an HTTPS URL without credentials, query parameters, or fragments." }
 }
 foreach ($dsnName in @("SENTRY_DSN", "NUXT_PUBLIC_SENTRY_DSN")) {
     if (-not [string]::IsNullOrWhiteSpace($envValues[$dsnName]) -and $envValues[$dsnName] -notmatch '^https://') {

@@ -1,9 +1,9 @@
 import { getQuery } from 'h3'
-import { listAcademicClasses } from '../../../services/academic-classes'
+import { listAcademicClassesPage } from '../../../modules/classes'
 import { requireAuth } from '../../../utils/auth'
 import { invalidInput } from '../../../utils/errors'
 import { defineCampusHandler, markPrivateResponse } from '../../../utils/security'
-import { requireString } from '../../../utils/validation'
+import { requireInteger, requireString } from '../../../utils/validation'
 
 export default defineCampusHandler(async (event) => {
   markPrivateResponse(event)
@@ -14,10 +14,11 @@ export default defineCampusHandler(async (event) => {
     if (Array.isArray(value)) invalidInput(`${label} hanya boleh memiliki satu nilai.`)
     return requireString(String(value), label, { max: 80, pattern: /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/ })
   }
-  return {
-    classes: await listAcademicClasses(context, {
-      periodId: scalar(query.periodId, 'periodId'),
-      programStudyId: scalar(query.programStudyId, 'programStudyId'),
-    }),
-  }
+  const page = await listAcademicClassesPage(context, {
+    periodId: scalar(query.periodId, 'periodId'),
+    programStudyId: scalar(query.programStudyId, 'programStudyId'),
+    cursor: query.cursor === undefined ? undefined : requireString(String(query.cursor), 'cursor', { max: 500, pattern: /^[A-Za-z0-9_-]+$/ }),
+    limit: query.limit === undefined ? 50 : requireInteger(Number(query.limit), 'limit', 1, 50),
+  })
+  return { ...page, classes: page.items }
 })

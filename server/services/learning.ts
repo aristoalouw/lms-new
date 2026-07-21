@@ -1,5 +1,7 @@
+import { FieldPath, type Query } from 'firebase-admin/firestore'
 import type { H3Event } from 'h3'
 import type { AuthContext } from '../types/auth'
+import type { InAppNotification } from '../types/communications'
 import type { AcademicClassDetail, AcademicClassRecord } from '../types/academic-classes'
 import type {
   LearningActivityEvent,
@@ -13,6 +15,7 @@ import type {
   LearningMaterialVersion,
   LearningModule,
   LearningModuleVersion,
+  LearningPage,
   LearningSpace,
   LearningSpaceDetail,
   LearningSubmission,
@@ -23,9 +26,11 @@ import { CampusError, conflict, forbidden, invalidInput, notFound, serviceUnavai
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
-import { getAcademicClassDetail } from './academic-classes'
+import { getAcademicClassDetail, listActiveClassRecipientUids } from './academic-classes'
 import { getPrivateFileDetail } from './files'
 import { learningMockState } from './learning-mock'
+import { notificationModuleState } from './notifications-state'
+import { normalizeFeatureProfile } from '../../shared/features'
 import {
   cleanLearningId,
   cleanLearningIds,
@@ -108,6 +113,14 @@ export interface CreateLearningAnnouncementInput {
   pinned: boolean
 }
 
+export interface UpdateLearningAnnouncementInput {
+  title: string
+  body: SafeRichContent
+  pinned: boolean
+  status: LearningAnnouncement['status']
+  expectedVersion: number
+}
+
 export interface LearningSpaceAccess {
   canRead: boolean
   canManage: boolean
@@ -115,7 +128,7 @@ export interface LearningSpaceAccess {
   academicClass?: AcademicClassRecord
 }
 
-const COLLECTION_LIMIT = 500
+const COLLECTION_LIMIT = 50
 
 function clone<T>(value: T): T { return structuredClone(value) }
 
@@ -130,9 +143,7 @@ function cleanOptionalText(value: unknown, label: string, maximum: number): stri
 }
 
 function assignedClassManager(context: AuthContext, record: AcademicClassRecord): boolean {
-  return hasRole(context, 'administrator')
-    || (hasRole(context, 'academic_staff') && context.scope.programStudyIds.includes(record.programStudyId))
-    || (hasRole(context, 'lecturer', 'advisor') && record.lecturerIds.includes(context.uid))
+  return hasRole(context, 'lecturer', 'advisor') && record.lecturerIds.includes(context.uid)
 }
 
 function generalManager(context: AuthContext, space: LearningSpace): boolean {
@@ -230,6 +241,20 @@ async function loadLearningMaterial(id: string): Promise<LearningMaterial> {
   return { id: snapshot.id, ...snapshot.data() } as LearningMaterial
 }
 
+async function loadLearningAnnouncement(id: string): Promise<LearningAnnouncement> {
+  const safeId = cleanLearningId(id, 'announcementId')
+  if (dataMode() === 'mock') {
+    const record = learningMockState().announcements.get(safeId)
+    if (!record) notFound('Pengumuman pembelajaran')
+    return clone(record)
+  }
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.')
+  const snapshot = await db.collection('learningAnnouncements').doc(safeId).get()
+  if (!snapshot.exists) notFound('Pengumuman pembelajaran')
+  return { id: snapshot.id, ...snapshot.data() } as LearningAnnouncement
+}
+
 export async function appendLearningActivity(input: Omit<LearningActivityEvent, 'id'>): Promise<LearningActivityEvent> {
   const id = opaqueId('learning_event', `${input.spaceId}:${input.actorUid}:${input.kind}:${input.resourceId}:${input.occurredAt}`)
   const event: LearningActivityEvent = { id, ...input }
@@ -242,11 +267,44 @@ export async function appendLearningActivity(input: Omit<LearningActivityEvent, 
   return event
 }
 
-export async function cleanLearningFileReference(context: AuthContext, fileId: string): Promise<LearningFileReference> {
+async function notifyClassAnnouncement(space: LearningSpace, announcement: LearningAnnouncement): Promise<void> {
+  if (!space.academicClassId || announcement.status !== 'PUBLISHED') return
+  const recipientUids = await listActiveClassRecipientUids(space.academicClassId)
+  const createdAt = announcement.updatedAt
+  const notifications = recipientUids.map(recipientUid => ({
+    id: opaqueId('notification', `learning-announcement:${announcement.id}:${announcement.version}:${recipientUid}`),
+    recipientUid,
+    templateKey: 'learning-announcement-published',
+    category: 'LEARNING',
+    title: announcement.title,
+    body: `Pengumuman kelas baru tersedia di ${space.title}.`,
+    actionPath: `/pembelajaran/${space.id}`,
+    createdAt,
+  } satisfies InAppNotification))
+  if (dataMode() === 'mock') {
+    for (const notification of notifications) notificationModuleState().notifications.set(notification.id, clone(notification))
+    return
+  }
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan notifikasi tidak tersedia.')
+  for (let offset = 0; offset < notifications.length; offset += 400) {
+    const batch = db.batch()
+    for (const notification of notifications.slice(offset, offset + 400)) {
+      batch.set(db.collection('inAppNotifications').doc(notification.id), notification)
+    }
+    await batch.commit()
+  }
+}
+
+export async function cleanLearningFileReference(context: AuthContext, fileId: string, targetSpaceId?: string): Promise<LearningFileReference> {
   const detail = await getPrivateFileDetail(context, cleanLearningId(fileId, 'fileId'))
   const currentVersion = detail.file.currentVersion
   const version = detail.versions.find(item => item.version === currentVersion)
   if (detail.file.deleted || detail.file.status !== 'CLEAN' || !currentVersion || version?.status !== 'CLEAN') conflict('LEARNING_FILE_NOT_CLEAN', 'Materi hanya dapat memakai file privat yang telah lolos pemeriksaan keamanan.')
+  if (targetSpaceId && normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp'
+    && !detail.file.access.learningSpaceIds?.includes(targetSpaceId)) {
+    conflict('LEARNING_FILE_SCOPE_MISMATCH', 'File harus diunggah dengan lingkup ruang kelas tujuan.')
+  }
   return { fileId: detail.file.id, fileVersion: currentVersion, fileName: detail.file.name, mimeType: detail.file.mimeType, sizeBytes: detail.file.sizeBytes }
 }
 
@@ -340,22 +398,89 @@ export async function createLearningSpace(
   return { ...response, auditId: audit.id }
 }
 
-export async function listLearningSpaces(context: AuthContext, options: { limit?: number } = {}): Promise<LearningSpace[]> {
-  const limit = Math.min(Math.max(options.limit ?? 50, 1), 100)
+function encodeSpaceCursor(space: LearningSpace): string {
+  return Buffer.from(JSON.stringify({ updatedAt: space.updatedAt, id: space.id }), 'utf8').toString('base64url')
+}
+
+function decodeSpaceCursor(value?: string): { updatedAt: string; id: string } | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Record<string, unknown>
+    return {
+      updatedAt: cleanLearningText(parsed.updatedAt, 'cursor.updatedAt', 48),
+      id: cleanLearningId(parsed.id, 'cursor.id'),
+    }
+  } catch {
+    invalidInput('Cursor ruang pembelajaran tidak valid.')
+  }
+}
+
+function afterSpaceCursor(space: LearningSpace, cursor?: { updatedAt: string; id: string }): boolean {
+  if (!cursor) return true
+  return space.updatedAt < cursor.updatedAt || (space.updatedAt === cursor.updatedAt && space.id > cursor.id)
+}
+
+export async function listLearningSpacesPage(
+  context: AuthContext,
+  options: { limit?: number; cursor?: string } = {},
+): Promise<LearningPage<LearningSpace>> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 50)
+  const cursor = decodeSpaceCursor(options.cursor)
   let spaces: LearningSpace[]
   if (dataMode() === 'mock') spaces = [...learningMockState().spaces.values()].map(clone)
   else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.')
-    const snapshot = await db.collection('learningSpaces').limit(200).get()
-    spaces = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as LearningSpace)
+    const candidateLimit = Math.min(limit * 2 + 1, 101)
+    const pageSpaceQuery = (candidate: Query) => {
+      let paged = candidate.orderBy('updatedAt', 'desc').orderBy(FieldPath.documentId(), 'asc')
+      if (cursor) paged = paged.startAfter(cursor.updatedAt, cursor.id)
+      return paged.limit(candidateLimit)
+    }
+    if (hasRole(context, 'student')) {
+      const candidates = [...new Set([context.uid, ...context.scope.studentIds])].slice(0, 10)
+      const enrollmentSnapshots = await Promise.all(candidates.flatMap(candidate => [
+        db.collection('classEnrollments').where('studentUid', '==', candidate).where('status', '==', 'ACTIVE').limit(candidateLimit).get(),
+        db.collection('classEnrollments').where('studentId', '==', candidate).where('status', '==', 'ACTIVE').limit(candidateLimit).get(),
+      ]))
+      const classIds = [...new Set(enrollmentSnapshots.flatMap(snapshot => snapshot.docs.map(document => String(document.data().classId))))]
+      const [classSpaces, participantSnapshots] = await Promise.all([
+        Promise.all(classIds.slice(0, candidateLimit).map(id => db.collection('learningSpaces').doc(id).get())),
+        Promise.all(candidates.map(candidate => pageSpaceQuery(db.collection('learningSpaces').where('participantUserIds', 'array-contains', candidate)).get())),
+      ])
+      spaces = [
+        ...classSpaces.filter(snapshot => snapshot.exists).map(snapshot => ({ id: snapshot.id, ...snapshot.data() }) as LearningSpace),
+        ...participantSnapshots.flatMap(snapshot => snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as LearningSpace)),
+      ]
+    } else if (hasRole(context, 'lecturer', 'advisor')) {
+      const [managed, participant] = await Promise.all([
+        pageSpaceQuery(db.collection('learningSpaces').where('lecturerIds', 'array-contains', context.uid)).get(),
+        pageSpaceQuery(db.collection('learningSpaces').where('participantUserIds', 'array-contains', context.uid)).get(),
+      ])
+      spaces = [...managed.docs, ...participant.docs].map(document => ({ id: document.id, ...document.data() }) as LearningSpace)
+    } else if (hasRole(context, 'academic_staff') && context.scope.programStudyIds.length) {
+      const snapshots = await Promise.all(context.scope.programStudyIds.slice(0, 10).map(programStudyId => pageSpaceQuery(db.collection('learningSpaces').where('programStudyId', '==', programStudyId)).get()))
+      spaces = snapshots.flatMap(snapshot => snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as LearningSpace))
+    } else if (hasRole(context, 'administrator', 'leader')) {
+      const snapshot = await pageSpaceQuery(db.collection('learningSpaces')).get()
+      spaces = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as LearningSpace)
+    } else spaces = []
   }
+  spaces = [...new Map(spaces.map(space => [space.id, space])).values()]
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))
+    .filter(space => afterSpaceCursor(space, cursor))
   const visible: LearningSpace[] = []
   for (const space of spaces) {
     if ((await learningSpaceAccess(context, space)).canRead) visible.push(space)
-    if (visible.length >= limit) break
+    if (visible.length > limit) break
   }
-  return visible.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).map(clone)
+  const hasMore = visible.length > limit
+  const items = visible.slice(0, limit).map(clone)
+  return { items, ...(hasMore && items.length ? { nextCursor: encodeSpaceCursor(items.at(-1)!) } : {}) }
+}
+
+export async function listLearningSpaces(context: AuthContext, options: { limit?: number; cursor?: string } = {}): Promise<LearningSpace[]> {
+  return (await listLearningSpacesPage(context, options)).items
 }
 
 async function listSpaceRecords<T>(spaceId: string, collection: string, mockValues: () => T[]): Promise<T[]> {
@@ -391,7 +516,7 @@ export async function getLearningSpaceDetail(context: AuthContext, spaceId: stri
 }
 
 function normalizeModule(input: Omit<CreateLearningModuleInput, 'spaceId'>) {
-  if (!['DRAFT', 'PUBLISHED'].includes(input.status)) invalidInput('Status modul tidak valid.')
+  if (!['DRAFT', 'PUBLISHED', 'ARCHIVED'].includes(input.status)) invalidInput('Status modul tidak valid.')
   return {
     title: cleanLearningText(input.title, 'Judul modul', 160),
     description: input.description ? validateSafeRichContent(input.description, 'Deskripsi modul', 5_000) : undefined,
@@ -431,7 +556,12 @@ export async function createLearningModule(context: AuthContext, input: CreateLe
 export async function updateLearningModule(context: AuthContext, id: string, input: UpdateLearningModuleInput, event?: H3Event): Promise<{ module: LearningModule; definition: LearningModuleVersion; auditId: string }> {
   const current = await loadLearningModule(id); const space = await loadLearningSpace(current.spaceId); await requireLearningSpaceManage(context, space)
   const expectedVersion = cleanLearningInteger(input.expectedVersion, 'expectedVersion', 1, 100_000); const normalized = normalizeModule(input)
-  if (current.status === 'PUBLISHED' && normalized.status === 'DRAFT') conflict('INVALID_STATE_TRANSITION', 'Modul terbit tidak dapat dikembalikan menjadi draf.')
+  const transitions: Record<LearningModule['status'], LearningModule['status'][]> = {
+    DRAFT: ['DRAFT', 'PUBLISHED', 'ARCHIVED'],
+    PUBLISHED: ['PUBLISHED', 'ARCHIVED'],
+    ARCHIVED: ['ARCHIVED'],
+  }
+  if (!transitions[current.status].includes(normalized.status)) conflict('INVALID_STATE_TRANSITION', 'Status modul tidak dapat dikembalikan ke tahap sebelumnya.')
   const now = new Date().toISOString(); let module: LearningModule; let definition: LearningModuleVersion
   if (dataMode() === 'mock') {
     const fresh = learningMockState().modules.get(current.id); if (!fresh) notFound('Modul pembelajaran'); if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Modul telah berubah.', { currentVersion: fresh.version })
@@ -446,9 +576,9 @@ export async function updateLearningModule(context: AuthContext, id: string, inp
   return { module, definition, auditId: audit.id }
 }
 
-async function normalizeMaterial(context: AuthContext, input: Omit<CreateLearningMaterialInput, 'spaceId' | 'moduleId'>) {
+async function normalizeMaterial(context: AuthContext, input: Omit<CreateLearningMaterialInput, 'spaceId' | 'moduleId'>, spaceId: string) {
   if (!['RICH_TEXT', 'FILE', 'EXTERNAL_LINK'].includes(input.kind)) invalidInput('Jenis materi tidak valid.')
-  if (!['DRAFT', 'PUBLISHED'].includes(input.status)) invalidInput('Status materi tidak valid.')
+  if (!['DRAFT', 'PUBLISHED', 'ARCHIVED'].includes(input.status)) invalidInput('Status materi tidak valid.')
   const common = { kind: input.kind, title: cleanLearningText(input.title, 'Judul materi', 180), summary: cleanOptionalText(input.summary, 'Ringkasan materi', 500), order: cleanLearningInteger(input.order, 'Urutan materi', 1, 10_000), status: input.status }
   if (input.kind === 'RICH_TEXT') {
     if (!input.content || input.fileId || input.externalUrl) invalidInput('Materi teks harus memiliki content tanpa file atau URL.')
@@ -456,7 +586,7 @@ async function normalizeMaterial(context: AuthContext, input: Omit<CreateLearnin
   }
   if (input.kind === 'FILE') {
     if (!input.fileId || input.content || input.externalUrl) invalidInput('Materi file harus memiliki satu fileId CLEAN.')
-    return { ...common, file: await cleanLearningFileReference(context, input.fileId) }
+    return { ...common, file: await cleanLearningFileReference(context, input.fileId, spaceId) }
   }
   if (!input.externalUrl || input.content || input.fileId) invalidInput('Materi tautan harus memiliki satu externalUrl.')
   return { ...common, externalUrl: validateExternalLearningUrl(input.externalUrl) }
@@ -469,7 +599,7 @@ function materialSnapshot(record: LearningMaterial): LearningMaterialVersion {
 export async function createLearningMaterial(context: AuthContext, input: CreateLearningMaterialInput, idempotencyKey: string, event?: H3Event): Promise<{ material: LearningMaterial; definition: LearningMaterialVersion; replayed: boolean; auditId?: string }> {
   requireIdempotencyKey(idempotencyKey); const module = await loadLearningModule(input.moduleId); const space = await loadLearningSpace(input.spaceId)
   if (module.spaceId !== space.id) invalidInput('Modul tidak berada pada ruang tujuan.'); await requireLearningSpaceManage(context, space)
-  const normalized = await normalizeMaterial(context, input); const hash = requestHash({ spaceId: space.id, moduleId: module.id, ...normalized }); const namespace = `material:create:${idempotencyKey}`
+  const normalized = await normalizeMaterial(context, input, space.id); const hash = requestHash({ spaceId: space.id, moduleId: module.id, ...normalized }); const namespace = `material:create:${idempotencyKey}`
   const replay = await mockIdempotent<{ material: LearningMaterial; definition: LearningMaterialVersion; replayed: boolean }>(namespace, hash); if (replay) return { ...replay, replayed: true }
   const now = new Date().toISOString(); const id = opaqueId('learning_material', `${module.id}:${idempotencyKey}`)
   const material: LearningMaterial = { id, spaceId: space.id, moduleId: module.id, ...normalized, currentVersion: 1, version: 1, createdAt: now, createdBy: context.uid, updatedAt: now, updatedBy: context.uid }
@@ -483,8 +613,13 @@ export async function createLearningMaterial(context: AuthContext, input: Create
 
 export async function updateLearningMaterial(context: AuthContext, id: string, input: UpdateLearningMaterialInput, event?: H3Event): Promise<{ material: LearningMaterial; definition: LearningMaterialVersion; auditId: string }> {
   const current = await loadLearningMaterial(id); const space = await loadLearningSpace(current.spaceId); await requireLearningSpaceManage(context, space)
-  const expectedVersion = cleanLearningInteger(input.expectedVersion, 'expectedVersion', 1, 100_000); const normalized = await normalizeMaterial(context, input)
-  if (current.status === 'PUBLISHED' && normalized.status === 'DRAFT') conflict('INVALID_STATE_TRANSITION', 'Materi terbit tidak dapat dikembalikan menjadi draf.')
+  const expectedVersion = cleanLearningInteger(input.expectedVersion, 'expectedVersion', 1, 100_000); const normalized = await normalizeMaterial(context, input, space.id)
+  const transitions: Record<LearningMaterial['status'], LearningMaterial['status'][]> = {
+    DRAFT: ['DRAFT', 'PUBLISHED', 'ARCHIVED'],
+    PUBLISHED: ['PUBLISHED', 'ARCHIVED'],
+    ARCHIVED: ['ARCHIVED'],
+  }
+  if (!transitions[current.status].includes(normalized.status)) conflict('INVALID_STATE_TRANSITION', 'Status materi tidak dapat dikembalikan ke tahap sebelumnya.')
   const now = new Date().toISOString(); let material: LearningMaterial; let definition: LearningMaterialVersion
   if (dataMode() === 'mock') { const fresh = learningMockState().materials.get(id); if (!fresh) notFound('Materi pembelajaran'); if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Materi telah berubah.', { currentVersion: fresh.version }); material = { ...fresh, ...normalized, currentVersion: fresh.currentVersion + 1, version: fresh.version + 1, updatedAt: now, updatedBy: context.uid }; definition = materialSnapshot(material); learningMockState().materials.set(id, clone(material)); learningMockState().materialVersions.set(definition.id, clone(definition)) }
   else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const reference = db.collection('learningMaterials').doc(id); ;({ material, definition } = await db.runTransaction(async transaction => { const snapshot = await transaction.get(reference); if (!snapshot.exists) notFound('Materi pembelajaran'); const fresh = { id: snapshot.id, ...snapshot.data() } as LearningMaterial; if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Materi telah berubah.', { currentVersion: fresh.version }); const next: LearningMaterial = { ...fresh, ...normalized, currentVersion: fresh.currentVersion + 1, version: fresh.version + 1, updatedAt: now, updatedBy: context.uid }; const version = materialSnapshot(next); transaction.set(reference, next); transaction.create(db.collection('learningMaterialVersions').doc(version.id), version); return { material: next, definition: version } })) }
@@ -495,7 +630,7 @@ export async function updateLearningMaterial(context: AuthContext, id: string, i
 
 export async function duplicateLearningMaterial(context: AuthContext, id: string, input: DuplicateLearningMaterialInput, idempotencyKey: string, event?: H3Event): Promise<{ material: LearningMaterial; definition: LearningMaterialVersion; replayed: boolean; auditId?: string }> {
   const source = await loadLearningMaterial(id); const targetModule = await loadLearningModule(input.targetModuleId); const targetSpace = await loadLearningSpace(targetModule.spaceId); await requireLearningSpaceManage(context, targetSpace)
-  if (source.file) await cleanLearningFileReference(context, source.file.fileId)
+  if (source.file) await cleanLearningFileReference(context, source.file.fileId, targetSpace.id)
   const result = await createLearningMaterial(context, { spaceId: targetSpace.id, moduleId: targetModule.id, kind: source.kind, title: input.title ? cleanLearningText(input.title, 'Judul materi', 180) : source.title, summary: source.summary, content: source.content, fileId: source.file?.fileId, externalUrl: source.externalUrl, order: input.order, status: source.status }, idempotencyKey, event)
   const duplicated = { ...result.material, duplicatedFromId: source.id }; const definition = materialSnapshot(duplicated)
   if (!result.replayed) {
@@ -543,5 +678,62 @@ export async function createLearningAnnouncement(context: AuthContext, input: Cr
   const now = new Date().toISOString(), id = opaqueId('learning_announcement', `${space.id}:${idempotencyKey}`); const announcement: LearningAnnouncement = { id, spaceId: space.id, ...normalized, status: 'PUBLISHED', version: 1, createdAt: now, createdBy: context.uid, updatedAt: now, updatedBy: context.uid }; const response = { announcement, replayed: false }
   if (dataMode() === 'mock') { learningMockState().announcements.set(id, clone(announcement)); storeMockIdempotency(namespace, hash, response) }
   else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const idem = db.collection('learningIdempotency').doc(opaqueId('idem', namespace)); const result = await db.runTransaction(async transaction => { const prior = await transaction.get(idem); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } transaction.create(db.collection('learningAnnouncements').doc(id), announcement); transaction.create(idem, { requestHash: hash, response, createdAt: now }); return response }); if (result.replayed) return result }
-  await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'ANNOUNCEMENT_PUBLISHED', resourceId: id, label: announcement.title, occurredAt: now }); const audit = await appendAudit({ actor: context, action: 'LEARNING_ANNOUNCEMENT_CREATED', resourceType: 'learning_announcement', resourceId: id, after: { spaceId: space.id, pinned: announcement.pinned }, event }); return { ...response, auditId: audit.id }
+  await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'ANNOUNCEMENT_PUBLISHED', resourceId: id, label: announcement.title, occurredAt: now })
+  await notifyClassAnnouncement(space, announcement)
+  const audit = await appendAudit({ actor: context, action: 'LEARNING_ANNOUNCEMENT_CREATED', resourceType: 'learning_announcement', resourceId: id, after: { spaceId: space.id, pinned: announcement.pinned }, event })
+  return { ...response, auditId: audit.id }
+}
+
+export async function updateLearningAnnouncement(
+  context: AuthContext,
+  id: string,
+  input: UpdateLearningAnnouncementInput,
+  event?: H3Event,
+): Promise<{ announcement: LearningAnnouncement; auditId: string }> {
+  const current = await loadLearningAnnouncement(id)
+  const space = await loadLearningSpace(current.spaceId)
+  await requireLearningSpaceManage(context, space)
+  const expectedVersion = cleanLearningInteger(input.expectedVersion, 'expectedVersion', 1, 100_000)
+  const status = cleanLearningText(input.status, 'status', 20) as LearningAnnouncement['status']
+  if (!['PUBLISHED', 'ARCHIVED'].includes(status)) invalidInput('Status pengumuman tidak valid.')
+  if (current.status === 'ARCHIVED' && status === 'PUBLISHED') conflict('INVALID_STATE_TRANSITION', 'Pengumuman yang diarsipkan tidak dapat diterbitkan kembali.')
+  const normalized = {
+    title: cleanLearningText(input.title, 'Judul pengumuman', 180),
+    body: validateSafeRichContent(input.body, 'Isi pengumuman', 10_000),
+    pinned: Boolean(input.pinned),
+    status,
+  }
+  const now = new Date().toISOString()
+  let announcement: LearningAnnouncement
+  if (dataMode() === 'mock') {
+    const fresh = learningMockState().announcements.get(current.id)
+    if (!fresh) notFound('Pengumuman pembelajaran')
+    if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Pengumuman telah berubah.', { currentVersion: fresh.version })
+    announcement = { ...fresh, ...normalized, version: fresh.version + 1, updatedAt: now, updatedBy: context.uid }
+    learningMockState().announcements.set(current.id, clone(announcement))
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.')
+    const reference = db.collection('learningAnnouncements').doc(current.id)
+    announcement = await db.runTransaction(async transaction => {
+      const snapshot = await transaction.get(reference)
+      if (!snapshot.exists) notFound('Pengumuman pembelajaran')
+      const fresh = { id: snapshot.id, ...snapshot.data() } as LearningAnnouncement
+      if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Pengumuman telah berubah.', { currentVersion: fresh.version })
+      const next: LearningAnnouncement = { ...fresh, ...normalized, version: fresh.version + 1, updatedAt: now, updatedBy: context.uid }
+      transaction.set(reference, next)
+      return next
+    })
+  }
+  if (announcement.status === 'PUBLISHED') await notifyClassAnnouncement(space, announcement)
+  const audit = await appendAudit({
+    actor: context,
+    action: announcement.status === 'ARCHIVED' ? 'LEARNING_ANNOUNCEMENT_ARCHIVED' : 'LEARNING_ANNOUNCEMENT_UPDATED',
+    resourceType: 'learning_announcement',
+    resourceId: current.id,
+    before: { version: current.version, status: current.status, pinned: current.pinned },
+    after: { version: announcement.version, status: announcement.status, pinned: announcement.pinned },
+    event,
+  })
+  return { announcement, auditId: audit.id }
 }

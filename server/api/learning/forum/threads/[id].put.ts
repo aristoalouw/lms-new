@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { updateLearningForumThread } from '../../../../services/learning-forum'
+import { updateLearningForumThread } from '../../../../modules/learning'
 import type { SafeRichContent } from '../../../../types/learning'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../../utils/security'

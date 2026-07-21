@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { duplicateLearningMaterial } from '../../../../services/learning'
+import { duplicateLearningMaterial } from '../../../../modules/learning'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../../utils/security'
 import { optionalString, requireInteger, requireRecord, requireString } from '../../../../utils/validation'

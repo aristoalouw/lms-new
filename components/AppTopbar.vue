@@ -30,7 +30,7 @@
             <button class="btn btn-link btn-sm">Tandai dibaca</button>
           </div>
           <div class="notification-list">
-            <NuxtLink v-for="notice in notices" :key="notice.title" :to="notice.to" class="notification-item" @click="notificationsOpen = false">
+            <NuxtLink v-for="notice in visibleNotices" :key="notice.title" :to="notice.to" class="notification-item" @click="notificationsOpen = false">
               <span class="notification-item__icon" :class="`notification-item__icon--${notice.tone}`"><i class="uil" :class="notice.icon" /></span>
               <span><strong>{{ notice.title }}</strong><small>{{ notice.detail }}</small><time>{{ notice.time }}</time></span>
             </NuxtLink>
@@ -88,9 +88,11 @@
 
 <script setup lang="ts">
 import { navigation, roleLabels } from '~/config/navigation'
+import type { Feature } from '~/shared/features'
 
 const { toggleSidebar, commandOpen, notificationsOpen } = useAppShell()
 const { user, logout, switchRole } = useAuth()
+const { enabled } = useFeatureFlags()
 const searchInput = ref<HTMLInputElement>()
 const query = ref('')
 
@@ -99,9 +101,17 @@ const notices = [
   { title: 'Pembayaran berhasil direkonsiliasi', detail: 'Batch VA Bank Mandiri · 84 transaksi', time: '24 menit lalu', icon: 'uil-receipt', tone: 'green', to: '/keuangan' },
   { title: 'Batas persetujuan KRS besok', detail: '36 mahasiswa menunggu persetujuan', time: '1 jam lalu', icon: 'uil-clock', tone: 'blue', to: '/akademik/krs' },
 ]
+const noticeFeatures: Record<string, Feature> = {
+  '/pddikti': 'pddikti',
+  '/keuangan': 'finance',
+  '/akademik/krs': 'krs',
+}
+const visibleNotices = computed(() => notices.filter(notice => enabled(noticeFeatures[notice.to] || 'notifications')))
 
-const commands = navigation.flatMap(group => group.items.map(item => ({ ...item, context: group.label })))
-const filteredCommands = computed(() => commands.filter(item => `${item.label} ${item.context}`.toLowerCase().includes(query.value.toLowerCase())).slice(0, 7))
+const commands = computed(() => navigation.flatMap(group => group.items
+  .filter(item => enabled(item.feature))
+  .map(item => ({ ...item, context: group.label }))))
+const filteredCommands = computed(() => commands.value.filter(item => `${item.label} ${item.context}`.toLowerCase().includes(query.value.toLowerCase())).slice(0, 7))
 const activeRoleLabel = computed(() => user.value ? roleLabels[user.value.activeRole] : '')
 
 watch(commandOpen, async (open) => {

@@ -59,6 +59,7 @@ const TYPE_POLICIES: readonly TypePolicy[] = [
 
 const SCOPED_UPLOAD_ROLES: UserRole[] = [
   'applicant',
+  'student',
   'lecturer',
   'advisor',
   'academic_staff',
@@ -159,6 +160,7 @@ export function normalizeFileAccess(
     unitIds: [],
     programStudyIds: [],
     studentIds: [],
+    learningSpaceIds: [],
   }
   if (visibility === 'OWNER') return empty
   if (!context.roles.some(role => SCOPED_UPLOAD_ROLES.includes(role))) {
@@ -175,16 +177,17 @@ export function normalizeFileAccess(
   const unitIds = uniqueStrings(requested?.unitIds, 'unitIds')
   const programStudyIds = uniqueStrings(requested?.programStudyIds, 'programStudyIds')
   const studentIds = uniqueStrings(requested?.studentIds, 'studentIds')
+  const learningSpaceIds = uniqueStrings(requested?.learningSpaceIds, 'learningSpaceIds')
 
   if (!context.roles.includes('administrator')) {
     requireSubset(unitIds, context.scope.unitIds, 'Unit')
     requireSubset(programStudyIds, context.scope.programStudyIds, 'Program studi')
     requireSubset(studentIds, context.scope.studentIds, 'Mahasiswa')
   }
-  if (![allowedRoles, allowedUserIds, unitIds, programStudyIds, studentIds].some(items => items.length)) {
+  if (![allowedRoles, allowedUserIds, unitIds, programStudyIds, studentIds, learningSpaceIds].some(items => items.length)) {
     invalidInput('File bersama wajib memiliki penerima atau lingkup akses.')
   }
-  return { visibility, allowedRoles, allowedUserIds, unitIds, programStudyIds, studentIds }
+  return { visibility, allowedRoles, allowedUserIds, unitIds, programStudyIds, studentIds, learningSpaceIds }
 }
 
 export function quotaLimitBytes(): number {

@@ -1,5 +1,5 @@
 import { getRouterParam } from 'h3'
-import { getPrivateFileDetail } from '../../services/files'
+import { getPrivateFileDetail } from '../../modules/files'
 import { requireAuth } from '../../utils/auth'
 import { defineCampusHandler, markPrivateResponse } from '../../utils/security'
 import { requireString } from '../../utils/validation'

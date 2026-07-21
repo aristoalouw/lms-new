@@ -9,6 +9,8 @@ type DashboardSections = Partial<Pick<DashboardSnapshot, 'academic' | 'finance' 
 interface Summary { periodId: string; updatedAt: string; filter: { programStudyId?: string }; sections: DashboardSections }
 
 const { user } = useAuth()
+const { can } = useAuth()
+const { isLmsMvp } = useFeatureFlags()
 const { $api } = useNuxtApp()
 const summary = ref<Summary | null>(null)
 const filters = reactive({ periodId: '2025-2026-2', programStudyId: '' })
@@ -39,7 +41,12 @@ const cards = computed(() => {
   ]
 })
 
-const links = computed(() => [
+const links = computed(() => isLmsMvp.value ? [
+  ...(can('classes:manage') ? [{ to: '/admin/kelas', label: 'Kelas & enrolment', detail: 'Kelola kelas, dosen, dan roster kanonik', icon: 'uil-presentation-check' }] : []),
+  { to: '/pembelajaran', label: 'Pembelajaran', detail: 'Materi, tugas, diskusi, dan feedback', icon: 'uil-presentation-play' },
+  { to: '/notifikasi', label: 'Notifikasi', detail: 'Pembaruan aktivitas kelas', icon: 'uil-bell' },
+  { to: '/berkas', label: 'Berkas privat', detail: 'File pembelajaran yang telah dipindai', icon: 'uil-folder-open' },
+] : [
   { to: '/akademik/kelas', label: 'Pelaksanaan kelas', detail: 'Presensi, jurnal, dan nilai', icon: 'uil-presentation-check' },
   { to: '/akademik/krs', label: 'KRS', detail: 'Pengisian dan persetujuan', icon: 'uil-clipboard-alt' },
   { to: '/pddikti', label: 'PDDIKTI', detail: 'Readiness dan rekonsiliasi', icon: 'uil-sync' },
@@ -69,8 +76,8 @@ onMounted(load)
 
 <template>
   <div class="page-stack dashboard-page" data-clarity-mask="true">
-    <AppPageHeader eyebrow="Ringkasan terotorisasi" :title="`Selamat datang, ${user?.name || 'Pengguna'}`" description="Indikator hanya menampilkan bagian yang diizinkan role dan lingkup data Anda.">
-      <template #actions><button class="btn btn-outline-secondary" :disabled="exporting || !summary" @click="download('csv')"><i class="uil uil-file-spreadsheet me-2" />Spreadsheet</button><button class="btn btn-primary" :disabled="exporting || !summary" @click="download('pdf')"><i class="uil uil-file-graph me-2" />PDF</button></template>
+    <AppPageHeader eyebrow="Ringkasan terotorisasi" :title="`Selamat datang, ${user?.name || 'Pengguna'}`" :description="isLmsMvp ? 'Akses kelas, materi, tugas, diskusi, presensi, dan administrasi LMS sesuai role Anda.' : 'Indikator hanya menampilkan bagian yang diizinkan role dan lingkup data Anda.'">
+      <template v-if="!isLmsMvp" #actions><button class="btn btn-outline-secondary" :disabled="exporting || !summary" @click="download('csv')"><i class="uil uil-file-spreadsheet me-2" />Spreadsheet</button><button class="btn btn-primary" :disabled="exporting || !summary" @click="download('pdf')"><i class="uil uil-file-graph me-2" />PDF</button></template>
     </AppPageHeader>
 
     <div v-if="errorMessage" class="alert alert-danger mb-0">{{ errorMessage }}</div>

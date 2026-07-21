@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { finalizeLearningSubmission } from '../../../../services/learning-submissions'
+import { finalizeLearningSubmission } from '../../../../modules/learning'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../../utils/security'
 import { requireInteger, requireRecord, requireString } from '../../../../utils/validation'

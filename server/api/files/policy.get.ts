@@ -1,4 +1,4 @@
-import { filePolicyDescriptor } from '../../services/files-policy'
+import { filePolicyDescriptor } from '../../modules/files'
 import { requireAuth } from '../../utils/auth'
 import { defineCampusHandler, markPrivateResponse } from '../../utils/security'
 

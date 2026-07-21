@@ -1,28 +1,15 @@
 import type { CampusUser, UserRole } from '~/types/domain'
+import type { Permission } from '~/shared/auth'
+import { permissionsForRole } from '~/shared/auth'
 import { signInWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth'
-
-const administratorPermissions = ['*']
-
-const rolePermissions: Record<UserRole, string[]> = {
-  applicant: ['dashboard.read', 'pmb.read', 'finance.read', 'file.read', 'notification.read'],
-  administrator: administratorPermissions,
-  leader: ['dashboard.read', 'academic.read', 'finance.read', 'pmb.read', 'pddikti.read', 'evaluation.read', 'graduation.read', 'tracer.read', 'audit.read', 'notification.read'],
-  academic_staff: ['dashboard.read', 'academic.read', 'academic.write', 'learning.read', 'pddikti.read', 'evaluation.read', 'graduation.read', 'student_affairs.read', 'service.read', 'file.read', 'notification.read'],
-  finance_staff: ['dashboard.read', 'finance.read', 'finance.write', 'pmb.read', 'service.read', 'notification.read', 'file.read'],
-  admissions_staff: ['dashboard.read', 'pmb.read', 'pmb.write', 'finance.read', 'notification.read', 'file.read'],
-  student_affairs_staff: ['dashboard.read', 'student_affairs.read', 'student_affairs.write', 'tracer.read', 'service.read', 'file.read', 'notification.read'],
-  lecturer: ['dashboard.read', 'academic.read', 'learning.read', 'learning.write', 'evaluation.read', 'file.read', 'notification.read'],
-  advisor: ['dashboard.read', 'academic.read', 'academic.approve', 'learning.read', 'student_affairs.read', 'notification.read'],
-  student: ['dashboard.read', 'academic.read', 'learning.read', 'finance.read', 'pmb.read', 'student_affairs.read', 'evaluation.read', 'graduation.read', 'tracer.read', 'service.read', 'file.read', 'notification.read'],
-  guardian: ['dashboard.read', 'academic.read', 'finance.read', 'notification.read'],
-}
 
 type ServerSession = {
   uid: string
   email?: string
   displayName: string
   roles: UserRole[]
-  permissions: string[]
+  permissions: Permission[]
+  rolePermissions: Partial<Record<UserRole, Permission[]>>
   scope: {
     unitIds: string[]
     programStudyIds: string[]
@@ -51,8 +38,8 @@ const userFromSession = (session: ServerSession, preferredRole?: UserRole): Camp
     unitId: session.scope.unitIds[0],
     programStudyId: session.scope.programStudyIds[0],
     studentId: session.scope.studentIds[0],
-    // Client permissions only shape navigation. Every operation is authorized again by the server.
-    permissions: rolePermissions[activeRole],
+    permissions: session.rolePermissions[activeRole] || [],
+    rolePermissions: session.rolePermissions,
   }
 }
 
@@ -64,22 +51,30 @@ const demoUser: CampusUser = {
   roles: ['administrator', 'leader', 'academic_staff'],
   activeRole: 'administrator',
   unitId: 'universitas',
-  permissions: administratorPermissions,
+  permissions: permissionsForRole('administrator'),
+  rolePermissions: {
+    administrator: permissionsForRole('administrator'),
+    leader: permissionsForRole('leader'),
+    academic_staff: permissionsForRole('academic_staff'),
+  },
 }
 
 export const useAuth = () => {
   const config = useRuntimeConfig()
-  const user = useState<CampusUser | null>('auth.user', () => config.public.demoMode ? demoUser : null)
+  const user = useState<CampusUser | null>('auth.user', () => {
+    if (!config.public.demoMode || config.public.featureProfile === 'lms-mvp') return null
+    return demoUser
+  })
   const pending = useState<boolean>('auth.pending', () => false)
   const authError = useState<string | null>('auth.error', () => null)
-  const restored = useState<boolean>('auth.restored', () => Boolean(config.public.demoMode))
+  const restored = useState<boolean>('auth.restored', () => Boolean(config.public.demoMode && config.public.featureProfile !== 'lms-mvp'))
   const requestFetch = useRequestFetch()
 
   const isAuthenticated = computed(() => Boolean(user.value))
 
   const can = (permission?: string) => {
     if (!permission) return true
-    return Boolean(user.value?.permissions.includes('*') || user.value?.permissions.includes(permission))
+    return Boolean(user.value?.permissions.includes(permission as Permission))
   }
 
   const login = async (email: string, password: string) => {
@@ -127,7 +122,7 @@ export const useAuth = () => {
   }
 
   const restoreSession = async () => {
-    if (restored.value || config.public.demoMode) return user.value
+    if (restored.value || (config.public.demoMode && config.public.featureProfile !== 'lms-mvp')) return user.value
     pending.value = true
     try {
       const response = await requestFetch<{ session: ServerSession }>('/api/auth/session')
@@ -146,7 +141,7 @@ export const useAuth = () => {
     user.value = {
       ...user.value,
       activeRole: role,
-      permissions: rolePermissions[role],
+      permissions: user.value.rolePermissions[role] || [],
     }
   }
 

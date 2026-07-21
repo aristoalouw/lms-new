@@ -8,6 +8,6 @@ export default defineCampusHandler(async (event) => {
   markPrivateResponse(event)
   const context = await requireAuth(event)
   const query = getQuery(event)
-  const limit = query.limit === undefined ? 50 : requireInteger(Number(query.limit), 'limit', 1, 100)
+  const limit = query.limit === undefined ? 50 : requireInteger(Number(query.limit), 'limit', 1, 50)
   return { outbox: await listEmailOutbox(context, limit) }
 })

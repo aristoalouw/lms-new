@@ -1,5 +1,5 @@
 import { getRouterParam } from 'h3'
-import { getAcademicClassDetail } from '../../../../services/academic-classes'
+import { getAcademicClassDetail } from '../../../../modules/classes'
 import { requireAuth } from '../../../../utils/auth'
 import { defineCampusHandler, markPrivateResponse } from '../../../../utils/security'
 import { requireString } from '../../../../utils/validation'

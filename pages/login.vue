@@ -7,6 +7,8 @@ definePageMeta({
 useHead({ title: 'Masuk' })
 
 const config = useRuntimeConfig()
+const route = useRoute()
+const { enabled } = useFeatureFlags()
 const { login, pending, authError } = useAuth()
 const email = ref(config.public.demoMode ? 'alya.prameswari@kampus.ac.id' : '')
 const password = ref(config.public.demoMode ? 'demo-nusa-campus' : '')
@@ -20,6 +22,11 @@ const resetMessage = ref('')
 const resetError = ref('')
 let resetIdempotencyKey = ''
 
+const redirectAfterLogin = computed(() => {
+  const value = typeof route.query.redirect === 'string' ? route.query.redirect : ''
+  return value.startsWith('/') && !value.startsWith('//') ? value : '/'
+})
+
 const submitLogin = async () => {
   localError.value = ''
 
@@ -30,7 +37,7 @@ const submitLogin = async () => {
 
   try {
     await login(email.value.trim(), password.value)
-    await navigateTo('/')
+    await navigateTo(redirectAfterLogin.value)
   } catch {
     localError.value = authError.value || 'Login gagal. Periksa kembali akun Anda.'
   }
@@ -202,7 +209,7 @@ watch(resetEmail, () => { resetIdempotencyKey = '' })
           <button class="btn btn-outline-primary w-100 mt-3" type="submit" :disabled="resetPending"><span v-if="resetPending" class="spinner-border spinner-border-sm me-2" aria-hidden="true" />Kirim petunjuk pemulihan</button>
         </form>
 
-        <div class="candidate-note">
+        <div v-if="enabled('admissions')" class="candidate-note">
           <span>Calon mahasiswa?</span>
           <NuxtLink to="/pmb/informasi">Lihat informasi PMB</NuxtLink>
           <span aria-hidden="true">·</span>

@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { issuePrivateFileDownload } from '../../../services/files'
+import { issuePrivateFileDownload } from '../../../modules/files'
 import { requireAuth } from '../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../utils/security'
 import { requireInteger, requireRecord, requireString } from '../../../utils/validation'

@@ -1,5 +1,5 @@
 import { getRouterParam, readBody } from 'h3'
-import { moderateLearningForumPost } from '../../../../../services/learning-forum'
+import { moderateLearningForumPost } from '../../../../../modules/learning'
 import { requireAuth } from '../../../../../utils/auth'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../../../utils/security'
 import { requireInteger, requireRecord, requireString } from '../../../../../utils/validation'

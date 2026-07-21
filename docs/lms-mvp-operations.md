@@ -22,7 +22,27 @@ Set `APP_FEATURE_PROFILE=lms-mvp`, `CAMPUS_DATA_MODE=firebase`, and `ALLOW_PRODU
 
 ## Staging pilot
 
-1. Deploy Firestore Rules, Storage Rules, and indexes to the staging Firebase project.
+Project staging resmi adalah `sttsp-lms-staging`. Cloud Firestore `(default)` memakai Standard edition, production-mode Rules, dan lokasi immutable `asia-southeast2` (Jakarta). Email/password Authentication aktif dan web app staging terdaftar. Google Analytics tetap nonaktif sampai ada persetujuan privasi yang terpisah.
+
+Deploy Rules dan indexes dengan target eksplisit dari root repository:
+
+```powershell
+firebase use staging
+npm run test:rules
+firebase deploy --config firebase/firebase.json --project sttsp-lms-staging --only firestore:rules,firestore:indexes
+```
+
+Jangan mengandalkan project default global milik operator. Verifikasi bahwa output deploy menyebut `sttsp-lms-staging` sebelum menyetujui perubahan.
+
+Cloud Storage for Firebase pada project baru memerlukan Blaze/billing. Hubungkan billing hanya setelah pemilik menyetujui billing account, budget, dan alert; kemudian buat bucket di `asia-southeast2`, catat nama bucket pada secret/environment staging, lalu deploy Storage Rules secara terpisah:
+
+```powershell
+firebase deploy --config firebase/firebase.json --project sttsp-lms-staging --only storage
+```
+
+Setelah layanan dasar tersedia:
+
+1. Deploy Firestore Rules, Storage Rules, dan indexes ke project staging dari commit release yang sama.
 2. Build an immutable Nitro image, place it behind `infra/nginx`, and run `scripts/smoke-production.ps1` against HTTPS.
 3. Seed only synthetic or approved limited data for one program study.
 4. Prepare 200 distinct synthetic student session fixtures outside Git and run:

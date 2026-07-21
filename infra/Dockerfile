@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22.23.1-bookworm-slim AS build
+FROM node:24.18.0-bookworm-slim AS build
 
 WORKDIR /app
 
@@ -32,7 +32,7 @@ ENV NODE_ENV=production \
     APP_FEATURE_PROFILE=${APP_FEATURE_PROFILE}
 RUN npm run build
 
-FROM node:22.23.1-bookworm-slim AS runtime
+FROM node:24.18.0-bookworm-slim AS runtime
 
 ARG APP_VERSION=development
 ARG APP_FEATURE_PROFILE=lms-mvp

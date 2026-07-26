@@ -9,9 +9,11 @@ import {
   getAcademicClassDetail,
   getOwnPublishedResult,
   issueAttendanceChallenge,
+  listClassAttendancePage,
   listAcademicClasses,
   publishGrades,
   resetAcademicClassStateForTests,
+  upsertMockKrsClassEnrollment,
 } from '../../server/services/academic-classes'
 import { CampusError } from '../../server/utils/errors'
 import { mockState, resetMockState } from '../../server/utils/mock-store'
@@ -164,6 +166,52 @@ describe('QR and manual attendance', () => {
       reason: 'Koreksi dari unit yang tidak memiliki lingkup.',
       expectedVersion: 0,
     }, 'manual-attendance-004')).rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
+  })
+
+  it('paginates a lecturer meeting roster and limits students to their own history', async () => {
+    for (let index = 1; index <= 51; index += 1) {
+      const studentId = `history-student-${String(index).padStart(3, '0')}`
+      upsertMockKrsClassEnrollment({
+        classId,
+        studentId,
+        studentUid: studentId,
+        studentNumber: `H${String(index).padStart(4, '0')}`,
+        studentName: `Mahasiswa Histori ${index}`,
+        programStudyId: 'management-s1',
+        periodId: '2025-2026-2',
+        sourceRef: `history-source-${index}`,
+        actorId: 'advisor-001',
+        now: '2026-07-28T02:00:00.000Z',
+      })
+      await correctAttendance(advisor(), classId, {
+        meetingNumber: 2,
+        studentId,
+        status: 'PRESENT',
+        reason: 'Kehadiran uji pagination telah diverifikasi oleh dosen.',
+        expectedVersion: 0,
+      }, `manual-attendance-history-${String(index).padStart(3, '0')}`)
+    }
+    await correctAttendance(advisor(), classId, {
+      meetingNumber: 1,
+      studentId: 'student-001',
+      status: 'PRESENT',
+      reason: 'Mahasiswa hadir dan bukti pertemuan telah diverifikasi.',
+      expectedVersion: 0,
+    }, 'manual-attendance-history-own')
+
+    const first = await listClassAttendancePage(advisor(), classId, { meetingNumber: 2, limit: 50 })
+    const second = await listClassAttendancePage(advisor(), classId, { meetingNumber: 2, limit: 50, cursor: first.nextCursor })
+    expect(first.items).toHaveLength(50)
+    expect(first.nextCursor).toBeTruthy()
+    expect(second.items).toHaveLength(1)
+
+    const own = await listClassAttendancePage(student('student-001'), classId)
+    expect(own.items).toHaveLength(1)
+    expect(own.items[0]).toMatchObject({ studentId: 'student-001', meetingNumber: 1 })
+    await expect(listClassAttendancePage(student('student-001'), classId, { studentId: 'student-002' }))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
+    await expect(listClassAttendancePage(authContext('admin-001', ['administrator']), classId))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
   })
 })
 

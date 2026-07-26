@@ -1,6 +1,6 @@
 # Deployment produksi
 
-Panduan ini menargetkan host Linux dengan Docker Engine/Compose v2. Operator dapat menjalankan perintah dari PowerShell 7 melalui SSH/CI. Nginx container adalah satu-satunya port publik; port Nuxt 3000 tidak dipublikasikan.
+Panduan ini menargetkan host Linux dengan Docker Engine/Compose v2. Operator dapat menjalankan perintah dari PowerShell 7 melalui SSH/CI. Nginx container adalah satu-satunya port publik; port Nuxt 3000 tidak dipublikasikan. Untuk Hostinger Business managed Node.js Web App, gunakan [runbook Hostinger](./hostinger-node-deployment.md), bukan konfigurasi Nginx ini.
 
 ## Prasyarat
 
@@ -24,6 +24,8 @@ Nilai produksi minimum:
 
 ```dotenv
 NODE_ENV=production
+DEPLOYMENT_TARGET=docker
+TRUSTED_PROXY_HOPS=1
 NUXT_PUBLIC_APP_ENVIRONMENT=production
 NUXT_PUBLIC_API_BASE_URL=/api
 NUXT_PUBLIC_DEMO_MODE=false

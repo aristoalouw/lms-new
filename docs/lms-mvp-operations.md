@@ -60,9 +60,34 @@ Set server `SENTRY_DSN`, restricted browser `NUXT_PUBLIC_SENTRY_DSN`, `SENTRY_EN
 
 Create alerts for sustained HTTP 5xx, readiness failures, error-rate regression after a release, and a sudden increase in rejected file scans. Investigate using release and `X-Request-ID`; do not attach raw request bodies or user records.
 
+## Capacity, quota, and cost guardrails
+
+The pilot capacity assumption is approximately 100 students plus a small, bounded set of lecturers and administrators. It is not permission to scale without measuring staging traffic and revisiting quotas.
+
+- Every list endpoint uses indexed cursor pagination with at most 50 records; a missing index is a deployment failure, not a reason to scan a collection in application memory.
+- Upload sessions expire after 10 minutes and signed download URLs after 5 minutes. PDF uploads are capped at 25 MiB; JPEG/PNG uploads are capped at 10 MiB.
+- The current per-owner default `FILE_QUOTA_BYTES=262144000` is 250 MiB. At 100 student owners this permits about 24.4 GiB (25 GB) before lecturer files, versions, quarantine, and backup copies. For synthetic staging, start with `FILE_QUOTA_BYTES=52428800` (50 MiB) unless the UAT dataset needs more. Production quota changes require an explicit storage forecast and owner approval.
+- Bound notification fan-out and background batches, monitor retry backlog, and alert before queues create repeated reads/writes. Never place submissions, grades, or file bodies in notification payloads.
+- Create project budget alerts at 50%, 75%, 90%, and 100% of the approved monthly amount. Add service quota warnings at 70%, review daily Firestore reads/writes/deletes and Storage growth during pilot, and investigate unexpected read amplification before raising a quota.
+- Do not enable billing, paid backup, email delivery, or another paid service from this runbook. Record its owner, budget, alert recipients, and approval before enabling it.
+
+Staging and production must use different Firebase project IDs, databases/buckets, credentials, budget alerts, backup destinations, domains, and Sentry environments. Staging is `sttsp-lms-staging`; the production project and bucket remain explicit release inputs and must never be inferred from the operator's Firebase default.
+
+Firestore TTL is declared in `firebase/firestore.indexes.json` for temporary idempotency keys, communication deduplication keys, rate-limit buckets, upload sessions, and attendance challenges only. It is asynchronous and does not replace synchronous expiry checks. Monitor expired-record count and oldest expiry; investigate records that remain materially beyond the observed cleanup window. TTL is not applied to audit, outbox/inbox, attendance results, grades, submissions, files, or other durable records. Verify plan-specific TTL and delete-operation costs before approving the staging deployment.
+
 ## Backup and isolated restore
 
-Follow `docs/backup-restore.md` and `scripts/backup-firebase.ps1`. Restore into a separate recovery project, deploy the same Rules/indexes, compare collection/object counts, and sample LMS records (`academicClasses`, `classEnrollments`, `learning*`, `files`, `fileVersions`, and attendance subcollections). Record observed RPO and RTO in the pilot sign-off. Never point the recovery drill at production clients.
+Follow `docs/backup-restore.md` and `scripts/backup-firebase.ps1`. Restore into a disposable recovery project, deploy the same release's Rules/indexes, and keep email plus every external integration disabled. Never point a recovery drill at production clients.
+
+Before the drill, record:
+
+- ticket, approval, operator/reviewer, source project/database/bucket, isolated target project/database/bucket, and planned window;
+- immutable commit/release, Rules and indexes revision, backup URI/watermark, and requested RPO/RTO;
+- expected counts and aggregate checksums for durable LMS collections and Storage objects without copying PII into the ticket.
+
+After restore, compare durable `accounts`, `academicClasses`, `classEnrollments`, `learning*`, `files`, `fileVersions`, attendance records, notifications/outbox, and `auditLogs`; sample non-sensitive IDs and file checksums. Do not require count equality for the six temporary TTL collection groups because deletion is asynchronous on both sides. Instead verify the TTL allowlist, Timestamp type, application expiry behavior, and absence of premature deletion.
+
+Run the primary journey (admin creates users/class; lecturer publishes material/assignment; student accesses, submits, and attends; lecturer grades; student sees the published result) plus anonymous, cross-class, withdrawn-enrolment, and unpublished-grade negative checks. The evidence record must contain actual start/end, observed RPO/RTO, source/target IDs, release, expected/actual counts, sample/checksum results, exceptions, reviewer, pass/fail decision, and approved recovery-project cleanup. Current external blockers are an approved production Firebase project/bucket, staging Storage/billing approval, backup credentials/destination, and an approved drill window; none is enabled or deployed by this implementation.
 
 ## Production promotion
 

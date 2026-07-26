@@ -18,6 +18,7 @@ import {
 } from '../../server/services/learning-forum'
 import { learningMockState, resetLearningMockState } from '../../server/services/learning-mock'
 import { finalizeLearningSubmission, gradeLearningSubmission, listLearningAssignmentSubmissions, listLearningAssignmentSubmissionsPage, saveLearningSubmissionDraft } from '../../server/services/learning-submissions'
+import { notificationModuleState, resetNotificationModuleState } from '../../server/services/notifications-state'
 import { CampusError } from '../../server/utils/errors'
 import { resetMockState } from '../../server/utils/mock-store'
 import { authContext } from './fixtures'
@@ -31,7 +32,7 @@ const openedAt = Date.parse('2026-07-22T03:00:00.000Z')
 describe('learning spaces, assignments, submissions, and forums', () => {
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
-    resetMockState(); resetAcademicClassStateForTests(); resetLearningMockState()
+    resetMockState(); resetAcademicClassStateForTests(); resetLearningMockState(); resetNotificationModuleState()
   })
 
   it('derives access from the academic-class roster and manager assignment', async () => {
@@ -82,6 +83,14 @@ describe('learning spaces, assignments, submissions, and forums', () => {
     const final = await finalizeLearningSubmission(student(), { assignmentId, expectedVersion: draft.submission.version }, 'learning-final-key-0003', undefined, openedAt)
     const grade = await gradeLearningSubmission(lecturer(), { attemptId: final.attempt.id, expectedVersion: 0, score: 88.5, feedback: { format: 'PLAIN_TEXT', text: 'Argumentasi kuat dan terstruktur.' }, status: 'PUBLISHED' })
     expect(grade.grade).toMatchObject({ attemptId: final.attempt.id, score: 88.5, status: 'PUBLISHED', version: 1 })
+    expect([...notificationModuleState().notifications.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientUid: 'advisor-001', templateKey: 'learning-submission-finalized' }),
+      expect.objectContaining({ recipientUid: 'student-001', templateKey: 'learning-grade-published' }),
+    ]))
+    expect([...notificationModuleState().outbox.values()]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ recipientUid: 'advisor-001', templateKey: 'learning-submission-finalized', status: 'QUEUED' }),
+      expect.objectContaining({ recipientUid: 'student-001', templateKey: 'learning-grade-published', status: 'QUEUED' }),
+    ]))
     expect((await getLearningSpaceDetail(student(), spaceId)).ownGrades).toEqual([expect.objectContaining({ score: 88.5 })])
     expect((await listLearningAssignmentSubmissions(lecturer(), assignmentId))[0]).toMatchObject({ attempts: [{ id: final.attempt.id }], grade: { score: 88.5 } })
   })

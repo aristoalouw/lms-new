@@ -203,6 +203,13 @@ export interface LearningGrade {
   updatedAt: string
 }
 
+export interface LearningOwnAssignmentHistory {
+  assignmentId: string
+  submission?: LearningSubmission
+  attempts: LearningSubmissionAttempt[]
+  publishedGrade?: LearningGrade
+}
+
 export interface LearningAnnouncement {
   id: string
   spaceId: string

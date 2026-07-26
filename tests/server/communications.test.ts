@@ -1,9 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   deliverEmailOutboxRecord,
   enqueuePasswordResetEmail,
   enqueueNotification,
   getInAppNotification,
+  getNotificationPreferences,
+  listEmailOutbox,
+  listNotificationTemplates,
   markInAppNotificationRead,
   nextEmailDeliveryAt,
   retryEmailOutbox,
@@ -78,11 +81,19 @@ describe('administrative service tickets', () => {
 })
 
 describe('notification records and email outbox', () => {
+  const previousFeatureProfile = process.env.APP_FEATURE_PROFILE
+
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
+    process.env.APP_FEATURE_PROFILE = 'full-campus'
     resetMockState()
     resetTicketModuleState()
     resetNotificationModuleState()
+  })
+
+  afterEach(() => {
+    if (previousFeatureProfile === undefined) delete process.env.APP_FEATURE_PROFILE
+    else process.env.APP_FEATURE_PROFILE = previousFeatureProfile
   })
 
   it('enqueues in-app and email delivery once for an idempotency key', async () => {
@@ -184,6 +195,111 @@ describe('notification records and email outbox', () => {
     expect(result.outbox).toMatchObject({ status: 'QUEUED', attempts: 0 })
     expect(result.outbox).not.toHaveProperty('recipientEmail')
     expect(result.outbox).not.toHaveProperty('textBody')
+    expect(result.outbox).not.toHaveProperty('recipientUid')
+    expect(result.outbox).not.toHaveProperty('subject')
+  })
+
+  it('keeps LMS MVP preferences owner-scoped and disables hidden email categories', async () => {
+    process.env.APP_FEATURE_PROFILE = 'lms-mvp'
+    const student = authContext('student-001', ['student'])
+    const updated = await updateNotificationPreferences(student, {
+      inAppEnabled: true,
+      emailEnabled: true,
+      categoryEmail: { ACADEMIC: true, FINANCE: true, LEARNING: true, SERVICE: true, SYSTEM: true },
+      quietHours: { start: '21:00', end: '06:00', timezone: 'Asia/Jakarta' },
+    })
+    expect(updated.preferences).toMatchObject({
+      uid: 'student-001',
+      categoryEmail: { ACADEMIC: false, FINANCE: false, LEARNING: true, SERVICE: false, SYSTEM: true },
+    })
+    expect(await getNotificationPreferences('student-001')).toEqual(updated.preferences)
+  })
+
+  it('shows administrators only learning and system templates in LMS MVP', async () => {
+    const administrator = authContext('admin-001', ['administrator'])
+    const templateInput = (category: 'LEARNING' | 'SYSTEM') => ({
+      name: `${category} template`,
+      category,
+      titleTemplate: `${category} title`,
+      bodyTemplate: `${category} body`,
+      emailSubjectTemplate: `${category} subject`,
+      emailBodyTemplate: `${category} email body`,
+      channels: ['IN_APP', 'EMAIL'] as Array<'IN_APP' | 'EMAIL'>,
+      active: true,
+      expectedVersion: 0,
+    })
+    await upsertNotificationTemplate(administrator, 'learning-mvp-template', templateInput('LEARNING'))
+    await upsertNotificationTemplate(administrator, 'system-mvp-template', templateInput('SYSTEM'))
+
+    process.env.APP_FEATURE_PROFILE = 'lms-mvp'
+    const templates = await listNotificationTemplates(administrator)
+    expect(templates.map(template => template.key)).toEqual(expect.arrayContaining([
+      'learning-mvp-template',
+      'system-mvp-template',
+      'learning-announcement-published',
+      'learning-material-published',
+      'learning-assignment-published',
+      'learning-submission-finalized',
+      'learning-grade-published',
+    ]))
+    expect(templates.every(template => ['LEARNING', 'SYSTEM'].includes(template.category))).toBe(true)
+    await expect(listNotificationTemplates(authContext('student-001', ['student'])))
+      .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+    await expect(enqueueNotification(authContext('student-001', ['student']), {
+      recipientUid: 'student-002',
+      templateKey: 'learning-announcement-published',
+      variables: { spaceTitle: 'Kelas', resourceTitle: 'Pengumuman' },
+      actionPath: '/pembelajaran/class-mgt-401-a',
+    }, 'student-direct-notification-0001')).rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+  })
+
+  it('bounds and redacts LMS MVP outbox operations while hiding non-MVP records', async () => {
+    const record = (id: string, category: 'LEARNING' | 'SERVICE', templateKey: string): EmailOutboxRecord => ({
+      id,
+      recipientUid: 'student-001',
+      recipientEmail: 'nabila@example.test',
+      deliveryKind: 'RENDERED_TEMPLATE',
+      templateKey,
+      category,
+      subject: 'Private subject',
+      textBody: 'Private body',
+      status: 'DEAD_LETTER',
+      attempts: 5,
+      maxAttempts: 5,
+      nextAttemptAt: '2026-07-21T00:00:00.000Z',
+      createdAt: '2026-07-21T00:00:00.000Z',
+      updatedAt: '2026-07-21T01:00:00.000Z',
+      providerMessageId: 'provider-private-id',
+      lastError: { code: 'TIMEOUT', message: 'Provider detail', occurredAt: '2026-07-21T01:00:00.000Z' },
+    })
+    const state = notificationModuleState()
+    state.outbox.set('learning-dead', record('learning-dead', 'LEARNING', 'learning-announcement-published'))
+    state.outbox.set('service-dead', record('service-dead', 'SERVICE', 'ticket-created'))
+    state.outbox.set('system-dead', {
+      ...record('system-dead', 'LEARNING', 'password-reset'),
+      deliveryKind: 'PASSWORD_RESET',
+      category: 'SYSTEM',
+    })
+    process.env.APP_FEATURE_PROFILE = 'lms-mvp'
+    const administrator = authContext('admin-001', ['administrator'])
+
+    await expect(listEmailOutbox(authContext('student-001', ['student']), 50))
+      .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+    const summaries = await listEmailOutbox(administrator, 50)
+    expect(summaries.map(summary => summary.id).sort()).toEqual(['learning-dead', 'system-dead'])
+    for (const summary of summaries) {
+      expect(summary).not.toHaveProperty('recipientUid')
+      expect(summary).not.toHaveProperty('recipientEmail')
+      expect(summary).not.toHaveProperty('subject')
+      expect(summary).not.toHaveProperty('textBody')
+      expect(summary).not.toHaveProperty('providerMessageId')
+      expect(summary.lastError).not.toHaveProperty('message')
+    }
+    await expect(retryEmailOutbox(administrator, 'service-dead'))
+      .rejects.toMatchObject({ statusCode: 404 } satisfies Partial<CampusError>)
+    const retried = await retryEmailOutbox(administrator, 'learning-dead')
+    expect(retried.outbox).toMatchObject({ id: 'learning-dead', category: 'LEARNING', status: 'QUEUED', attempts: 0 })
+    expect(retried.outbox).not.toHaveProperty('subject')
   })
 
   it('queues password reset as a deferred adapter task without storing a token or link', async () => {

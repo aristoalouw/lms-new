@@ -14,6 +14,10 @@ export type NavigationGroup = {
   items: NavigationItem[]
 }
 
+export type NavigationCommand = NavigationItem & {
+  context: string
+}
+
 export const navigation: NavigationGroup[] = [
   {
     label: 'Ruang kerja',
@@ -52,6 +56,15 @@ export const navigation: NavigationGroup[] = [
     ],
   },
 ]
+
+export function navigationCommandsForAccess(
+  featureEnabled: (feature: Feature) => boolean,
+  permissionAllowed: (permission?: string) => boolean,
+): NavigationCommand[] {
+  return navigation.flatMap(group => group.items
+    .filter(item => featureEnabled(item.feature) && permissionAllowed(item.permission))
+    .map(item => ({ ...item, context: group.label })))
+}
 
 export const roleLabels: Record<string, string> = {
   administrator: 'Administrator sistem',

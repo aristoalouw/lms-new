@@ -39,11 +39,15 @@ $envValues = Read-DotEnv -FilePath $Path
 $failures = [System.Collections.Generic.List[string]]::new()
 $warnings = [System.Collections.Generic.List[string]]::new()
 $isLmsMvp = $envValues["APP_FEATURE_PROFILE"] -eq "lms-mvp"
+$deploymentTarget = [string]$envValues["DEPLOYMENT_TARGET"]
+$isDocker = $deploymentTarget -eq "docker"
+$isHostinger = $deploymentTarget -eq "hostinger"
 
 $required = @(
+    "DEPLOYMENT_TARGET",
+    "TRUSTED_PROXY_HOPS",
     "APP_FEATURE_PROFILE",
     "APP_VERSION",
-    "APP_IMAGE",
     "NUXT_SESSION_SECRET",
     "RATE_LIMIT_KEY_SECRET",
     "PASSWORD_RESET_CONTINUE_URL",
@@ -57,7 +61,6 @@ $required = @(
     "NUXT_PUBLIC_FIREBASE_PROJECT_ID",
     "NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
     "NUXT_PUBLIC_FIREBASE_APP_ID",
-    "FIREBASE_ADMIN_CREDENTIALS_FILE",
     "FIREBASE_STORAGE_BUCKET",
     "FILE_CURSOR_SECRET",
     "CLAMAV_HOST",
@@ -66,11 +69,24 @@ $required = @(
     "NUXT_PUBLIC_SENTRY_DSN",
     "SENTRY_ENVIRONMENT",
     "SENTRY_RELEASE",
-    "NUXT_PUBLIC_SENTRY_RELEASE",
-    "SERVER_NAME",
-    "TLS_FULLCHAIN_FILE",
-    "TLS_PRIVATE_KEY_FILE"
+    "NUXT_PUBLIC_SENTRY_RELEASE"
 )
+
+if ($isDocker) {
+    $required += @(
+        "APP_IMAGE",
+        "FIREBASE_ADMIN_CREDENTIALS_FILE",
+        "SERVER_NAME",
+        "TLS_FULLCHAIN_FILE",
+        "TLS_PRIVATE_KEY_FILE"
+    )
+}
+elseif ($isHostinger) {
+    $required += "FIREBASE_SERVICE_ACCOUNT_BASE64"
+}
+else {
+    Add-Failure "DEPLOYMENT_TARGET must be docker or hostinger."
+}
 
 if (-not $isLmsMvp) {
     $required += @(
@@ -101,15 +117,21 @@ if ($envValues["APP_FEATURE_PROFILE"] -notin @("lms-mvp", "full-campus")) {
 if ($envValues["APP_VERSION"] -eq "development" -or $envValues["APP_VERSION"] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$') {
     Add-Failure "APP_VERSION must identify the immutable production release."
 }
-$imageIsPinned = $envValues["APP_IMAGE"] -match '@sha256:[a-f0-9]{64}$' -or $envValues["APP_IMAGE"] -match ':[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
-if (-not $imageIsPinned -or $envValues["APP_IMAGE"] -match '(^|:)local$|:latest$') {
-    Add-Failure "APP_IMAGE must use an immutable release tag or digest, not local/latest."
+if ($isDocker) {
+    $imageIsPinned = $envValues["APP_IMAGE"] -match '@sha256:[a-f0-9]{64}$' -or $envValues["APP_IMAGE"] -match ':[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+    if (-not $imageIsPinned -or $envValues["APP_IMAGE"] -match '(^|:)local$|:latest$') {
+        Add-Failure "APP_IMAGE must use an immutable release tag or digest, not local/latest."
+    }
+}
+$trustedProxyHops = 0
+if (-not [int]::TryParse([string]$envValues["TRUSTED_PROXY_HOPS"], [ref]$trustedProxyHops) -or $trustedProxyHops -lt 1 -or $trustedProxyHops -gt 3) {
+    Add-Failure "TRUSTED_PROXY_HOPS must be an integer from 1 through 3 matching the reviewed edge topology."
 }
 if ($envValues["NUXT_PUBLIC_APP_ENVIRONMENT"] -ne "production") {
     Add-Failure "NUXT_PUBLIC_APP_ENVIRONMENT must be production."
 }
 if ($envValues["NUXT_PUBLIC_API_BASE_URL"] -ne "/api") {
-    Add-Failure "NUXT_PUBLIC_API_BASE_URL must remain same-origin at /api behind Nginx."
+    Add-Failure "NUXT_PUBLIC_API_BASE_URL must remain same-origin at /api behind the trusted edge proxy."
 }
 if ($envValues["NUXT_PUBLIC_DEMO_MODE"] -ne "false" -or $envValues["ENABLE_DEMO_AUTH"] -ne "false") {
     Add-Failure "Demo UI and demo authentication must both be disabled."
@@ -120,8 +142,11 @@ if ($envValues["CAMPUS_DATA_MODE"] -ne "firebase" -or $envValues["ALLOW_PRODUCTI
 if ($envValues["RATE_LIMIT_BACKEND"] -ne "firestore") {
     Add-Failure "Production requires RATE_LIMIT_BACKEND=firestore for a shared atomic limiter."
 }
-if ($envValues["FIREBASE_USE_APPLICATION_DEFAULT"] -ne "true") {
+if ($isDocker -and $envValues["FIREBASE_USE_APPLICATION_DEFAULT"] -ne "true") {
     Add-Failure "Production Compose expects FIREBASE_USE_APPLICATION_DEFAULT=true."
+}
+if ($isHostinger -and $envValues["FIREBASE_USE_APPLICATION_DEFAULT"] -ne "false") {
+    Add-Failure "Hostinger must use FIREBASE_USE_APPLICATION_DEFAULT=false with FIREBASE_SERVICE_ACCOUNT_BASE64."
 }
 $sessionSecret = if ($envValues.ContainsKey("NUXT_SESSION_SECRET")) { $envValues["NUXT_SESSION_SECRET"] } else { "" }
 if ($sessionSecret.Length -lt 43) {
@@ -227,26 +252,55 @@ if ($tracerStudyPublicUrl -and $tracerStudyPublicUrl -notmatch '^https://[^/?#@]
 if ($envValues["EMAIL_FROM"] -notmatch '^[^\s@]+@[^\s@]+\.[^\s@]+$' -or $envValues["EMAIL_FROM"].Length -gt 254) {
     Add-Failure "EMAIL_FROM must be a valid sender address."
 }
-if ($envValues["SERVER_NAME"] -notmatch '^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$') {
-    Add-Failure "SERVER_NAME must be a DNS hostname without a scheme, port, path, or wildcard."
-}
-if ($envValues["SERVER_NAME"] -match '(^|\.)example\.(com|org|net|ac\.id)$') {
-    Add-Failure "SERVER_NAME still uses a reserved documentation hostname."
-}
-
-foreach ($credentialName in @("FIREBASE_SERVICE_ACCOUNT_JSON", "FIREBASE_SERVICE_ACCOUNT_BASE64", "FIREBASE_CLIENT_EMAIL", "FIREBASE_PRIVATE_KEY")) {
-    if (-not [string]::IsNullOrWhiteSpace($envValues[$credentialName])) {
-        Add-Failure "$credentialName must be blank when production Compose uses the mounted ADC credential file."
+if ($isDocker) {
+    if ($envValues["SERVER_NAME"] -notmatch '^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$') {
+        Add-Failure "SERVER_NAME must be a DNS hostname without a scheme, port, path, or wildcard."
+    }
+    if ($envValues["SERVER_NAME"] -match '(^|\.)example\.(com|org|net|ac\.id)$') {
+        Add-Failure "SERVER_NAME still uses a reserved documentation hostname."
     }
 }
 
-foreach ($pathName in @("FIREBASE_ADMIN_CREDENTIALS_FILE", "TLS_FULLCHAIN_FILE", "TLS_PRIVATE_KEY_FILE")) {
-    $candidate = $envValues[$pathName]
-    if ($candidate -and -not [System.IO.Path]::IsPathRooted($candidate)) {
-        Add-Failure "$pathName must be an absolute host path."
+if ($isDocker) {
+    foreach ($credentialName in @("FIREBASE_SERVICE_ACCOUNT_JSON", "FIREBASE_SERVICE_ACCOUNT_BASE64", "FIREBASE_CLIENT_EMAIL", "FIREBASE_PRIVATE_KEY")) {
+        if (-not [string]::IsNullOrWhiteSpace($envValues[$credentialName])) {
+            Add-Failure "$credentialName must be blank when production Compose uses the mounted ADC credential file."
+        }
     }
-    if ($candidate -and -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
-        Add-Failure "$pathName does not point to a readable file."
+
+    foreach ($pathName in @("FIREBASE_ADMIN_CREDENTIALS_FILE", "TLS_FULLCHAIN_FILE", "TLS_PRIVATE_KEY_FILE")) {
+        $candidate = $envValues[$pathName]
+        if ($candidate -and -not [System.IO.Path]::IsPathRooted($candidate)) {
+            Add-Failure "$pathName must be an absolute host path."
+        }
+        if ($candidate -and -not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            Add-Failure "$pathName does not point to a readable file."
+        }
+    }
+}
+
+if ($isHostinger) {
+    foreach ($credentialName in @("FIREBASE_SERVICE_ACCOUNT_JSON", "FIREBASE_CLIENT_EMAIL", "FIREBASE_PRIVATE_KEY", "GOOGLE_APPLICATION_CREDENTIALS", "FIREBASE_ADMIN_CREDENTIALS_FILE")) {
+        if (-not [string]::IsNullOrWhiteSpace($envValues[$credentialName])) {
+            Add-Failure "$credentialName must be blank for Hostinger; use only FIREBASE_SERVICE_ACCOUNT_BASE64."
+        }
+    }
+    foreach ($tlsName in @("TLS_FULLCHAIN_FILE", "TLS_PRIVATE_KEY_FILE")) {
+        if (-not [string]::IsNullOrWhiteSpace($envValues[$tlsName])) {
+            Add-Failure "$tlsName must be blank because Hostinger terminates managed TLS."
+        }
+    }
+
+    try {
+        $credentialBytes = [Convert]::FromBase64String([string]$envValues["FIREBASE_SERVICE_ACCOUNT_BASE64"])
+        $credentialJson = [Text.Encoding]::UTF8.GetString($credentialBytes) | ConvertFrom-Json
+        if ([string]$credentialJson.type -ne "service_account") { Add-Failure "FIREBASE_SERVICE_ACCOUNT_BASE64 must contain a Firebase service-account JSON object." }
+        if ([string]$credentialJson.project_id -ne [string]$envValues["FIREBASE_PROJECT_ID"]) { Add-Failure "Firebase service-account project_id must match FIREBASE_PROJECT_ID." }
+        if ([string]$credentialJson.client_email -notmatch '^[^\s@]+@[^\s@]+\.[^\s@]+$') { Add-Failure "Firebase service-account client_email is invalid." }
+        if ([string]$credentialJson.private_key -notmatch '^-----BEGIN PRIVATE KEY-----') { Add-Failure "Firebase service-account private_key is invalid." }
+    }
+    catch {
+        Add-Failure "FIREBASE_SERVICE_ACCOUNT_BASE64 must be valid base64-encoded JSON."
     }
 }
 
@@ -307,4 +361,4 @@ if ($failures.Count -gt 0) {
     exit 1
 }
 
-Write-Host "Production environment contract is valid. Secret values were not printed."
+Write-Host "Production environment contract for $deploymentTarget is valid. Secret values were not printed."

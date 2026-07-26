@@ -4,6 +4,7 @@ import { USER_ROLES } from '../types/auth'
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { authAdmin, dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { firestorePurgeAfter } from '../utils/firestore-ttl'
 import { cloneValue, mockState } from '../utils/mock-store'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
@@ -169,6 +170,20 @@ const SEEDED_ACCOUNTS: AccountRecord[] = [
     createdBy: 'admin-001',
     updatedAt: '2026-07-20T05:00:00.000Z',
     updatedBy: 'admin-001',
+  },
+  {
+    id: 'advisor-001',
+    email: 'budi.santoso@example.test',
+    displayName: 'Dr. Budi Santoso',
+    roles: ['lecturer', 'advisor'],
+    scope: { unitIds: ['faculty-economics'], programStudyIds: ['management-s1'], cohortYears: [2022, 2023, 2024], studentIds: [] },
+    status: 'active',
+    guardianStudentIds: [],
+    version: 1,
+    createdAt: '2022-02-10T04:00:00.000Z',
+    createdBy: 'system',
+    updatedAt: '2026-07-20T05:00:00.000Z',
+    updatedBy: 'system',
   },
   {
     id: 'finance-001',
@@ -546,6 +561,13 @@ async function accountsByIds(ids: string[]): Promise<AccountRecord[]> {
   return snapshots.filter((snapshot) => snapshot.exists).map((snapshot) => ({ id: snapshot.id, ...snapshot.data() }) as AccountRecord)
 }
 
+export async function listActiveAccountsByIds(ids: string[]): Promise<AccountRecord[]> {
+  if (!Array.isArray(ids) || ids.length > 500) invalidInput('Daftar akun penerima tidak valid.')
+  const safeIds = [...new Set(ids.map(id =>
+    requireString(id, 'accountId', { max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]*$/ })))]
+  return (await accountsByIds(safeIds)).filter(account => account.status === 'active')
+}
+
 async function validateGuardianTargets(accountId: string, roles: UserRole[], guardianStudentIds: string[]): Promise<void> {
   if (!roles.includes('guardian')) return
   if (guardianStudentIds.includes(accountId)) invalidInput('Akun guardian tidak dapat ditautkan ke dirinya sendiri.')
@@ -702,7 +724,7 @@ export async function createAccount(
         requestHash: hash,
         response,
         createdAt: now,
-        expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL_MS).toISOString(),
+        purgeAfter: firestorePurgeAfter(now, IDEMPOTENCY_TTL_MS),
       })
       return response
     })
@@ -807,7 +829,7 @@ export async function updateAccount(
           requestHash: hash,
           response,
           createdAt: now,
-          expiresAt: new Date(Date.now() + IDEMPOTENCY_TTL_MS).toISOString(),
+          purgeAfter: firestorePurgeAfter(now, IDEMPOTENCY_TTL_MS),
         })
         return response
       })

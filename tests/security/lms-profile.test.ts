@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { featureForApiPath, featureForPagePath, isFeatureEnabled, isMvpApiAllowed, normalizeFeatureProfile } from '../../shared/features'
+import {
+  featureForApiPath,
+  featureForPagePath,
+  isFeatureEnabled,
+  isMvpApiAllowed,
+  isMvpPageAllowed,
+  mvpApiDecision,
+  normalizeFeatureProfile,
+} from '../../shared/features'
 import { permissionsForRole } from '../../shared/auth'
 import { sanitizeSentryEvent } from '../../shared/observability/sentry'
 
@@ -14,10 +22,32 @@ describe('LMS MVP profile and telemetry invariants', () => {
     expect(isMvpApiAllowed('/api/learning/spaces', 'POST')).toBe(false)
     expect(isMvpApiAllowed('/api/learning/spaces/class-a/gamification', 'PUT')).toBe(false)
     expect(isMvpApiAllowed('/api/academic/classes/class-a/grades/publish', 'POST')).toBe(false)
-    expect(isMvpApiAllowed('/api/notifications/outbox', 'GET')).toBe(false)
-    expect(isMvpApiAllowed('/api/notifications/templates', 'GET')).toBe(false)
-    expect(isMvpApiAllowed('/api/internal/notifications/outbox/process', 'POST')).toBe(false)
+    expect(isMvpApiAllowed('/api/notifications/outbox', 'GET')).toBe(true)
+    expect(isMvpApiAllowed('/api/notifications/outbox/email-a/retry', 'POST')).toBe(true)
+    expect(isMvpApiAllowed('/api/notifications/preferences', 'GET')).toBe(true)
+    expect(isMvpApiAllowed('/api/notifications/preferences', 'PUT')).toBe(true)
+    expect(isMvpApiAllowed('/api/notifications/templates', 'GET')).toBe(true)
+    expect(isMvpApiAllowed('/api/notifications/templates/template-a', 'PUT')).toBe(false)
+    expect(isMvpApiAllowed('/api/notifications/outbox', 'POST')).toBe(false)
+    expect(isMvpApiAllowed('/api/internal/notifications/outbox/process', 'POST')).toBe(true)
     expect(isMvpApiAllowed('/api/academic/classes/class-a/attendance/check-in', 'POST')).toBe(true)
+    expect(isMvpApiAllowed('/api/academic/classes/class-a/attendance', 'GET')).toBe(true)
+    expect(isMvpApiAllowed('/api/academic/classes/catalog', 'GET')).toBe(true)
+    expect(isMvpApiAllowed('/api/academic/classes/catalog/courses', 'POST')).toBe(true)
+    expect(isMvpApiAllowed('/api/academic/classes/catalog/periods', 'POST')).toBe(true)
+    expect(isMvpApiAllowed('/api/files/upload-sessions/file-a/content', 'PUT')).toBe(true)
+    expect(isMvpApiAllowed('/api/learning/assignments/assignment-a/submit', 'POST')).toBe(true)
+    expect(isMvpApiAllowed('/api/notifications/notification-a/read', 'POST')).toBe(true)
+    expect(mvpApiDecision('/api/learning/new-private-handler', 'GET')).toBe('unknown')
+    expect(mvpApiDecision('/api/internal/new-worker', 'POST')).toBe('unknown')
+    expect(mvpApiDecision('/api/unknown/private', 'GET')).toBe('unknown')
+    expect(isMvpApiAllowed('/api/learning/new-private-handler', 'GET')).toBe(false)
+    expect(isMvpApiAllowed('/api/unknown/private', 'GET')).toBe(false)
+    expect(isMvpPageAllowed('/')).toBe(true)
+    expect(isMvpPageAllowed('/admin/kelas/class-a')).toBe(true)
+    expect(isMvpPageAllowed('/pembelajaran/class-a/tugas/assignment-a')).toBe(true)
+    expect(isMvpPageAllowed('/modul/route-baru')).toBe(false)
+    expect(isMvpPageAllowed('/route-privat-baru')).toBe(false)
   })
 
   it('keeps administrator outside submit and grade permissions', () => {

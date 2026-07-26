@@ -41,6 +41,12 @@ export interface AcademicCourseVersion {
   immutable: true
 }
 
+export interface LmsAcademicCatalog {
+  programs: AcademicProgramStudy[]
+  periods: AcademicPeriodDefinition[]
+  courses: AcademicCourseVersion[]
+}
+
 export interface CurriculumVersion {
   id: string
   curriculumId: string

@@ -1,7 +1,6 @@
 import { FieldPath, type Query } from 'firebase-admin/firestore'
 import type { H3Event } from 'h3'
 import type { AuthContext } from '../types/auth'
-import type { InAppNotification } from '../types/communications'
 import type { AcademicClassDetail, AcademicClassRecord } from '../types/academic-classes'
 import type {
   LearningActivityEvent,
@@ -24,12 +23,18 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { CampusError, conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { FIRESTORE_TTL_RETENTION_MS, withFirestorePurgeAfter } from '../utils/firestore-ttl'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { getAcademicClassDetail, listActiveClassRecipientUids } from './academic-classes'
 import { getPrivateFileDetail } from './files'
 import { learningMockState } from './learning-mock'
-import { notificationModuleState } from './notifications-state'
+import {
+  learningGradeId,
+  learningSubmissionAttemptId,
+  learningSubmissionId,
+} from './learning-record-ids'
+import { enqueueLearningNotificationBatch } from './notifications'
 import { normalizeFeatureProfile } from '../../shared/features'
 import {
   cleanLearningId,
@@ -267,33 +272,27 @@ export async function appendLearningActivity(input: Omit<LearningActivityEvent, 
   return event
 }
 
-async function notifyClassAnnouncement(space: LearningSpace, announcement: LearningAnnouncement): Promise<void> {
-  if (!space.academicClassId || announcement.status !== 'PUBLISHED') return
+async function notifyClassLearningEvent(
+  context: AuthContext,
+  space: LearningSpace,
+  input: {
+    templateKey: string
+    resourceId: string
+    resourceVersion: number
+    resourceTitle: string
+    actionPath: string
+  },
+  event?: H3Event,
+): Promise<void> {
+  if (!space.academicClassId) return
   const recipientUids = await listActiveClassRecipientUids(space.academicClassId)
-  const createdAt = announcement.updatedAt
-  const notifications = recipientUids.map(recipientUid => ({
-    id: opaqueId('notification', `learning-announcement:${announcement.id}:${announcement.version}:${recipientUid}`),
-    recipientUid,
-    templateKey: 'learning-announcement-published',
-    category: 'LEARNING',
-    title: announcement.title,
-    body: `Pengumuman kelas baru tersedia di ${space.title}.`,
-    actionPath: `/pembelajaran/${space.id}`,
-    createdAt,
-  } satisfies InAppNotification))
-  if (dataMode() === 'mock') {
-    for (const notification of notifications) notificationModuleState().notifications.set(notification.id, clone(notification))
-    return
-  }
-  const db = firestoreAdmin()
-  if (!db) serviceUnavailable('Penyimpanan notifikasi tidak tersedia.')
-  for (let offset = 0; offset < notifications.length; offset += 400) {
-    const batch = db.batch()
-    for (const notification of notifications.slice(offset, offset + 400)) {
-      batch.set(db.collection('inAppNotifications').doc(notification.id), notification)
-    }
-    await batch.commit()
-  }
+  await enqueueLearningNotificationBatch(context, {
+    recipientUids,
+    templateKey: input.templateKey,
+    variables: { spaceTitle: space.title, resourceTitle: input.resourceTitle },
+    actionPath: input.actionPath,
+    eventKey: `${input.templateKey}:${input.resourceId}:v${input.resourceVersion}`,
+  }, event)
 }
 
 export async function cleanLearningFileReference(context: AuthContext, fileId: string, targetSpaceId?: string): Promise<LearningFileReference> {
@@ -389,7 +388,11 @@ export async function createLearningSpace(
         return { ...stored.response, replayed: true }
       }
       transaction.create(db.collection('learningSpaces').doc(id), record)
-      transaction.create(idem, { requestHash: hash, response, createdAt: now })
+      transaction.create(idem, withFirestorePurgeAfter(
+        { requestHash: hash, response, createdAt: now },
+        now,
+        FIRESTORE_TTL_RETENTION_MS.idempotency,
+      ))
       return response
     })
     if (result.replayed) return result
@@ -484,33 +487,130 @@ export async function listLearningSpaces(context: AuthContext, options: { limit?
 }
 
 async function listSpaceRecords<T>(spaceId: string, collection: string, mockValues: () => T[]): Promise<T[]> {
-  if (dataMode() === 'mock') return mockValues().map(clone)
+  if (dataMode() === 'mock') return mockValues().slice(0, COLLECTION_LIMIT).map(clone)
   const db = firestoreAdmin()
   if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.')
   const snapshot = await db.collection(collection).where('spaceId', '==', spaceId).limit(COLLECTION_LIMIT).get()
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as T)
 }
 
+function assertOwnSubmission(
+  submission: LearningSubmission,
+  assignment: LearningAssignment,
+  studentId: string,
+  studentUid: string,
+): LearningSubmission {
+  if (
+    submission.id !== learningSubmissionId(assignment.id, studentId)
+    || submission.assignmentId !== assignment.id
+    || submission.spaceId !== assignment.spaceId
+    || submission.studentId !== studentId
+    || submission.studentUid !== studentUid
+  ) {
+    conflict('LEARNING_RECORD_INTEGRITY', 'Data pengumpulan tugas tidak konsisten.')
+  }
+  return submission
+}
+
+function assertOwnGrade(
+  grade: LearningGrade,
+  assignment: LearningAssignment,
+  studentId: string,
+  submission: LearningSubmission | undefined,
+): LearningGrade {
+  const validAttemptIds = new Set(submission
+    ? Array.from(
+        { length: submission.attemptCount },
+        (_, index) => learningSubmissionAttemptId(submission.id, index + 1),
+      )
+    : [])
+  if (
+    grade.id !== learningGradeId(assignment.id, studentId)
+    || grade.assignmentId !== assignment.id
+    || grade.spaceId !== assignment.spaceId
+    || grade.studentId !== studentId
+    || !submission
+    || !validAttemptIds.has(grade.attemptId)
+  ) {
+    conflict('LEARNING_RECORD_INTEGRITY', 'Data nilai tugas tidak konsisten.')
+  }
+  return grade
+}
+
+async function loadOwnSpaceRecords(
+  assignments: LearningAssignment[],
+  studentId: string,
+  studentUid: string,
+): Promise<{ submissions: LearningSubmission[]; grades: LearningGrade[] }> {
+  if (!assignments.length) return { submissions: [], grades: [] }
+  if (dataMode() === 'mock') {
+    const state = learningMockState()
+    const submissions = assignments.flatMap(assignment => {
+      const record = state.submissions.get(learningSubmissionId(assignment.id, studentId))
+      return record ? [assertOwnSubmission(clone(record), assignment, studentId, studentUid)] : []
+    })
+    const grades = assignments.flatMap(assignment => {
+      const record = state.grades.get(learningGradeId(assignment.id, studentId))
+      const submission = submissions.find(item => item.assignmentId === assignment.id)
+      return record ? [assertOwnGrade(clone(record), assignment, studentId, submission)] : []
+    })
+    return { submissions, grades }
+  }
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.')
+  const submissionRefs = assignments.map(assignment =>
+    db.collection('learningSubmissions').doc(learningSubmissionId(assignment.id, studentId)))
+  const gradeRefs = assignments.map(assignment =>
+    db.collection('learningGrades').doc(learningGradeId(assignment.id, studentId)))
+  const [submissionSnapshots, gradeSnapshots] = await Promise.all([
+    db.getAll(...submissionRefs),
+    db.getAll(...gradeRefs),
+  ])
+  const submissions = submissionSnapshots.flatMap((snapshot, index) =>
+    snapshot.exists
+      ? [assertOwnSubmission(
+          { id: snapshot.id, ...snapshot.data() } as LearningSubmission,
+          assignments[index]!,
+          studentId,
+          studentUid,
+        )]
+      : [])
+  const grades = gradeSnapshots.flatMap((snapshot, index) =>
+    snapshot.exists
+      ? [assertOwnGrade(
+          { id: snapshot.id, ...snapshot.data() } as LearningGrade,
+          assignments[index]!,
+          studentId,
+          submissions.find(item => item.assignmentId === assignments[index]!.id),
+        )]
+      : [])
+  return { submissions, grades }
+}
+
 export async function getLearningSpaceDetail(context: AuthContext, spaceId: string): Promise<LearningSpaceDetail> {
   const space = await loadLearningSpace(spaceId)
   const access = await requireLearningSpaceRead(context, space)
-  const [modules, materials, assignments, announcements, submissions, grades] = await Promise.all([
+  const [modules, materials, assignments, announcements] = await Promise.all([
     listSpaceRecords(space.id, 'learningModules', () => [...learningMockState().modules.values()].filter(item => item.spaceId === space.id)),
     listSpaceRecords(space.id, 'learningMaterials', () => [...learningMockState().materials.values()].filter(item => item.spaceId === space.id)),
     listSpaceRecords(space.id, 'learningAssignments', () => [...learningMockState().assignments.values()].filter(item => item.spaceId === space.id)),
     listSpaceRecords(space.id, 'learningAnnouncements', () => [...learningMockState().announcements.values()].filter(item => item.spaceId === space.id)),
-    listSpaceRecords(space.id, 'learningSubmissions', () => [...learningMockState().submissions.values()].filter(item => item.spaceId === space.id)),
-    listSpaceRecords(space.id, 'learningGrades', () => [...learningMockState().grades.values()].filter(item => item.spaceId === space.id)),
-  ]) as [LearningModule[], LearningMaterial[], LearningAssignment[], LearningAnnouncement[], LearningSubmission[], LearningGrade[]]
+  ]) as [LearningModule[], LearningMaterial[], LearningAssignment[], LearningAnnouncement[]]
   const ownStudentId = access.studentId
+  const visibleAssignments = assignments
+    .filter(item => access.canManage || item.status === 'PUBLISHED')
+    .sort((a, b) => a.dueAt.localeCompare(b.dueAt))
+  const ownRecords = ownStudentId
+    ? await loadOwnSpaceRecords(visibleAssignments, ownStudentId, context.uid)
+    : { submissions: [], grades: [] }
   return {
     space,
     modules: modules.filter(item => access.canManage || item.status === 'PUBLISHED').sort((a, b) => a.order - b.order),
     materials: materials.filter(item => access.canManage || item.status === 'PUBLISHED').sort((a, b) => a.order - b.order),
-    assignments: assignments.filter(item => access.canManage || item.status === 'PUBLISHED').sort((a, b) => a.dueAt.localeCompare(b.dueAt)),
+    assignments: visibleAssignments,
     announcements: announcements.filter(item => access.canManage || item.status === 'PUBLISHED').sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.createdAt.localeCompare(a.createdAt)),
-    ownSubmissions: ownStudentId ? submissions.filter(item => item.studentId === ownStudentId) : [],
-    ownGrades: ownStudentId ? grades.filter(item => item.studentId === ownStudentId && item.status === 'PUBLISHED') : [],
+    ownSubmissions: ownRecords.submissions,
+    ownGrades: ownRecords.grades.filter(item => item.status === 'PUBLISHED'),
     canManage: access.canManage,
   }
 }
@@ -545,7 +645,7 @@ export async function createLearningModule(context: AuthContext, input: CreateLe
     const result = await db.runTransaction(async transaction => {
       const prior = await transaction.get(idem)
       if (prior.exists) { const stored = prior.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } }
-      transaction.create(db.collection('learningModules').doc(id), module); transaction.create(db.collection('learningModuleVersions').doc(definition.id), definition); transaction.create(idem, { requestHash: hash, response, createdAt: now }); return response
+      transaction.create(db.collection('learningModules').doc(id), module); transaction.create(db.collection('learningModuleVersions').doc(definition.id), definition); transaction.create(idem, withFirestorePurgeAfter({ requestHash: hash, response, createdAt: now }, now, FIRESTORE_TTL_RETENTION_MS.idempotency)); return response
     }); if (result.replayed) return result
   }
   if (module.status === 'PUBLISHED') await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'MODULE_PUBLISHED', resourceId: id, label: module.title, occurredAt: now })
@@ -605,8 +705,17 @@ export async function createLearningMaterial(context: AuthContext, input: Create
   const material: LearningMaterial = { id, spaceId: space.id, moduleId: module.id, ...normalized, currentVersion: 1, version: 1, createdAt: now, createdBy: context.uid, updatedAt: now, updatedBy: context.uid }
   const definition = materialSnapshot(material); const response = { material, definition, replayed: false }
   if (dataMode() === 'mock') { learningMockState().materials.set(id, clone(material)); learningMockState().materialVersions.set(definition.id, clone(definition)); storeMockIdempotency(namespace, hash, response) }
-  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const idem = db.collection('learningIdempotency').doc(opaqueId('idem', namespace)); const result = await db.runTransaction(async transaction => { const prior = await transaction.get(idem); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } transaction.create(db.collection('learningMaterials').doc(id), material); transaction.create(db.collection('learningMaterialVersions').doc(definition.id), definition); transaction.create(idem, { requestHash: hash, response, createdAt: now }); return response }); if (result.replayed) return result }
-  if (material.status === 'PUBLISHED') await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'MATERIAL_PUBLISHED', resourceId: id, label: material.title, occurredAt: now })
+  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const idem = db.collection('learningIdempotency').doc(opaqueId('idem', namespace)); const result = await db.runTransaction(async transaction => { const prior = await transaction.get(idem); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } transaction.create(db.collection('learningMaterials').doc(id), material); transaction.create(db.collection('learningMaterialVersions').doc(definition.id), definition); transaction.create(idem, withFirestorePurgeAfter({ requestHash: hash, response, createdAt: now }, now, FIRESTORE_TTL_RETENTION_MS.idempotency)); return response }); if (result.replayed) return result }
+  if (material.status === 'PUBLISHED') {
+    await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'MATERIAL_PUBLISHED', resourceId: id, label: material.title, occurredAt: now })
+    await notifyClassLearningEvent(context, space, {
+      templateKey: 'learning-material-published',
+      resourceId: material.id,
+      resourceVersion: material.version,
+      resourceTitle: material.title,
+      actionPath: `/pembelajaran/${space.id}/materi`,
+    }, event)
+  }
   const audit = await appendAudit({ actor: context, action: 'LEARNING_MATERIAL_CREATED', resourceType: 'learning_material', resourceId: id, after: { spaceId: space.id, moduleId: module.id, kind: material.kind, fileId: material.file?.fileId, fileVersion: material.file?.fileVersion, status: material.status }, event })
   return { ...response, auditId: audit.id }
 }
@@ -623,7 +732,16 @@ export async function updateLearningMaterial(context: AuthContext, id: string, i
   const now = new Date().toISOString(); let material: LearningMaterial; let definition: LearningMaterialVersion
   if (dataMode() === 'mock') { const fresh = learningMockState().materials.get(id); if (!fresh) notFound('Materi pembelajaran'); if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Materi telah berubah.', { currentVersion: fresh.version }); material = { ...fresh, ...normalized, currentVersion: fresh.currentVersion + 1, version: fresh.version + 1, updatedAt: now, updatedBy: context.uid }; definition = materialSnapshot(material); learningMockState().materials.set(id, clone(material)); learningMockState().materialVersions.set(definition.id, clone(definition)) }
   else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const reference = db.collection('learningMaterials').doc(id); ;({ material, definition } = await db.runTransaction(async transaction => { const snapshot = await transaction.get(reference); if (!snapshot.exists) notFound('Materi pembelajaran'); const fresh = { id: snapshot.id, ...snapshot.data() } as LearningMaterial; if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Materi telah berubah.', { currentVersion: fresh.version }); const next: LearningMaterial = { ...fresh, ...normalized, currentVersion: fresh.currentVersion + 1, version: fresh.version + 1, updatedAt: now, updatedBy: context.uid }; const version = materialSnapshot(next); transaction.set(reference, next); transaction.create(db.collection('learningMaterialVersions').doc(version.id), version); return { material: next, definition: version } })) }
-  if (current.status !== 'PUBLISHED' && material.status === 'PUBLISHED') await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'MATERIAL_PUBLISHED', resourceId: id, label: material.title, occurredAt: now })
+  if (current.status !== 'PUBLISHED' && material.status === 'PUBLISHED') {
+    await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'MATERIAL_PUBLISHED', resourceId: id, label: material.title, occurredAt: now })
+    await notifyClassLearningEvent(context, space, {
+      templateKey: 'learning-material-published',
+      resourceId: material.id,
+      resourceVersion: material.version,
+      resourceTitle: material.title,
+      actionPath: `/pembelajaran/${space.id}/materi`,
+    }, event)
+  }
   const audit = await appendAudit({ actor: context, action: 'LEARNING_MATERIAL_UPDATED', resourceType: 'learning_material', resourceId: id, before: { version: expectedVersion }, after: { version: material.version, definitionVersion: material.currentVersion, fileId: material.file?.fileId, fileVersion: material.file?.fileVersion, status: material.status }, event })
   return { material, definition, auditId: audit.id }
 }
@@ -656,8 +774,17 @@ export async function createLearningAssignment(context: AuthContext, input: Crea
   const replay = await mockIdempotent<{ assignment: LearningAssignment; definition: LearningAssignmentVersion; replayed: boolean }>(namespace, hash); if (replay) return { ...replay, replayed: true }
   const now = new Date().toISOString(), id = opaqueId('learning_assignment', `${space.id}:${idempotencyKey}`); const assignment: LearningAssignment = { id, spaceId: space.id, moduleId, ...normalized, currentVersion: 1, version: 1, createdAt: now, createdBy: context.uid, updatedAt: now, updatedBy: context.uid }; const definition = assignmentSnapshot(assignment); const response = { assignment, definition, replayed: false }
   if (dataMode() === 'mock') { learningMockState().assignments.set(id, clone(assignment)); learningMockState().assignmentVersions.set(definition.id, clone(definition)); storeMockIdempotency(namespace, hash, response) }
-  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const idem = db.collection('learningIdempotency').doc(opaqueId('idem', namespace)); const result = await db.runTransaction(async transaction => { const prior = await transaction.get(idem); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } transaction.create(db.collection('learningAssignments').doc(id), assignment); transaction.create(db.collection('learningAssignmentVersions').doc(definition.id), definition); transaction.create(idem, { requestHash: hash, response, createdAt: now }); return response }); if (result.replayed) return result }
-  if (assignment.status === 'PUBLISHED') await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'ASSIGNMENT_PUBLISHED', resourceId: id, label: assignment.title, occurredAt: now })
+  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const idem = db.collection('learningIdempotency').doc(opaqueId('idem', namespace)); const result = await db.runTransaction(async transaction => { const prior = await transaction.get(idem); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } transaction.create(db.collection('learningAssignments').doc(id), assignment); transaction.create(db.collection('learningAssignmentVersions').doc(definition.id), definition); transaction.create(idem, withFirestorePurgeAfter({ requestHash: hash, response, createdAt: now }, now, FIRESTORE_TTL_RETENTION_MS.idempotency)); return response }); if (result.replayed) return result }
+  if (assignment.status === 'PUBLISHED') {
+    await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'ASSIGNMENT_PUBLISHED', resourceId: id, label: assignment.title, occurredAt: now })
+    await notifyClassLearningEvent(context, space, {
+      templateKey: 'learning-assignment-published',
+      resourceId: assignment.id,
+      resourceVersion: assignment.version,
+      resourceTitle: assignment.title,
+      actionPath: `/pembelajaran/${space.id}/tugas/${assignment.id}`,
+    }, event)
+  }
   const audit = await appendAudit({ actor: context, action: 'LEARNING_ASSIGNMENT_CREATED', resourceType: 'learning_assignment', resourceId: id, after: { spaceId: space.id, opensAt: assignment.opensAt, dueAt: assignment.dueAt, closesAt: assignment.closesAt, status: assignment.status, version: 1 }, event }); return { ...response, auditId: audit.id }
 }
 
@@ -667,7 +794,16 @@ export async function updateLearningAssignment(context: AuthContext, id: string,
   const now = new Date().toISOString(); let assignment: LearningAssignment; let definition: LearningAssignmentVersion
   if (dataMode() === 'mock') { const fresh = learningMockState().assignments.get(id); if (!fresh) notFound('Tugas pembelajaran'); if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Tugas telah berubah.', { currentVersion: fresh.version }); assignment = { ...fresh, ...normalized, currentVersion: fresh.currentVersion + 1, version: fresh.version + 1, updatedAt: now, updatedBy: context.uid }; definition = assignmentSnapshot(assignment); learningMockState().assignments.set(id, clone(assignment)); learningMockState().assignmentVersions.set(definition.id, clone(definition)) }
   else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const reference = db.collection('learningAssignments').doc(id); ;({ assignment, definition } = await db.runTransaction(async transaction => { const snapshot = await transaction.get(reference); if (!snapshot.exists) notFound('Tugas pembelajaran'); const fresh = { id: snapshot.id, ...snapshot.data() } as LearningAssignment; if (fresh.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Tugas telah berubah.', { currentVersion: fresh.version }); const next: LearningAssignment = { ...fresh, ...normalized, currentVersion: fresh.currentVersion + 1, version: fresh.version + 1, updatedAt: now, updatedBy: context.uid }; const version = assignmentSnapshot(next); transaction.set(reference, next); transaction.create(db.collection('learningAssignmentVersions').doc(version.id), version); return { assignment: next, definition: version } })) }
-  if (current.status !== 'PUBLISHED' && assignment.status === 'PUBLISHED') await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'ASSIGNMENT_PUBLISHED', resourceId: id, label: assignment.title, occurredAt: now })
+  if (current.status !== 'PUBLISHED' && assignment.status === 'PUBLISHED') {
+    await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'ASSIGNMENT_PUBLISHED', resourceId: id, label: assignment.title, occurredAt: now })
+    await notifyClassLearningEvent(context, space, {
+      templateKey: 'learning-assignment-published',
+      resourceId: assignment.id,
+      resourceVersion: assignment.version,
+      resourceTitle: assignment.title,
+      actionPath: `/pembelajaran/${space.id}/tugas/${assignment.id}`,
+    }, event)
+  }
   const audit = await appendAudit({ actor: context, action: 'LEARNING_ASSIGNMENT_UPDATED', resourceType: 'learning_assignment', resourceId: id, before: { version: expectedVersion, status: current.status }, after: { version: assignment.version, definitionVersion: assignment.currentVersion, status: assignment.status }, event }); return { assignment, definition, auditId: audit.id }
 }
 
@@ -677,9 +813,15 @@ export async function createLearningAnnouncement(context: AuthContext, input: Cr
   const replay = await mockIdempotent<{ announcement: LearningAnnouncement; replayed: boolean }>(namespace, hash); if (replay) return { ...replay, replayed: true }
   const now = new Date().toISOString(), id = opaqueId('learning_announcement', `${space.id}:${idempotencyKey}`); const announcement: LearningAnnouncement = { id, spaceId: space.id, ...normalized, status: 'PUBLISHED', version: 1, createdAt: now, createdBy: context.uid, updatedAt: now, updatedBy: context.uid }; const response = { announcement, replayed: false }
   if (dataMode() === 'mock') { learningMockState().announcements.set(id, clone(announcement)); storeMockIdempotency(namespace, hash, response) }
-  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const idem = db.collection('learningIdempotency').doc(opaqueId('idem', namespace)); const result = await db.runTransaction(async transaction => { const prior = await transaction.get(idem); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } transaction.create(db.collection('learningAnnouncements').doc(id), announcement); transaction.create(idem, { requestHash: hash, response, createdAt: now }); return response }); if (result.replayed) return result }
+  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan pembelajaran tidak tersedia.'); const idem = db.collection('learningIdempotency').doc(opaqueId('idem', namespace)); const result = await db.runTransaction(async transaction => { const prior = await transaction.get(idem); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } transaction.create(db.collection('learningAnnouncements').doc(id), announcement); transaction.create(idem, withFirestorePurgeAfter({ requestHash: hash, response, createdAt: now }, now, FIRESTORE_TTL_RETENTION_MS.idempotency)); return response }); if (result.replayed) return result }
   await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'ANNOUNCEMENT_PUBLISHED', resourceId: id, label: announcement.title, occurredAt: now })
-  await notifyClassAnnouncement(space, announcement)
+  await notifyClassLearningEvent(context, space, {
+    templateKey: 'learning-announcement-published',
+    resourceId: announcement.id,
+    resourceVersion: announcement.version,
+    resourceTitle: announcement.title,
+    actionPath: `/pembelajaran/${space.id}`,
+  }, event)
   const audit = await appendAudit({ actor: context, action: 'LEARNING_ANNOUNCEMENT_CREATED', resourceType: 'learning_announcement', resourceId: id, after: { spaceId: space.id, pinned: announcement.pinned }, event })
   return { ...response, auditId: audit.id }
 }
@@ -725,7 +867,15 @@ export async function updateLearningAnnouncement(
       return next
     })
   }
-  if (announcement.status === 'PUBLISHED') await notifyClassAnnouncement(space, announcement)
+  if (announcement.status === 'PUBLISHED') {
+    await notifyClassLearningEvent(context, space, {
+      templateKey: 'learning-announcement-published',
+      resourceId: announcement.id,
+      resourceVersion: announcement.version,
+      resourceTitle: announcement.title,
+      actionPath: `/pembelajaran/${space.id}`,
+    }, event)
+  }
   const audit = await appendAudit({
     actor: context,
     action: announcement.status === 'ARCHIVED' ? 'LEARNING_ANNOUNCEMENT_ARCHIVED' : 'LEARNING_ANNOUNCEMENT_UPDATED',

@@ -100,6 +100,7 @@ Script menolak target yang sama dengan source manifest, memerlukan nama recovery
 Import sukses dan count object sama belum cukup. Dengan akun uji serta data sintetis/anonymized yang telah disiapkan sebelumnya:
 
 - hitung dokumen per koleksi/periode dan bandingkan manifest/register;
+- untuk LMS, bandingkan ketat koleksi tahan lama (`accounts`, kelas/enrolment, `learning*`, file/version, presensi, notifikasi/outbox, dan audit), tetapi kecualikan collection group TTL sementara dari kesamaan count;
 - sampling checksum/size file serta referensi metadata–object;
 - login, role/scope, revoked account, dan negative cross-scope test;
 - baca applicant, student, kelas, KRS, grade published, invoice/payment balance, audit chain, issued document hash, dan PDDIKTI job history;
@@ -108,7 +109,9 @@ Import sukses dan count object sama belum cukup. Dengan akun uji serta data sint
 - pastikan payment/Neo Feeder/email benar-benar off di recovery;
 - ukur waktu dari deklarasi recovery sampai layanan siap dan bandingkan RTO.
 
-Catat jumlah expected/actual, sample IDs non-sensitif, checksum agregat, exception, RPO aktual, RTO aktual, image/commit, backup URI, tester, reviewer, dan keputusan pass/fail. Exception kritis membuat drill gagal dan backup chain diselidiki.
+Collection group sementara LMS adalah `idempotencyKeys`, `learningIdempotency`, `communicationIdempotency`, `rateLimitBuckets`, `fileUploadSessions`, dan `attendanceChallenges`. Untuk kelompok ini, verifikasi konfigurasi TTL `purgeAfter`, tipe Firestore `Timestamp`, penolakan aplikasi setelah expiry, dan tidak adanya penghapusan prematur; jangan menganggap beda count sebagai kehilangan data.
+
+Catat ticket/persetujuan, source dan target project/database/bucket, jumlah expected/actual, sample IDs non-sensitif, checksum agregat, exception, RPO aktual, RTO aktual, image/commit, backup URI/watermark, waktu mulai/selesai, operator, reviewer, keputusan pass/fail, serta persetujuan cleanup recovery. Exception kritis membuat drill gagal dan backup chain diselidiki.
 
 ## Pemulihan bencana produksi
 
@@ -138,6 +141,8 @@ Jangan menghapus project rusak sebelum evidence, rekonsiliasi, legal hold, dan p
 - [ ] Backup project/bucket terpisah, non-public, immutable sesuai retention, dan akses least privilege.
 - [ ] Jadwal/alert memenuhi RPO; manifest dan rekonsiliasi file tersedia.
 - [ ] Restore dilakukan pada target terisolasi dengan integrasi eksternal off.
+- [ ] Source/target project, database, bucket, commit/release, Rules/indexes, backup URI/watermark, dan approver tercatat.
 - [ ] Firestore import, Storage count/checksum, readiness, security negative test, dan domain sampling lulus.
+- [ ] Koleksi tahan lama cocok; pengecualian count TTL sementara dan verifikasi expiry dicatat terpisah.
 - [ ] RPO/RTO aktual dicatat dan disahkan dua pihak.
 - [ ] Recovery report tersimpan di register audit terlindungi; data sementara recovery dihapus sesuai change approval setelah review.

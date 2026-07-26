@@ -87,11 +87,11 @@
 </template>
 
 <script setup lang="ts">
-import { navigation, roleLabels } from '~/config/navigation'
+import { navigationCommandsForAccess, roleLabels } from '~/config/navigation'
 import type { Feature } from '~/shared/features'
 
 const { toggleSidebar, commandOpen, notificationsOpen } = useAppShell()
-const { user, logout, switchRole } = useAuth()
+const { user, can, logout, switchRole } = useAuth()
 const { enabled } = useFeatureFlags()
 const searchInput = ref<HTMLInputElement>()
 const query = ref('')
@@ -108,9 +108,7 @@ const noticeFeatures: Record<string, Feature> = {
 }
 const visibleNotices = computed(() => notices.filter(notice => enabled(noticeFeatures[notice.to] || 'notifications')))
 
-const commands = computed(() => navigation.flatMap(group => group.items
-  .filter(item => enabled(item.feature))
-  .map(item => ({ ...item, context: group.label }))))
+const commands = computed(() => navigationCommandsForAccess(enabled, can))
 const filteredCommands = computed(() => commands.value.filter(item => `${item.label} ${item.context}`.toLowerCase().includes(query.value.toLowerCase())).slice(0, 7))
 const activeRoleLabel = computed(() => user.value ? roleLabels[user.value.activeRole] : '')
 

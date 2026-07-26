@@ -53,6 +53,19 @@ export interface AuditEntryPage {
   nextCursor?: string
 }
 
+export type AuditEntrySummary = Pick<AuditEntry, 'id' | 'occurredAt' | 'actor' | 'action' | 'resource' | 'outcome'>
+
+export function auditEntrySummary(entry: AuditEntry): AuditEntrySummary {
+  return {
+    id: entry.id,
+    occurredAt: entry.occurredAt,
+    actor: { uid: entry.actor.uid, roles: [...entry.actor.roles] },
+    action: entry.action,
+    resource: { ...entry.resource },
+    outcome: entry.outcome,
+  }
+}
+
 function encodeAuditCursor(entry: AuditEntry): string {
   return Buffer.from(JSON.stringify({ occurredAt: entry.occurredAt, id: entry.id }), 'utf8').toString('base64url')
 }

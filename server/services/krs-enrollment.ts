@@ -12,6 +12,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { firestorePurgeAfter } from '../utils/firestore-ttl'
 import { cloneValue, mockState } from '../utils/mock-store'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
@@ -355,7 +356,7 @@ export async function saveKrsDraft(
         requestHash: hash,
         response,
         createdAt: now,
-        expiresAt: new Date(clock.getTime() + IDEMPOTENCY_TTL_MS).toISOString(),
+        purgeAfter: firestorePurgeAfter(now, IDEMPOTENCY_TTL_MS),
       })
       return response
     })
@@ -522,7 +523,7 @@ export async function submitKrs(
         requestHash: hash,
         response,
         createdAt: now,
-        expiresAt: new Date(clock.getTime() + IDEMPOTENCY_TTL_MS).toISOString(),
+        purgeAfter: firestorePurgeAfter(now, IDEMPOTENCY_TTL_MS),
       })
       return response
     })

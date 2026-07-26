@@ -3,7 +3,6 @@ import type {
   BillingInvoice,
   BillingStudentProfile,
   BillingVoucher,
-  BillingWriteResult,
   DepositAccount,
   DepositTransaction,
   InstallmentPlan,

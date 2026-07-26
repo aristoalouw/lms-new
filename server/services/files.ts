@@ -11,7 +11,6 @@ import type {
   FileListFilters,
   FileListResult,
   FileQuota,
-  FileState,
   FileUploadSession,
   PrivateFileRecord,
   PrivateFileVersion,
@@ -20,6 +19,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { CampusError, conflict, forbidden, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from '../utils/firestore-ttl'
 import { opaqueId, requestHash } from '../utils/security'
 import {
   FILE_DOWNLOAD_TTL_MS,
@@ -556,7 +556,10 @@ export async function createFileUploadSession(
       const nextQuota = { ...currentQuota, reservedBytes: currentQuota.reservedBytes + input.sizeBytes, updatedAt: createdAt }
       transaction.set(fileRef, nextFile)
       transaction.create(db.collection('fileVersions').doc(id), nextVersion)
-      transaction.create(sessionRef, nextSession)
+      transaction.create(sessionRef, {
+        ...nextSession,
+        purgeAfter: firestorePurgeAfter(expiresAt, FIRESTORE_TTL_RETENTION_MS.expiredUploadSessionGrace),
+      })
       transaction.set(quotaRef, nextQuota)
       return { file: nextFile, session: nextSession, quota: nextQuota, replayed: false }
     })

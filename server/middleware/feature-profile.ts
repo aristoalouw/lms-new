@@ -6,8 +6,11 @@ export default defineEventHandler((event) => {
   if (!path.startsWith('/api/')) return
 
   const profile = normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE)
+  if (profile === 'lms-mvp' && !isMvpApiAllowed(path, event.method)) {
+    throw createError({ statusCode: 404, statusMessage: 'API tidak tersedia pada profil LMS MVP.' })
+  }
   const feature = featureForApiPath(path)
-  if ((feature && !isFeatureEnabled(profile, feature)) || (profile === 'lms-mvp' && !isMvpApiAllowed(path, event.method))) {
+  if (feature && !isFeatureEnabled(profile, feature)) {
     throw createError({ statusCode: 404, statusMessage: 'API tidak tersedia pada profil LMS MVP.' })
   }
 })

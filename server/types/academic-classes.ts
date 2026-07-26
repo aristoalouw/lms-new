@@ -16,6 +16,7 @@ export interface ClassMeetingSchedule {
 
 export interface AcademicClassRecord {
   id: string
+  courseVersionId?: string
   courseCode: string
   courseName: string
   credits: number

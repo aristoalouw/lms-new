@@ -2,6 +2,7 @@ import type { H3Event } from 'h3'
 import type { AuthContext } from '../types/auth'
 import type {
   LearningGrade,
+  LearningOwnAssignmentHistory,
   LearningPage,
   LearningSubmission,
   LearningSubmissionAttempt,
@@ -10,6 +11,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { FIRESTORE_TTL_RETENTION_MS, withFirestorePurgeAfter } from '../utils/firestore-ttl'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import {
@@ -21,7 +23,9 @@ import {
   requireLearningSpaceRead,
 } from './learning'
 import { learningMockState } from './learning-mock'
+import { learningGradeId, learningSubmissionAttemptId, learningSubmissionId } from './learning-record-ids'
 import { cleanLearningId, cleanLearningInteger, validateSafeRichContent } from './learning-validation'
+import { enqueueLearningNotificationBatch } from './notifications'
 
 export interface SaveLearningDraftInput {
   assignmentId: string
@@ -69,10 +73,6 @@ async function studentForAssignment(context: AuthContext, assignmentId: string, 
   return { assignment, space, studentId: access.studentId }
 }
 
-function submissionId(assignmentId: string, studentId: string): string {
-  return opaqueId('learning_submission', `${assignmentId}:${studentId}`)
-}
-
 async function loadSubmission(id: string): Promise<LearningSubmission | undefined> {
   if (dataMode() === 'mock') return clone(learningMockState().submissions.get(id))
   const db = firestoreAdmin()
@@ -92,6 +92,119 @@ async function loadAttempt(id: string): Promise<LearningSubmissionAttempt> {
   const snapshot = await db.collection('learningSubmissionAttempts').doc(id).get()
   if (!snapshot.exists) notFound('Percobaan pengumpulan')
   return { id: snapshot.id, ...snapshot.data() } as LearningSubmissionAttempt
+}
+
+async function loadGrade(id: string): Promise<LearningGrade | undefined> {
+  if (dataMode() === 'mock') return clone(learningMockState().grades.get(id))
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan nilai tugas tidak tersedia.')
+  const snapshot = await db.collection('learningGrades').doc(id).get()
+  return snapshot.exists ? { id: snapshot.id, ...snapshot.data() } as LearningGrade : undefined
+}
+
+function assertOwnSubmission(
+  submission: LearningSubmission,
+  assignmentId: string,
+  spaceId: string,
+  studentId: string,
+  studentUid: string,
+): void {
+  if (
+    submission.assignmentId !== assignmentId
+    || submission.spaceId !== spaceId
+    || submission.studentId !== studentId
+    || submission.studentUid !== studentUid
+  ) {
+    conflict('LEARNING_HISTORY_INTEGRITY', 'Riwayat pengumpulan tugas tidak konsisten.')
+  }
+}
+
+function assertOwnAttempt(
+  attempt: LearningSubmissionAttempt,
+  submission: LearningSubmission,
+  attemptNumber: number,
+): void {
+  if (
+    attempt.submissionId !== submission.id
+    || attempt.assignmentId !== submission.assignmentId
+    || attempt.spaceId !== submission.spaceId
+    || attempt.studentId !== submission.studentId
+    || attempt.studentUid !== submission.studentUid
+    || attempt.attemptNumber !== attemptNumber
+  ) {
+    conflict('LEARNING_HISTORY_INTEGRITY', 'Riwayat attempt tugas tidak konsisten.')
+  }
+}
+
+function assertOwnGrade(
+  grade: LearningGrade,
+  submission: LearningSubmission,
+  attemptIds: Set<string>,
+): void {
+  if (
+    grade.assignmentId !== submission.assignmentId
+    || grade.spaceId !== submission.spaceId
+    || grade.studentId !== submission.studentId
+    || !attemptIds.has(grade.attemptId)
+  ) {
+    conflict('LEARNING_HISTORY_INTEGRITY', 'Tautan nilai ke attempt tugas tidak konsisten.')
+  }
+}
+
+export async function getOwnLearningAssignmentHistory(
+  context: AuthContext,
+  assignmentId: string,
+): Promise<LearningOwnAssignmentHistory> {
+  const assignment = await loadLearningAssignment(cleanLearningId(assignmentId, 'assignmentId'))
+  const space = await loadLearningSpace(assignment.spaceId)
+  const access = await requireLearningSpaceRead(context, space)
+  if (!hasRole(context, 'student') || !access.studentId) {
+    forbidden('Riwayat pengumpulan hanya tersedia untuk mahasiswa pada roster ruang ini.')
+  }
+  if (assignment.status === 'DRAFT') notFound('Tugas')
+  const [submission, grade] = await Promise.all([
+    loadSubmission(learningSubmissionId(assignment.id, access.studentId)),
+    loadGrade(learningGradeId(assignment.id, access.studentId)),
+  ])
+  if (!submission) {
+    if (grade) conflict('LEARNING_HISTORY_INTEGRITY', 'Nilai tugas tidak memiliki submission terkait.')
+    return { assignmentId: assignment.id, attempts: [] }
+  }
+  assertOwnSubmission(submission, assignment.id, space.id, access.studentId, context.uid)
+
+  let attempts: LearningSubmissionAttempt[]
+  if (dataMode() === 'mock') {
+    attempts = Array.from({ length: submission.attemptCount }, (_, index) => {
+      const attemptNumber = index + 1
+      const attempt = learningMockState().submissionAttempts.get(
+        learningSubmissionAttemptId(submission.id, attemptNumber),
+      )
+      if (!attempt) conflict('LEARNING_HISTORY_INTEGRITY', 'Riwayat attempt tugas tidak lengkap.')
+      return clone(attempt)
+    })
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan pengumpulan tugas tidak tersedia.')
+    const attemptRefs = Array.from({ length: submission.attemptCount }, (_, index) =>
+      db.collection('learningSubmissionAttempts').doc(
+        learningSubmissionAttemptId(submission.id, index + 1),
+      ))
+    const snapshots = attemptRefs.length ? await db.getAll(...attemptRefs) : []
+    if (snapshots.some(snapshot => !snapshot.exists)) {
+      conflict('LEARNING_HISTORY_INTEGRITY', 'Riwayat attempt tugas tidak lengkap.')
+    }
+    attempts = snapshots.map(snapshot =>
+      ({ id: snapshot.id, ...snapshot.data() }) as LearningSubmissionAttempt)
+  }
+  attempts.forEach((attempt, index) => assertOwnAttempt(attempt, submission, index + 1))
+
+  if (grade) assertOwnGrade(grade, submission, new Set(attempts.map(attempt => attempt.id)))
+  return {
+    assignmentId: assignment.id,
+    submission,
+    attempts,
+    ...(grade?.status === 'PUBLISHED' ? { publishedGrade: grade } : {}),
+  }
 }
 
 async function previousIdempotency<T>(namespace: string, hash: string): Promise<T | undefined> {
@@ -124,7 +237,7 @@ export async function saveLearningSubmissionDraft(
   if (input.fileIds.length > assignment.maximumFiles) invalidInput(`Tugas menerima paling banyak ${assignment.maximumFiles} file.`)
   const content = input.content ? validateSafeRichContent(input.content, 'Isi jawaban', 20_000) : undefined
   const files = await Promise.all(input.fileIds.map(fileId => cleanLearningFileReference(context, fileId, space.id)))
-  const id = submissionId(assignment.id, studentId)
+  const id = learningSubmissionId(assignment.id, studentId)
   const normalizedHash = requestHash({ assignmentId: assignment.id, studentId, expectedVersion, content, files })
   const namespace = `submission:draft:${idempotencyKey}`
   const prior = await previousIdempotency<{ submission: LearningSubmission; replayed: boolean }>(namespace, normalizedHash)
@@ -160,7 +273,11 @@ export async function saveLearningSubmissionDraft(
       const fresh = snapshot.exists ? { id: snapshot.id, ...snapshot.data() } as LearningSubmission : undefined
       if ((fresh?.version ?? 0) !== expectedVersion) conflict('VERSION_CONFLICT', 'Draf pengumpulan telah berubah.', { currentVersion: fresh?.version ?? 0 })
       transaction.set(submissionRef, submission)
-      transaction.create(idemRef, { requestHash: normalizedHash, response, createdAt: timestamp })
+      transaction.create(idemRef, withFirestorePurgeAfter(
+        { requestHash: normalizedHash, response, createdAt: timestamp },
+        timestamp,
+        FIRESTORE_TTL_RETENTION_MS.idempotency,
+      ))
       return response
     })
     if (result.replayed) return result
@@ -179,7 +296,7 @@ export async function finalizeLearningSubmission(
   requireIdempotencyKey(idempotencyKey)
   const expectedVersion = cleanLearningInteger(input.expectedVersion, 'expectedVersion', 1, 100_000)
   const { assignment, space, studentId } = await studentForAssignment(context, cleanLearningId(input.assignmentId, 'assignmentId'), now)
-  const id = submissionId(assignment.id, studentId)
+  const id = learningSubmissionId(assignment.id, studentId)
   const current = await loadSubmission(id)
   if (!current || current.status !== 'DRAFT') conflict('SUBMISSION_DRAFT_REQUIRED', 'Simpan draf sebelum mengirim final.')
   if (current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Draf pengumpulan telah berubah.', { currentVersion: current.version })
@@ -191,7 +308,7 @@ export async function finalizeLearningSubmission(
   const prior = await previousIdempotency<{ submission: LearningSubmission; attempt: LearningSubmissionAttempt; replayed: boolean }>(namespace, normalizedHash)
   if (prior) return { ...prior, replayed: true }
   const submittedAt = new Date(now).toISOString()
-  const attemptId = opaqueId('learning_attempt', `${id}:${nextAttempt}`)
+  const attemptId = learningSubmissionAttemptId(id, nextAttempt)
   const attempt: LearningSubmissionAttempt = {
     id: attemptId, submissionId: id, assignmentId: assignment.id, spaceId: space.id,
     studentId, studentUid: context.uid, attemptNumber: nextAttempt, content: current.draftContent,
@@ -216,11 +333,18 @@ export async function finalizeLearningSubmission(
       const fresh = { id: freshSnapshot.id, ...freshSnapshot.data() } as LearningSubmission
       if (fresh.version !== expectedVersion || fresh.status !== 'DRAFT') conflict('VERSION_CONFLICT', 'Draf pengumpulan telah berubah.', { currentVersion: fresh.version })
       if (attemptSnapshot.exists) conflict('SUBMISSION_ATTEMPT_EXISTS', 'Percobaan pengumpulan sudah tercatat.')
-      transaction.set(submissionRef, submission); transaction.create(attemptRef, attempt); transaction.create(idemRef, { requestHash: normalizedHash, response, createdAt: submittedAt }); return response
+      transaction.set(submissionRef, submission); transaction.create(attemptRef, attempt); transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: normalizedHash, response, createdAt: submittedAt }, submittedAt, FIRESTORE_TTL_RETENTION_MS.idempotency)); return response
     })
     if (result.replayed) return result
   }
   await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'SUBMISSION_FINALIZED', resourceId: attempt.id, label: assignment.title, occurredAt: submittedAt })
+  await enqueueLearningNotificationBatch(context, {
+    recipientUids: space.lecturerIds,
+    templateKey: 'learning-submission-finalized',
+    variables: { spaceTitle: space.title, resourceTitle: assignment.title },
+    actionPath: `/pembelajaran/${space.id}/tugas/${assignment.id}`,
+    eventKey: `learning-submission-finalized:${attempt.id}`,
+  }, event)
   const audit = await appendAudit({ actor: context, action: 'LEARNING_SUBMISSION_FINALIZED', resourceType: 'learning_submission_attempt', resourceId: attempt.id, after: { assignmentId: assignment.id, attemptNumber: attempt.attemptNumber, timeliness: attempt.timeliness, fileIds: attempt.files.map(file => file.fileId), assignmentVersion: attempt.assignmentVersion }, event })
   return { ...response, auditId: audit.id }
 }
@@ -238,7 +362,7 @@ export async function gradeLearningSubmission(
   if (typeof input.score !== 'number' || !Number.isFinite(input.score) || input.score < 0 || input.score > assignment.maximumPoints) invalidInput(`Nilai harus berada pada rentang 0-${assignment.maximumPoints}.`)
   if (!['DRAFT', 'PUBLISHED'].includes(input.status)) invalidInput('Status nilai tidak valid.')
   const feedback = validateSafeRichContent(input.feedback, 'Umpan balik', 10_000)
-  const id = opaqueId('learning_grade', `${assignment.id}:${attempt.studentId}`)
+  const id = learningGradeId(assignment.id, attempt.studentId)
   const timestamp = new Date().toISOString()
   let grade: LearningGrade
   let previousStatus: LearningGrade['status'] | undefined
@@ -261,7 +385,16 @@ export async function gradeLearningSubmission(
     })
     grade = result.grade; previousStatus = result.previousStatus
   }
-  if (grade.status === 'PUBLISHED' && previousStatus !== 'PUBLISHED') await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'GRADE_PUBLISHED', resourceId: grade.id, label: assignment.title, occurredAt: timestamp })
+  if (grade.status === 'PUBLISHED' && previousStatus !== 'PUBLISHED') {
+    await appendLearningActivity({ spaceId: space.id, actorUid: context.uid, kind: 'GRADE_PUBLISHED', resourceId: grade.id, label: assignment.title, occurredAt: timestamp })
+    await enqueueLearningNotificationBatch(context, {
+      recipientUids: [attempt.studentUid],
+      templateKey: 'learning-grade-published',
+      variables: { spaceTitle: space.title, resourceTitle: assignment.title },
+      actionPath: `/pembelajaran/${space.id}/tugas/${assignment.id}`,
+      eventKey: `learning-grade-published:${grade.id}:v${grade.version}`,
+    }, event)
+  }
   const audit = await appendAudit({ actor: context, action: 'LEARNING_SUBMISSION_GRADED', resourceType: 'learning_grade', resourceId: grade.id, before: { version: expectedVersion, status: previousStatus }, after: { version: grade.version, attemptId: attempt.id, score: grade.score, status: grade.status }, event })
   return { grade, auditId: audit.id }
 }
@@ -314,8 +447,8 @@ export async function listLearningAssignmentSubmissionsPage(
     submissions = submissionSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as LearningSubmission)
     const selected = submissions.slice(0, limit)
     const attemptRefs = selected.flatMap(submission => Array.from({ length: submission.attemptCount }, (_, index) =>
-      db.collection('learningSubmissionAttempts').doc(opaqueId('learning_attempt', `${submission.id}:${index + 1}`))))
-    const gradeRefs = selected.map(submission => db.collection('learningGrades').doc(opaqueId('learning_grade', `${assignment.id}:${submission.studentId}`)))
+      db.collection('learningSubmissionAttempts').doc(learningSubmissionAttemptId(submission.id, index + 1))))
+    const gradeRefs = selected.map(submission => db.collection('learningGrades').doc(learningGradeId(assignment.id, submission.studentId)))
     const [attemptSnapshots, gradeSnapshots] = await Promise.all([
       attemptRefs.length ? db.getAll(...attemptRefs) : Promise.resolve([]),
       gradeRefs.length ? db.getAll(...gradeRefs) : Promise.resolve([]),

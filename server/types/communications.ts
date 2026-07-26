@@ -60,6 +60,7 @@ export interface TicketDetail {
 
 export const NOTIFICATION_CATEGORIES = ['ACADEMIC', 'FINANCE', 'LEARNING', 'SERVICE', 'SYSTEM'] as const
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number]
+export const LMS_MVP_NOTIFICATION_CATEGORIES = ['LEARNING', 'SYSTEM'] as const satisfies readonly NotificationCategory[]
 
 export interface NotificationTemplate {
   key: string
@@ -107,6 +108,7 @@ export interface EmailOutboxRecord {
   deliveryKind: EmailDeliveryKind
   deliveryData?: { continuePath?: string }
   templateKey: string
+  category?: NotificationCategory
   subject: string
   textBody?: string
   status: EmailOutboxStatus
@@ -119,6 +121,21 @@ export interface EmailOutboxRecord {
   providerMessageId?: string
   leaseExpiresAt?: string
   lastError?: { code: string; message: string; occurredAt: string }
+}
+
+export interface EmailOutboxSummary {
+  id: string
+  deliveryKind: EmailDeliveryKind
+  templateKey: string
+  category?: NotificationCategory
+  status: EmailOutboxStatus
+  attempts: number
+  maxAttempts: number
+  nextAttemptAt: string
+  createdAt: string
+  updatedAt: string
+  sentAt?: string
+  lastError?: { code: string; occurredAt: string }
 }
 
 export interface EmailDeliveryMessage {

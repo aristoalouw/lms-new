@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/node'
-import { getHeader } from 'h3'
 import { sanitizeSentryEvent, sanitizeSentryText } from '../../shared/observability/sentry'
+import { trustedRequestId } from '../utils/security'
 
 export default defineNitroPlugin((nitroApp) => {
   const config = useRuntimeConfig()
@@ -20,7 +20,7 @@ export default defineNitroPlugin((nitroApp) => {
     const statusCode = (error as Error & { statusCode?: number }).statusCode
     if (typeof statusCode === 'number' && statusCode < 500) return
     Sentry.withScope(scope => {
-      const requestId = context.event ? getHeader(context.event, 'x-request-id') : undefined
+      const requestId = context.event ? trustedRequestId(context.event) : undefined
       if (requestId) scope.setTag('request_id', sanitizeSentryText(requestId))
       if (context.event) scope.setTag('request_method', context.event.method)
       Sentry.captureException(error)

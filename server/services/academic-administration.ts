@@ -5,6 +5,7 @@ import type {
   AcademicCalendarEvent,
   AcademicCourseVersion,
   AcademicGradeRecord,
+  LmsAcademicCatalog,
   AcademicPeriodDefinition,
   AcademicProgramStudy,
   AcademicTranscript,
@@ -25,7 +26,8 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { withFirestorePurgeAfter } from '../utils/firestore-ttl'
+import { hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { normalizeIsoInstant, optionalString, requireInteger, requireRecord, requireString } from '../utils/validation'
 import { academicAdministrationState, resetAcademicAdministrationStateForTests } from './academic-administration-state'
@@ -51,6 +53,65 @@ async function all<T>(collection: string, mockValues: () => T[]): Promise<T[]> {
   const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan administrasi akademik tidak tersedia.')
   const snapshot = await db.collection(collection).limit(MAX_SCAN).get()
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as T)
+}
+
+async function masterById<T>(collection: string, id: string, mockValues: Map<string, T>): Promise<T | undefined> {
+  if (dataMode() === 'mock') {
+    const value = mockValues.get(id)
+    return value ? clone(value) : undefined
+  }
+  const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan administrasi akademik tidak tersedia.')
+  const snapshot = await db.collection(collection).doc(id).get()
+  return snapshot.exists ? ({ id: snapshot.id, ...snapshot.data() } as T) : undefined
+}
+
+export async function listLmsAcademicCatalog(context: AuthContext): Promise<LmsAcademicCatalog> {
+  requirePermission(context, 'classes:manage')
+  const [programs, periods, courses] = await Promise.all([
+    all<AcademicProgramStudy>('academicProgramStudies', () => [...academicAdministrationState().programs.values()]),
+    all<AcademicPeriodDefinition>('academicPeriodDefinitions', () => [...academicAdministrationState().periods.values()]),
+    all<AcademicCourseVersion>('academicCourseVersions', () => [...academicAdministrationState().courses.values()]),
+  ])
+  const activePrograms = programs.filter(program => program.active)
+  const activeProgramIds = new Set(activePrograms.map(program => program.id))
+  return {
+    programs: activePrograms.sort((left, right) => left.code.localeCompare(right.code, 'id')),
+    periods: periods.filter(period => period.active).sort((left, right) => right.startsAt.localeCompare(left.startsAt) || left.id.localeCompare(right.id)),
+    courses: courses
+      .filter(course => course.status === 'ACTIVE' && course.immutable === true && activeProgramIds.has(course.programStudyId))
+      .sort((left, right) => left.code.localeCompare(right.code, 'id') || right.version - left.version),
+  }
+}
+
+export interface LmsClassCatalogSelection {
+  course: AcademicCourseVersion
+  period: AcademicPeriodDefinition
+  program: AcademicProgramStudy
+}
+
+export async function resolveLmsClassCatalogSelection(
+  context: AuthContext,
+  courseVersionId: string,
+  periodId: string,
+): Promise<LmsClassCatalogSelection> {
+  requirePermission(context, 'classes:manage')
+  const safeCourseVersionId = safeId(courseVersionId, 'courseVersionId')
+  const safePeriodId = safeId(periodId, 'periodId')
+  const state = academicAdministrationState()
+  const [course, period] = await Promise.all([
+    masterById<AcademicCourseVersion>('academicCourseVersions', safeCourseVersionId, state.courses),
+    masterById<AcademicPeriodDefinition>('academicPeriodDefinitions', safePeriodId, state.periods),
+  ])
+  if (!course) notFound('Versi mata kuliah')
+  if (course.status !== 'ACTIVE' || course.immutable !== true) {
+    conflict('COURSE_VERSION_NOT_ACTIVE', 'Kelas LMS hanya dapat memakai versi mata kuliah ACTIVE yang immutable.')
+  }
+  if (!period) notFound('Periode akademik')
+  if (!period.active) conflict('ACADEMIC_PERIOD_NOT_ACTIVE', 'Kelas LMS hanya dapat memakai periode akademik aktif.')
+  const program = await masterById<AcademicProgramStudy>('academicProgramStudies', course.programStudyId, state.programs)
+  if (!program) notFound('Program studi mata kuliah')
+  if (!program.active) conflict('PROGRAM_STUDY_NOT_ACTIVE', 'Program studi mata kuliah tidak aktif.')
+  return { course, period, program }
 }
 
 async function profileById(studentId: string): Promise<StudentAcademicProfileRecord> {
@@ -317,7 +378,7 @@ async function persistStableMaster<T extends StableMasterRecord>(options: {
     const value = options.build(options.map.get(options.id)); options.map.set(options.id, clone(value)); academicAdministrationState().idempotency.set(options.namespace, { requestHash: options.hash, response: value, createdAt: new Date().toISOString() }); return { value, replayed: false }
   }
   const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.'); const ref = db.collection(options.collection).doc(options.id), idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', options.namespace))
-  return db.runTransaction(async transaction => { const [snapshot, prior] = await Promise.all([transaction.get(ref), transaction.get(idemRef)]); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: T }; if (stored.requestHash !== options.hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk master data berbeda.'); return { value: stored.response, replayed: true } }; const value = options.build(snapshot.exists ? ({ id: snapshot.id, ...snapshot.data() } as T) : undefined); transaction.set(ref, value); transaction.create(idemRef, { requestHash: options.hash, response: value, createdAt: new Date().toISOString() }); return { value, replayed: false } })
+  return db.runTransaction(async transaction => { const [snapshot, prior] = await Promise.all([transaction.get(ref), transaction.get(idemRef)]); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: T }; if (stored.requestHash !== options.hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk master data berbeda.'); return { value: stored.response, replayed: true } }; const value = options.build(snapshot.exists ? ({ id: snapshot.id, ...snapshot.data() } as T) : undefined), createdAt = new Date().toISOString(); transaction.set(ref, value); transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: options.hash, response: value, createdAt }, createdAt, IDEM_TTL_MS)); return { value, replayed: false } })
 }
 
 function requireMasterStaff(context: AuthContext, programStudyId?: string): void {
@@ -333,7 +394,7 @@ function optimistic<T extends { version: number }>(current: T | undefined, expec
   const currentVersion = current?.version || 0; if (currentVersion !== expectedVersion) conflict('VERSION_CONFLICT', `${label} telah berubah.`, { currentVersion })
 }
 
-export async function upsertAcademicProgram(context: AuthContext, value: unknown, key: string, event?: H3Event, clock = new Date()): Promise<{ value: AcademicProgramStudy; replayed: boolean; auditId?: string }> {
+export async function upsertAcademicProgram(context: AuthContext, value: unknown, key: string, event?: H3Event, _clock = new Date()): Promise<{ value: AcademicProgramStudy; replayed: boolean; auditId?: string }> {
   idempotencyKey(key); const body = requireRecord(value); rejectUnknown(body, ['id', 'facultyId', 'code', 'name', 'level', 'active', 'accreditationStatus', 'accreditationExpiresAt', 'expectedVersion'])
   const id = safeId(body.id, 'id'), facultyId = safeId(body.facultyId, 'facultyId'), code = requireString(body.code, 'code', { max: 20, pattern: /^[A-Z0-9._-]+$/ }), name = requireString(body.name, 'name', { min: 3, max: 180 }), level = requireString(body.level, 'level', { max: 5 }) as AcademicProgramStudy['level']; if (!['D3', 'S1', 'S2'].includes(level)) invalidInput('Jenjang program studi tidak valid.')
   const accreditationStatus = requireString(body.accreditationStatus, 'accreditationStatus', { max: 80 }), accreditationExpiresAt = requireString(body.accreditationExpiresAt, 'accreditationExpiresAt', { max: 10, pattern: /^\d{4}-\d{2}-\d{2}$/ }), expectedVersion = requireInteger(body.expectedVersion, 'expectedVersion', 0), active = body.active === true
@@ -342,7 +403,7 @@ export async function upsertAcademicProgram(context: AuthContext, value: unknown
   if (result.replayed) return result; const audit = await appendAudit({ actor: context, action: 'ACADEMIC_PROGRAM_UPSERTED', resourceType: 'academic_program', resourceId: id, before: { version: expectedVersion }, after: { version: result.value.version, code, active }, event }); return { ...result, auditId: audit.id }
 }
 
-export async function upsertAcademicPeriod(context: AuthContext, value: unknown, key: string, event?: H3Event, clock = new Date()): Promise<{ value: AcademicPeriodDefinition; replayed: boolean; auditId?: string }> {
+export async function upsertAcademicPeriod(context: AuthContext, value: unknown, key: string, event?: H3Event, _clock = new Date()): Promise<{ value: AcademicPeriodDefinition; replayed: boolean; auditId?: string }> {
   idempotencyKey(key); requireMasterStaff(context); const body = requireRecord(value); rejectUnknown(body, ['id', 'academicYear', 'term', 'startsAt', 'endsAt', 'krsOpensAt', 'krsClosesAt', 'active', 'expectedVersion'])
   const id = safeId(body.id, 'id'), academicYear = requireString(body.academicYear, 'academicYear', { max: 20, pattern: /^\d{4}[/-]\d{4}$/ }), term = requireString(body.term, 'term', { max: 10 }) as AcademicPeriodDefinition['term']; if (!['ODD', 'EVEN', 'SHORT'].includes(term)) invalidInput('Term akademik tidak valid.')
   const futureWindow = { maxFutureMs: 10 * 365 * 86_400_000 }, startsAt = normalizeIsoInstant(body.startsAt, 'startsAt', futureWindow), endsAt = normalizeIsoInstant(body.endsAt, 'endsAt', futureWindow), krsOpensAt = normalizeIsoInstant(body.krsOpensAt, 'krsOpensAt', futureWindow), krsClosesAt = normalizeIsoInstant(body.krsClosesAt, 'krsClosesAt', futureWindow); if (startsAt >= endsAt || krsOpensAt >= krsClosesAt || krsClosesAt > endsAt) invalidInput('Urutan waktu periode akademik tidak valid.')
@@ -357,8 +418,30 @@ export async function createAcademicCourseVersion(context: AuthContext, value: u
   requireMasterStaff(context, programStudyId); const expectedCurrentVersion = requireInteger(body.expectedCurrentVersion, 'expectedCurrentVersion', 0), normalized = { courseId, code, name, programStudyId, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, expectedCurrentVersion }, hash = requestHash(normalized), namespace = `academic:master:course:${context.uid}:${key}`, now = clock.toISOString()
   let result: { value: AcademicCourseVersion; replayed: boolean }
   if (dataMode() === 'mock') { const state = academicAdministrationState(), prior = state.idempotency.get(namespace); if (prior) { if (prior.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk versi mata kuliah berbeda.'); return { value: clone(prior.response as AcademicCourseVersion), replayed: true } }; const current = Math.max(0, ...[...state.courses.values()].filter(item => item.courseId === courseId).map(item => item.version)); if (current !== expectedCurrentVersion) conflict('VERSION_CONFLICT', 'Versi mata kuliah telah berubah.', { currentVersion: current }); const version = current + 1, record: AcademicCourseVersion = { id: `${courseId}_v${version}`, courseId, code, name, programStudyId, version, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, createdAt: now, createdBy: context.uid, immutable: true }; state.courses.set(record.id, clone(record)); state.idempotency.set(namespace, { requestHash: hash, response: record, createdAt: now }); result = { value: record, replayed: false } }
-  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan versi mata kuliah tidak tersedia.'); const headRef = db.collection('academicCourseHeads').doc(courseId), idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace)); result = await db.runTransaction(async transaction => { const [head, prior] = await Promise.all([transaction.get(headRef), transaction.get(idemRef)]); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: AcademicCourseVersion }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk versi mata kuliah berbeda.'); return { value: stored.response, replayed: true } }; const current = head.exists ? Number(head.data()?.currentVersion || 0) : 0; if (current !== expectedCurrentVersion) conflict('VERSION_CONFLICT', 'Versi mata kuliah telah berubah.', { currentVersion: current }); const version = current + 1, record: AcademicCourseVersion = { id: `${courseId}_v${version}`, courseId, code, name, programStudyId, version, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, createdAt: now, createdBy: context.uid, immutable: true }; transaction.create(db.collection('academicCourseVersions').doc(record.id), record); transaction.set(headRef, { courseId, programStudyId, currentVersion: version, currentVersionId: record.id, updatedAt: now, updatedBy: context.uid }); transaction.create(idemRef, { requestHash: hash, response: record, createdAt: now }); return { value: record, replayed: false } }) }
+  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan versi mata kuliah tidak tersedia.'); const headRef = db.collection('academicCourseHeads').doc(courseId), idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace)); result = await db.runTransaction(async transaction => { const [head, prior] = await Promise.all([transaction.get(headRef), transaction.get(idemRef)]); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: AcademicCourseVersion }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk versi mata kuliah berbeda.'); return { value: stored.response, replayed: true } }; const current = head.exists ? Number(head.data()?.currentVersion || 0) : 0; if (current !== expectedCurrentVersion) conflict('VERSION_CONFLICT', 'Versi mata kuliah telah berubah.', { currentVersion: current }); const version = current + 1, record: AcademicCourseVersion = { id: `${courseId}_v${version}`, courseId, code, name, programStudyId, version, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, createdAt: now, createdBy: context.uid, immutable: true }; transaction.create(db.collection('academicCourseVersions').doc(record.id), record); transaction.set(headRef, { courseId, programStudyId, currentVersion: version, currentVersionId: record.id, updatedAt: now, updatedBy: context.uid }); transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: hash, response: record, createdAt: now }, now, IDEM_TTL_MS)); return { value: record, replayed: false } }) }
   if (result.replayed) return result; const audit = await appendAudit({ actor: context, action: 'ACADEMIC_COURSE_VERSION_CREATED', resourceType: 'academic_course', resourceId: courseId, after: { versionId: result.value.id, version: result.value.version, code, programStudyId, status }, event }); return { ...result, auditId: audit.id }
+}
+
+export async function upsertLmsCatalogPeriod(
+  context: AuthContext,
+  value: unknown,
+  key: string,
+  event?: H3Event,
+  clock = new Date(),
+): ReturnType<typeof upsertAcademicPeriod> {
+  requirePermission(context, 'classes:manage')
+  return upsertAcademicPeriod(context, value, key, event, clock)
+}
+
+export async function createLmsCatalogCourseVersion(
+  context: AuthContext,
+  value: unknown,
+  key: string,
+  event?: H3Event,
+  clock = new Date(),
+): ReturnType<typeof createAcademicCourseVersion> {
+  requirePermission(context, 'classes:manage')
+  return createAcademicCourseVersion(context, value, key, event, clock)
 }
 
 export async function createAcademicCurriculumVersion(context: AuthContext, value: unknown, key: string, event?: H3Event, clock = new Date()): Promise<{ value: CurriculumVersion; replayed: boolean; auditId?: string }> {

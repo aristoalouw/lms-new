@@ -25,10 +25,12 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { firestorePurgeAfter } from '../utils/firestore-ttl'
 import { hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
-import { normalizeIsoInstant, optionalString, requireInteger, requirePositiveNumber, requireRecord, requireString, requireStringArray } from '../utils/validation'
+import { normalizeIsoInstant, optionalString, requireInteger, requireRecord, requireString, requireStringArray } from '../utils/validation'
 import { normalizeFeatureProfile } from '../../shared/features'
+import { resolveLmsClassCatalogSelection } from './academic-administration'
 import { learningMockState } from './learning-mock'
 
 export interface AcademicClassListQuery {
@@ -43,6 +45,18 @@ export interface AcademicClassPage {
   nextCursor?: string
 }
 
+export interface AttendanceListQuery {
+  meetingNumber?: number
+  studentId?: string
+  cursor?: string
+  limit?: number
+}
+
+export interface AttendancePage {
+  items: AttendanceRecord[]
+  nextCursor?: string
+}
+
 export interface AcademicWriteResult<T> {
   value: T
   replayed: boolean
@@ -50,6 +64,7 @@ export interface AcademicWriteResult<T> {
 }
 
 export interface CreateAcademicClassInput {
+  courseVersionId?: string
   courseCode: string
   courseName: string
   credits: number
@@ -102,6 +117,13 @@ export interface UpdateClassEnrollmentInput {
 export interface ClassEnrollmentPage {
   items: ClassEnrollment[]
   nextCursor?: string
+}
+
+export type AcademicClassExportMode = 'ADMIN_METADATA' | 'LECTURER_OPERATIONS'
+
+export interface AcademicClassExportContext {
+  classRecord: AcademicClassRecord
+  mode: AcademicClassExportMode
 }
 
 interface JournalInput {
@@ -162,7 +184,6 @@ export interface AcademicMockState {
 }
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
-const CLASS_LIMIT = 50
 const ATTENDANCE_STATUSES: AttendanceStatus[] = ['PRESENT', 'LATE', 'EXCUSED', 'ABSENT']
 const DELIVERY_MODES: DeliveryMode[] = ['ONSITE', 'ONLINE', 'HYBRID']
 
@@ -386,6 +407,20 @@ function requireClassManagement(context: AuthContext, record: AcademicClassRecor
   if (!canManageClass(context, record)) forbidden('Anda tidak berwenang mengelola kelas ini.')
 }
 
+export async function getAcademicClassExportContext(
+  context: AuthContext,
+  classId: string,
+): Promise<AcademicClassExportContext> {
+  const record = await loadClass(safeClassId(classId))
+  if (hasRole(context, 'administrator')) {
+    return { classRecord: record, mode: 'ADMIN_METADATA' }
+  }
+  if (isAssignedLecturer(context, record)) {
+    return { classRecord: record, mode: 'LECTURER_OPERATIONS' }
+  }
+  forbidden('Export kelas hanya tersedia bagi administrator atau dosen pengampu kelas.')
+}
+
 function enrollmentRosterEntry(enrollment: ClassEnrollment): ClassRosterEntry {
   return {
     studentId: enrollment.studentId,
@@ -533,7 +568,7 @@ function idempotencyDocument<T>(hash: string, response: AcademicWriteResult<T>, 
     requestHash: hash,
     response,
     createdAt: now,
-    expiresAt: new Date(Date.parse(now) + IDEMPOTENCY_TTL_MS).toISOString(),
+    purgeAfter: firestorePurgeAfter(now, IDEMPOTENCY_TTL_MS),
   }
 }
 
@@ -767,27 +802,53 @@ function parseLecturers(idsValue: unknown, namesValue: unknown): { lecturerIds: 
   return { lecturerIds, lecturerNames }
 }
 
-function parseCreateClassInput(value: unknown): CreateAcademicClassInput {
+async function parseCreateClassInput(context: AuthContext, value: unknown): Promise<CreateAcademicClassInput> {
   const body = requireRecord(value)
   rejectUnknown(body, [
-    'courseCode', 'courseName', 'credits', 'section', 'periodId', 'programStudyId',
+    'courseVersionId', 'courseCode', 'courseName', 'credits', 'section', 'periodId', 'programStudyId',
     'unitId', 'lecturerIds', 'lecturerNames', 'capacity', 'firstMeetingStartsAt',
     'meetingCount', 'meetingDurationMinutes',
   ])
   const lecturers = parseLecturers(body.lecturerIds, body.lecturerNames)
-  return {
-    courseCode: requireString(body.courseCode, 'courseCode', { max: 30, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]*$/ }).toUpperCase(),
-    courseName: requireString(body.courseName, 'courseName', { max: 160 }),
-    credits: requireInteger(body.credits, 'credits', 1, 24),
+  const periodId = stableIdentifier(body.periodId, 'periodId')
+  const common = {
     section: requireString(body.section, 'section', { max: 20, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]*$/ }).toUpperCase(),
-    periodId: stableIdentifier(body.periodId, 'periodId'),
-    programStudyId: stableIdentifier(body.programStudyId, 'programStudyId'),
-    unitId: stableIdentifier(body.unitId, 'unitId'),
+    periodId,
     ...lecturers,
     capacity: requireInteger(body.capacity, 'capacity', 1, 5_000),
     firstMeetingStartsAt: parseClassInstant(body.firstMeetingStartsAt, 'firstMeetingStartsAt'),
     meetingCount: requireInteger(body.meetingCount, 'meetingCount', 1, 32),
     meetingDurationMinutes: requireInteger(body.meetingDurationMinutes, 'meetingDurationMinutes', 30, 360),
+  }
+  const courseVersionId = body.courseVersionId === undefined
+    ? undefined
+    : stableIdentifier(body.courseVersionId, 'courseVersionId')
+  const profile = normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE)
+  if (!courseVersionId) {
+    if (profile === 'lms-mvp') invalidInput('courseVersionId wajib dipilih dari katalog akademik LMS.')
+    return {
+      courseCode: requireString(body.courseCode, 'courseCode', { max: 30, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]*$/ }).toUpperCase(),
+      courseName: requireString(body.courseName, 'courseName', { max: 160 }),
+      credits: requireInteger(body.credits, 'credits', 1, 24),
+      programStudyId: stableIdentifier(body.programStudyId, 'programStudyId'),
+      unitId: stableIdentifier(body.unitId, 'unitId'),
+      ...common,
+    }
+  }
+  const legacyCourseFields = ['courseCode', 'courseName', 'credits', 'programStudyId', 'unitId']
+    .filter(field => body[field] !== undefined)
+  if (legacyCourseFields.length) {
+    invalidInput(`Field katalog tidak boleh dikirim bersama courseVersionId: ${legacyCourseFields.join(', ')}.`)
+  }
+  const selection = await resolveLmsClassCatalogSelection(context, courseVersionId, periodId)
+  return {
+    courseVersionId,
+    courseCode: selection.course.code,
+    courseName: selection.course.name,
+    credits: selection.course.credits,
+    programStudyId: selection.program.id,
+    unitId: selection.program.facultyId,
+    ...common,
   }
 }
 
@@ -857,13 +918,14 @@ export async function createAcademicClass(
   clock = new Date(),
 ): Promise<AcademicWriteResult<{ classRecord: AcademicClassRecord; learningSpace: LearningSpace }>> {
   requirePermission(context, 'classes:manage')
-  const input = parseCreateClassInput(value)
+  const input = await parseCreateClassInput(context, value)
   const hash = requestHash(input)
   const namespace = `academic:class-create:${context.uid}:${idempotencyKey}`
   const now = clock.toISOString()
   const id = opaqueId('class', classKey(input))
   const record: AcademicClassRecord = {
     id,
+    ...(input.courseVersionId ? { courseVersionId: input.courseVersionId } : {}),
     courseCode: input.courseCode,
     courseName: input.courseName,
     credits: input.credits,
@@ -925,6 +987,34 @@ export async function createAcademicClass(
         if (data.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key telah digunakan untuk payload berbeda.')
         return { ...data.response, replayed: true, auditId: undefined }
       }
+      if (input.courseVersionId) {
+        const [courseSnapshot, periodSnapshot, programSnapshot] = await Promise.all([
+          transaction.get(db.collection('academicCourseVersions').doc(input.courseVersionId)),
+          transaction.get(db.collection('academicPeriodDefinitions').doc(input.periodId)),
+          transaction.get(db.collection('academicProgramStudies').doc(input.programStudyId)),
+        ])
+        if (!courseSnapshot.exists) notFound('Versi mata kuliah')
+        const course = courseSnapshot.data()
+        if (!course || course.status !== 'ACTIVE' || course.immutable !== true) {
+          conflict('COURSE_VERSION_NOT_ACTIVE', 'Kelas LMS hanya dapat memakai versi mata kuliah ACTIVE yang immutable.')
+        }
+        if (
+          course.programStudyId !== input.programStudyId
+          || course.code !== input.courseCode
+          || course.name !== input.courseName
+          || course.credits !== input.credits
+        ) {
+          conflict('COURSE_VERSION_CHANGED', 'Snapshot versi mata kuliah tidak lagi sesuai dengan permintaan kelas.')
+        }
+        if (!periodSnapshot.exists) notFound('Periode akademik')
+        if (periodSnapshot.data()?.active !== true) {
+          conflict('ACADEMIC_PERIOD_NOT_ACTIVE', 'Kelas LMS hanya dapat memakai periode akademik aktif.')
+        }
+        if (!programSnapshot.exists) notFound('Program studi mata kuliah')
+        if (programSnapshot.data()?.active !== true || programSnapshot.data()?.facultyId !== input.unitId) {
+          conflict('PROGRAM_STUDY_NOT_ACTIVE', 'Program studi mata kuliah tidak aktif atau unitnya berubah.')
+        }
+      }
       if (existingKey.exists || existingClass.exists || existingSpace.exists) {
         conflict('ACADEMIC_CLASS_DUPLICATE', 'Kelas dengan periode, mata kuliah, dan section yang sama sudah ada.')
       }
@@ -973,6 +1063,17 @@ export async function updateAcademicClass(
   const updatedRecord = (current: AcademicClassRecord): AcademicClassRecord => {
     const currentVersion = current.version ?? 1
     if (currentVersion !== input.expectedVersion) conflict('VERSION_CONFLICT', 'Kelas telah berubah.', { currentVersion })
+    if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp' && current.courseVersionId) {
+      const protectedFields = ['courseCode', 'courseName', 'credits', 'periodId', 'programStudyId', 'unitId'] as const
+      const changedFields = protectedFields.filter(field => input[field] !== undefined && input[field] !== current[field])
+      if (changedFields.length) {
+        conflict(
+          'CLASS_CATALOG_PROVENANCE_IMMUTABLE',
+          'Snapshot mata kuliah, periode, program studi, dan unit kelas katalog tidak dapat diubah pada profil LMS.',
+          { fields: changedFields },
+        )
+      }
+    }
     const firstStart = input.firstMeetingStartsAt ?? current.schedule[0]?.scheduledStartAt
     const meetingCount = input.meetingCount ?? current.totalScheduledMeetings
     const durationMinutes = input.meetingDurationMinutes
@@ -1108,14 +1209,10 @@ function decodeEnrollmentCursor(value?: string): { studentNumber: string; id: st
   }
 }
 
-export async function listClassEnrollments(
-  context: AuthContext,
-  classId: string,
+async function pageClassEnrollments(
+  safeId: string,
   options: { cursor?: string; limit?: number } = {},
 ): Promise<ClassEnrollmentPage> {
-  requirePermission(context, 'enrollments:manage')
-  const safeId = safeClassId(classId)
-  await loadClass(safeId)
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 50)
   const cursor = decodeEnrollmentCursor(options.cursor)
   let rows: ClassEnrollment[]
@@ -1136,6 +1233,26 @@ export async function listClassEnrollments(
   const hasMore = rows.length > limit
   const items = rows.slice(0, limit).map(clone)
   return { items, ...(hasMore && items.length ? { nextCursor: encodeEnrollmentCursor(items.at(-1)!) } : {}) }
+}
+
+export async function listClassEnrollments(
+  context: AuthContext,
+  classId: string,
+  options: { cursor?: string; limit?: number } = {},
+): Promise<ClassEnrollmentPage> {
+  requirePermission(context, 'enrollments:manage')
+  const safeId = safeClassId(classId)
+  await loadClass(safeId)
+  return pageClassEnrollments(safeId, options)
+}
+
+export async function listClassEnrollmentsForExportPage(
+  context: AuthContext,
+  classId: string,
+  options: { cursor?: string; limit?: number } = {},
+): Promise<ClassEnrollmentPage> {
+  const access = await getAcademicClassExportContext(context, classId)
+  return pageClassEnrollments(access.classRecord.id, options)
 }
 
 export async function createClassEnrollment(
@@ -1463,6 +1580,88 @@ export async function getAcademicClassDetail(context: AuthContext, classId: stri
   }
 }
 
+function encodeAttendanceCursor(record: AttendanceRecord): string {
+  return Buffer.from(JSON.stringify({ id: record.id }), 'utf8').toString('base64url')
+}
+
+function decodeAttendanceCursor(value?: string): { id: string } | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Record<string, unknown>
+    return { id: requireString(parsed.id, 'cursor.id', { max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]*$/ }) }
+  } catch {
+    invalidInput('Cursor presensi tidak valid.')
+  }
+}
+
+export async function listClassAttendancePage(
+  context: AuthContext,
+  classId: string,
+  query: AttendanceListQuery = {},
+): Promise<AttendancePage> {
+  const safeId = safeClassId(classId)
+  const record = await loadClass(safeId)
+  const manager = canManageClass(context, record)
+  const ownEnrollment = hasRole(context, 'student') && !manager
+    ? await requireActiveStudentEnrollment(context, safeId)
+    : undefined
+  if (!manager && !ownEnrollment) forbidden('Riwayat presensi hanya tersedia bagi dosen pengampu dan mahasiswa terdaftar.')
+
+  const meetingNumber = query.meetingNumber === undefined
+    ? undefined
+    : requireInteger(query.meetingNumber, 'meetingNumber', 1, Math.max(record.totalScheduledMeetings, 40))
+  const requestedStudent = query.studentId === undefined ? undefined : safeStudentId(query.studentId)
+  if (ownEnrollment && requestedStudent && requestedStudent !== ownEnrollment.studentId) {
+    forbidden('Mahasiswa hanya dapat melihat riwayat presensinya sendiri.')
+  }
+  const studentId = ownEnrollment?.studentId ?? requestedStudent
+  const limit = Math.min(Math.max(query.limit ?? 50, 1), 50)
+  const cursor = decodeAttendanceCursor(query.cursor)
+
+  if (meetingNumber !== undefined && studentId) {
+    let item: AttendanceRecord | undefined
+    if (dataMode() === 'mock') {
+      item = state.attendance.get(attendanceKey(safeId, meetingNumber, studentId))
+    } else {
+      const db = firestoreAdmin()
+      if (!db) serviceUnavailable('Penyimpanan presensi tidak tersedia.')
+      const snapshot = await db.collection('academicClasses').doc(safeId).collection('attendance')
+        .doc(opaqueId('attendance', attendanceKey(safeId, meetingNumber, studentId))).get()
+      if (snapshot.exists) item = { id: snapshot.id, ...snapshot.data() } as AttendanceRecord
+    }
+    return { items: item ? [clone(item)] : [] }
+  }
+
+  let records: AttendanceRecord[]
+  if (dataMode() === 'mock') {
+    records = [...state.attendance.values()]
+      .filter(item => item.classId === safeId)
+      .filter(item => meetingNumber === undefined || item.meetingNumber === meetingNumber)
+      .filter(item => !studentId || item.studentId === studentId)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .filter(item => !cursor || item.id > cursor.id)
+      .slice(0, limit + 1)
+      .map(clone)
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan presensi tidak tersedia.')
+    let attendanceQuery: Query = db.collection('academicClasses').doc(safeId).collection('attendance')
+    if (meetingNumber !== undefined) attendanceQuery = attendanceQuery.where('meetingNumber', '==', meetingNumber)
+    if (studentId) attendanceQuery = attendanceQuery.where('studentId', '==', studentId)
+    attendanceQuery = attendanceQuery.orderBy('__name__')
+    if (cursor) attendanceQuery = attendanceQuery.startAfter(cursor.id)
+    const snapshot = await attendanceQuery.limit(limit + 1).get()
+    records = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as AttendanceRecord)
+  }
+  const hasMore = records.length > limit
+  const consumed = records.slice(0, limit)
+  const cursorRecord = consumed.at(-1)
+  const items = [...consumed]
+    .sort((left, right) => left.meetingNumber - right.meetingNumber || left.studentId.localeCompare(right.studentId))
+    .map(clone)
+  return { items, ...(hasMore && cursorRecord ? { nextCursor: encodeAttendanceCursor(cursorRecord) } : {}) }
+}
+
 export async function createTeachingJournal(
   context: AuthContext,
   classId: string,
@@ -1605,7 +1804,7 @@ export async function issueAttendanceChallenge(
         value: { challengeId, classId: safeId, meetingNumber: input.meetingNumber, challengeToken: `qr1.${encodedClassId}.${challengeId}.${nonce}`, expiresAt },
         replayed: false,
       }
-      transaction.create(challengeRef, { ...stored, purgeAfter: new Date(expiresAt) })
+      transaction.create(challengeRef, { ...stored, purgeAfter: firestorePurgeAfter(expiresAt) })
       transaction.create(idemRef, idempotencyDocument(hash, response, now))
       return response
     })

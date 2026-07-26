@@ -8,6 +8,7 @@ import {
   updateAcademicClass,
   updateClassEnrollment,
 } from '../../server/services/academic-classes'
+import { resetAcademicAdministrationStateForTests } from '../../server/services/academic-administration'
 import {
   createLearningAnnouncement,
   createLearningMaterial,
@@ -32,8 +33,7 @@ const student = (id = 'student-001', program = 'management-s1') => {
   return context
 }
 const newClass = {
-  courseCode: 'MGT499', courseName: 'Praktik Strategi', credits: 3, section: 'B',
-  periodId: '2025-2026-2', programStudyId: 'management-s1', unitId: 'faculty-economics',
+  courseVersionId: 'course-mgt401_v1', section: 'B', periodId: '2025-2026-2',
   lecturerIds: ['advisor-001'], lecturerNames: ['Dr. Budi Santoso'], capacity: 1,
   firstMeetingStartsAt: '2026-08-03T01:00:00.000Z', meetingCount: 14, meetingDurationMinutes: 100,
 }
@@ -42,7 +42,7 @@ describe('MVP class and canonical enrollment lifecycle', () => {
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
     process.env.APP_FEATURE_PROFILE = 'lms-mvp'
-    resetMockState(); resetAcademicClassStateForTests(); resetLearningMockState()
+    resetMockState(); resetAcademicAdministrationStateForTests(); resetAcademicClassStateForTests(); resetLearningMockState()
   })
 
   it('creates one same-id learning space, rejects duplicate class keys, and replays idempotently', async () => {
@@ -94,7 +94,7 @@ describe('MVP class and canonical enrollment lifecycle', () => {
       studentId: 'student-902', studentUid: 'student-902', studentNumber: '23900902', studentName: 'Bima Putra',
       reason: 'Override admin saat kelas telah penuh.',
     }, 'mvp-enrollment-create-0004')).rejects.toMatchObject({ code: 'CLASS_CAPACITY_EXCEEDED' })
-    await expect(updateAcademicClass(administrator(), classId, { expectedVersion: 1, courseName: 'Versi stale', capacity: 2 }, 'mvp-class-update-0001'))
+    await expect(updateAcademicClass(administrator(), classId, { expectedVersion: 1, section: 'C', capacity: 2 }, 'mvp-class-update-0001'))
       .resolves.toMatchObject({ value: { classRecord: { version: 2 } } })
     await expect(updateAcademicClass(administrator(), classId, { expectedVersion: 1, status: 'CLOSED' }, 'mvp-class-update-0002'))
       .rejects.toMatchObject({ code: 'VERSION_CONFLICT' })

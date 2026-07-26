@@ -4,6 +4,7 @@ import type { KrsRecord } from '../types/domain'
 import { appendAudit } from '../utils/audit'
 import { conflict, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from '../utils/firestore-ttl'
 import { cloneValue, mockState } from '../utils/mock-store'
 import { requireKrsApprovalScope } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
@@ -165,7 +166,7 @@ export async function reviewKrs(
           requestHash: hash,
           response: { record: updated, replayed: false },
           createdAt: now,
-          expiresAt: new Date(Date.parse(now) + 24 * 60 * 60 * 1000).toISOString(),
+          purgeAfter: firestorePurgeAfter(now, FIRESTORE_TTL_RETENTION_MS.idempotency),
         })
       }
       return { current, updated, replayed: false }

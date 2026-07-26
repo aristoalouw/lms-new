@@ -4,4 +4,10 @@
 export type * from '../../../server/types/academic-classes'
 export type * from '../../../server/types/files'
 export type * from '../../../server/types/learning'
+export type {
+  AcademicCourseVersion,
+  AcademicPeriodDefinition,
+  AcademicProgramStudy,
+  LmsAcademicCatalog,
+} from '../../../server/types/academic-administration'
 export type { AuditEntry } from '../../../server/types/domain'

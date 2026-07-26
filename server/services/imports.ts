@@ -239,7 +239,7 @@ export async function createImportPreview(
     createdBy: context.uid,
     expiresAt: new Date(now.getTime() + PREVIEW_TTL_MS).toISOString(),
   }
-  let replayed = false
+  const replayed = false
 
   if (assertStorageAvailable() === 'mock') {
     const previous = memory.idempotency.get(namespace)

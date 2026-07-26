@@ -6,7 +6,7 @@ useHead({ title: 'Materi kelas' })
 const route = useRoute()
 const spaceId = computed(() => String(route.params.spaceId || ''))
 const { $api } = useNuxtApp()
-const { detail, loading, error, refresh } = useLearningSpace(spaceId)
+const { detail, loading, error } = useLearningSpace(spaceId)
 const actionError = ref('')
 
 const materialsFor = (moduleId: string) => detail.value?.materials.filter(item => item.moduleId === moduleId && item.status !== 'ARCHIVED') || []

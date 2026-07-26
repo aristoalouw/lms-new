@@ -1,20 +1,24 @@
 import type { H3Event } from 'h3'
 import type { AuthContext, UserRole } from '../types/auth'
 import {
+  LMS_MVP_NOTIFICATION_CATEGORIES,
   NOTIFICATION_CATEGORIES,
   type EmailDeliveryAdapter,
   type EmailOutboxRecord,
+  type EmailOutboxSummary,
   type InAppNotification,
   type NotificationCategory,
   type NotificationPreferences,
   type NotificationTemplate,
 } from '../types/communications'
 import { appendAudit } from '../utils/audit'
-import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
+import { conflict, forbidden, invalidInput, isCampusError, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from '../utils/firestore-ttl'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
-import { notificationModuleState } from './notifications-state'
+import { listActiveAccountsByIds } from './accounts'
+import { BUILT_IN_LMS_NOTIFICATION_TEMPLATES, notificationModuleState } from './notifications-state'
 import { normalizeFeatureProfile } from '../../shared/features'
 
 const CATEGORY_ROLES: Record<NotificationCategory, UserRole[]> = {
@@ -26,6 +30,7 @@ const CATEGORY_ROLES: Record<NotificationCategory, UserRole[]> = {
 }
 
 const SENSITIVE_VARIABLE = /password|passcode|token|secret|credential|cookie|authorization|private|nik|bank.?account/i
+const LMS_MVP_NOTIFICATION_CATEGORY_SET = new Set<NotificationCategory>(LMS_MVP_NOTIFICATION_CATEGORIES)
 
 export interface EnqueueNotificationInput {
   recipientUid: string
@@ -42,6 +47,21 @@ export interface EnqueueNotificationResult {
   channels: Array<'IN_APP' | 'EMAIL'>
   replayed: boolean
   auditId?: string
+}
+
+export interface EnqueueLearningNotificationBatchInput {
+  recipientUids: string[]
+  templateKey: string
+  variables: Record<string, string | number | boolean>
+  actionPath: string
+  eventKey: string
+}
+
+export interface EnqueueLearningNotificationBatchResult {
+  requestedRecipients: number
+  activeRecipients: number
+  inAppQueued: number
+  emailQueued: number
 }
 
 export interface EnqueuePasswordResetResult {
@@ -111,6 +131,40 @@ function defaultPreferences(uid: string, now = new Date().toISOString()): Notifi
   }
 }
 
+function isLmsMvpProfile(): boolean {
+  return normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp'
+}
+
+function isLmsMvpNotificationCategory(category: NotificationCategory | undefined): category is 'LEARNING' | 'SYSTEM' {
+  return Boolean(category && LMS_MVP_NOTIFICATION_CATEGORY_SET.has(category))
+}
+
+function preferencesForCurrentProfile(preferences: NotificationPreferences): NotificationPreferences {
+  const clone = structuredClone(preferences)
+  if (!isLmsMvpProfile()) return clone
+  clone.categoryEmail.ACADEMIC = false
+  clone.categoryEmail.FINANCE = false
+  clone.categoryEmail.SERVICE = false
+  return clone
+}
+
+function emailOutboxSummary(record: EmailOutboxRecord, category = record.category): EmailOutboxSummary {
+  return {
+    id: record.id,
+    deliveryKind: record.deliveryKind,
+    templateKey: record.templateKey,
+    ...(category ? { category } : {}),
+    status: record.status,
+    attempts: record.attempts,
+    maxAttempts: record.maxAttempts,
+    nextAttemptAt: record.nextAttemptAt,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    ...(record.sentAt ? { sentAt: record.sentAt } : {}),
+    ...(record.lastError ? { lastError: { code: record.lastError.code, occurredAt: record.lastError.occurredAt } } : {}),
+  }
+}
+
 export function nextEmailDeliveryAt(preferences: NotificationPreferences, now = new Date()): string {
   const quiet = preferences.quietHours
   if (!quiet || quiet.start === quiet.end) return now.toISOString()
@@ -144,16 +198,52 @@ async function templateByKey(key: string): Promise<NotificationTemplate> {
   const db = firestoreAdmin()
   if (!db) serviceUnavailable('Penyimpanan notifikasi tidak tersedia.')
   const snapshot = await db.collection('notificationTemplates').doc(key).get()
-  if (!snapshot.exists) notFound('Template notifikasi')
+  if (!snapshot.exists) {
+    const builtIn = BUILT_IN_LMS_NOTIFICATION_TEMPLATES.find(template => template.key === key)
+    if (builtIn) return structuredClone(builtIn)
+    notFound('Template notifikasi')
+  }
   return { key: snapshot.id, ...snapshot.data() } as NotificationTemplate
 }
 
-export async function getNotificationPreferences(uid: string): Promise<NotificationPreferences> {
-  if (dataMode() === 'mock') return structuredClone(notificationModuleState().preferences.get(uid) ?? defaultPreferences(uid))
+async function allNotificationTemplates(): Promise<NotificationTemplate[]> {
+  if (dataMode() === 'mock') {
+    return [...notificationModuleState().templates.values()].map(template => structuredClone(template))
+  }
   const db = firestoreAdmin()
-  if (!db) serviceUnavailable('Penyimpanan preferensi notifikasi tidak tersedia.')
-  const snapshot = await db.collection('notificationPreferences').doc(uid).get()
-  return snapshot.exists ? snapshot.data() as NotificationPreferences : defaultPreferences(uid)
+  if (!db) serviceUnavailable('Penyimpanan template notifikasi tidak tersedia.')
+  const snapshot = await db.collection('notificationTemplates').limit(100).get()
+  const stored = snapshot.docs.map(doc => ({ key: doc.id, ...doc.data() }) as NotificationTemplate)
+  const storedKeys = new Set(stored.map(template => template.key))
+  return [
+    ...stored,
+    ...BUILT_IN_LMS_NOTIFICATION_TEMPLATES
+      .filter(template => !storedKeys.has(template.key))
+      .map(template => structuredClone(template)),
+  ]
+}
+
+async function categoryForEmailOutbox(record: EmailOutboxRecord): Promise<NotificationCategory | undefined> {
+  if (record.category && NOTIFICATION_CATEGORIES.includes(record.category)) return record.category
+  if (record.deliveryKind === 'PASSWORD_RESET' || record.templateKey === 'password-reset') return 'SYSTEM'
+  try {
+    return (await templateByKey(record.templateKey)).category
+  } catch (error) {
+    if (isCampusError(error) && error.statusCode === 404) return undefined
+    throw error
+  }
+}
+
+export async function getNotificationPreferences(uid: string): Promise<NotificationPreferences> {
+  let preferences: NotificationPreferences
+  if (dataMode() === 'mock') preferences = notificationModuleState().preferences.get(uid) ?? defaultPreferences(uid)
+  else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan preferensi notifikasi tidak tersedia.')
+    const snapshot = await db.collection('notificationPreferences').doc(uid).get()
+    preferences = snapshot.exists ? snapshot.data() as NotificationPreferences : defaultPreferences(uid)
+  }
+  return preferencesForCurrentProfile(preferences)
 }
 
 export async function updateNotificationPreferences(
@@ -172,7 +262,10 @@ export async function updateNotificationPreferences(
     uid: context.uid,
     inAppEnabled: Boolean(input.inAppEnabled),
     emailEnabled: Boolean(input.emailEnabled),
-    categoryEmail: { ...input.categoryEmail },
+    categoryEmail: {
+      ...input.categoryEmail,
+      ...(isLmsMvpProfile() ? { ACADEMIC: false, FINANCE: false, SERVICE: false } : {}),
+    },
     ...(input.quietHours ? { quietHours: { ...input.quietHours } } : {}),
     updatedAt: now,
   }
@@ -191,11 +284,10 @@ export async function updateNotificationPreferences(
 
 export async function listNotificationTemplates(context: AuthContext): Promise<NotificationTemplate[]> {
   requireAdministrator(context)
-  if (dataMode() === 'mock') return [...notificationModuleState().templates.values()].map(template => structuredClone(template))
-  const db = firestoreAdmin()
-  if (!db) serviceUnavailable('Penyimpanan template notifikasi tidak tersedia.')
-  const snapshot = await db.collection('notificationTemplates').limit(100).get()
-  return snapshot.docs.map(doc => ({ key: doc.id, ...doc.data() }) as NotificationTemplate)
+  const templates = await allNotificationTemplates()
+  return isLmsMvpProfile()
+    ? templates.filter(template => isLmsMvpNotificationCategory(template.category))
+    : templates
 }
 
 export async function upsertNotificationTemplate(
@@ -243,16 +335,22 @@ export async function upsertNotificationTemplate(
   return { template, auditId: audit.id }
 }
 
-export async function enqueueNotification(
+async function enqueueNotificationWithAuthorization(
   context: AuthContext,
   input: EnqueueNotificationInput,
   idempotencyKey: string,
   event?: H3Event,
+  trustedLearningEvent = false,
 ): Promise<EnqueueNotificationResult> {
   if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) invalidInput('Idempotency key tidak valid.')
   const template = await templateByKey(input.templateKey)
+  if (isLmsMvpProfile() && !isLmsMvpNotificationCategory(template.category)) notFound('Template notifikasi')
   if (!template.active) conflict('TEMPLATE_INACTIVE', 'Template notifikasi tidak aktif.')
-  if (!canEnqueue(context, template, input.programStudyId)) forbidden('Notifikasi berada di luar lingkup kewenangan Anda.')
+  const builtInLearningEvent = template.category === 'LEARNING'
+    && BUILT_IN_LMS_NOTIFICATION_TEMPLATES.some(candidate => candidate.key === template.key)
+  if (trustedLearningEvent ? !builtInLearningEvent : !canEnqueue(context, template, input.programStudyId)) {
+    forbidden('Notifikasi berada di luar lingkup kewenangan Anda.')
+  }
   const variables = normalizeVariables(input.variables)
   const recipientUid = cleanText(input.recipientUid, 128)
   const recipientEmail = normalizeEmail(input.recipientEmail)
@@ -276,6 +374,7 @@ export async function enqueueNotification(
   const outbox = emailEnabled
     ? {
       id: opaqueId('email', idempotencyKey), recipientUid, recipientEmail: recipientEmail!, templateKey: template.key,
+        category: template.category,
         deliveryKind: 'RENDERED_TEMPLATE', subject: render(template.emailSubjectTemplate, variables), textBody: render(template.emailBodyTemplate, variables),
         status: 'QUEUED', attempts: 0, maxAttempts: 5,
         nextAttemptAt: template.category === 'SYSTEM' ? now : nextEmailDeliveryAt(preferences, new Date(now)),
@@ -307,7 +406,12 @@ export async function enqueueNotification(
       }
       if (notification) transaction.create(db.collection('inAppNotifications').doc(notification.id), notification)
       if (outbox) transaction.create(db.collection('emailOutbox').doc(outbox.id), outbox)
-      transaction.create(idemReference, { requestHash: hash, response, createdAt: now, expiresAt: new Date(Date.now() + 7 * 86_400_000) })
+      transaction.create(idemReference, {
+        requestHash: hash,
+        response,
+        createdAt: now,
+        purgeAfter: firestorePurgeAfter(now, FIRESTORE_TTL_RETENTION_MS.communicationKey),
+      })
       return response
     })
     if (result.replayed) return result
@@ -315,6 +419,47 @@ export async function enqueueNotification(
   const audit = await appendAudit({ actor: context, action: 'NOTIFICATION_ENQUEUED', resourceType: 'in_app_notification', resourceId: notification?.id ?? outbox?.id ?? opaqueId('suppressed', idempotencyKey), after: { templateKey: template.key, channels }, event })
   response.auditId = audit.id
   return response
+}
+
+export async function enqueueNotification(
+  context: AuthContext,
+  input: EnqueueNotificationInput,
+  idempotencyKey: string,
+  event?: H3Event,
+): Promise<EnqueueNotificationResult> {
+  return enqueueNotificationWithAuthorization(context, input, idempotencyKey, event)
+}
+
+export async function enqueueLearningNotificationBatch(
+  context: AuthContext,
+  input: EnqueueLearningNotificationBatchInput,
+  event?: H3Event,
+): Promise<EnqueueLearningNotificationBatchResult> {
+  if (!Array.isArray(input.recipientUids) || input.recipientUids.length > 500) {
+    invalidInput('Daftar penerima notifikasi pembelajaran tidak valid.')
+  }
+  const recipientUids = [...new Set(input.recipientUids)]
+  const accounts = await listActiveAccountsByIds(recipientUids)
+  let inAppQueued = 0
+  let emailQueued = 0
+  for (let offset = 0; offset < accounts.length; offset += 10) {
+    const results = await Promise.all(accounts.slice(offset, offset + 10).map(account =>
+      enqueueNotificationWithAuthorization(context, {
+        recipientUid: account.id,
+        recipientEmail: account.email,
+        templateKey: input.templateKey,
+        variables: input.variables,
+        actionPath: input.actionPath,
+      }, opaqueId('learning_notice', `${input.eventKey}:${account.id}`), event, true)))
+    inAppQueued += results.filter(result => result.channels.includes('IN_APP')).length
+    emailQueued += results.filter(result => result.channels.includes('EMAIL')).length
+  }
+  return {
+    requestedRecipients: recipientUids.length,
+    activeRecipients: accounts.length,
+    inAppQueued,
+    emailQueued,
+  }
 }
 
 /**
@@ -337,7 +482,7 @@ export async function enqueuePasswordResetEmail(input: {
   const outbox: EmailOutboxRecord = {
     id: opaqueId('email_reset', idempotencyKey), recipientUid, recipientEmail, deliveryKind: 'PASSWORD_RESET',
     ...(continuePath ? { deliveryData: { continuePath } } : {}),
-    templateKey: 'password-reset', subject: 'Petunjuk reset kata sandi', status: 'QUEUED', attempts: 0, maxAttempts: 5,
+    templateKey: 'password-reset', category: 'SYSTEM', subject: 'Petunjuk reset kata sandi', status: 'QUEUED', attempts: 0, maxAttempts: 5,
     nextAttemptAt: now, createdAt: now, updatedAt: now,
   }
   const response: EnqueuePasswordResetResult = { outboxId: outbox.id, replayed: false }
@@ -363,7 +508,12 @@ export async function enqueuePasswordResetEmail(input: {
       return { ...data.response, replayed: true }
     }
     transaction.create(outboxReference, outbox)
-    transaction.create(idemReference, { requestHash: hash, response, createdAt: now, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) })
+    transaction.create(idemReference, {
+      requestHash: hash,
+      response,
+      createdAt: now,
+      purgeAfter: firestorePurgeAfter(now, FIRESTORE_TTL_RETENTION_MS.idempotency),
+    })
     return response
   })
 }
@@ -396,7 +546,7 @@ export async function listInAppNotificationsPage(
 ): Promise<InAppNotificationPage> {
   const safeLimit = Math.min(Math.max(options.limit ?? 50, 1), 50)
   const cursor = decodeNotificationCursor(options.cursor)
-  const mvp = normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp'
+  const mvp = isLmsMvpProfile()
   const candidateLimit = Math.min(safeLimit * 3 + 1, 151)
   let records: InAppNotification[]
   if (dataMode() === 'mock') records = [...notificationModuleState().notifications.values()].map(record => structuredClone(record))
@@ -411,7 +561,7 @@ export async function listInAppNotificationsPage(
     records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as InAppNotification)
   }
   const visible = records.filter(record => record.recipientUid === context.uid
-      && (!mvp || ['LEARNING', 'SYSTEM'].includes(record.category))
+      && (!mvp || isLmsMvpNotificationCategory(record.category))
       && (!options.unreadOnly || !record.readAt))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))
     .filter(record => !cursor || record.createdAt < cursor.createdAt || (record.createdAt === cursor.createdAt && record.id < cursor.id))
@@ -437,7 +587,7 @@ export async function getInAppNotification(context: AuthContext, id: string): Pr
   }
   if (!record) notFound('Notifikasi')
   if (record.recipientUid !== context.uid) forbidden('Notifikasi bukan milik Anda.')
-  if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp' && !['LEARNING', 'SYSTEM'].includes(record.category)) notFound('Notifikasi')
+  if (isLmsMvpProfile() && !isLmsMvpNotificationCategory(record.category)) notFound('Notifikasi')
   return structuredClone(record)
 }
 
@@ -548,7 +698,7 @@ export async function listDeliverableEmailOutboxIds(limit = 20, now = new Date()
   return [...due.docs, ...abandoned.docs].map(document => document.id)
 }
 
-export async function retryEmailOutbox(context: AuthContext, id: string, event?: H3Event): Promise<{ outbox: Omit<EmailOutboxRecord, 'recipientEmail' | 'textBody'>; auditId: string }> {
+export async function retryEmailOutbox(context: AuthContext, id: string, event?: H3Event): Promise<{ outbox: EmailOutboxSummary; auditId: string }> {
   requireAdministrator(context)
   let record: EmailOutboxRecord | undefined
   if (dataMode() === 'mock') record = notificationModuleState().outbox.get(id)
@@ -559,6 +709,8 @@ export async function retryEmailOutbox(context: AuthContext, id: string, event?:
     if (snapshot.exists) record = { id: snapshot.id, ...snapshot.data() } as EmailOutboxRecord
   }
   if (!record) notFound('Email outbox')
+  const category = await categoryForEmailOutbox(record)
+  if (isLmsMvpProfile() && !isLmsMvpNotificationCategory(category)) notFound('Email outbox')
   if (!['RETRY_SCHEDULED', 'DEAD_LETTER'].includes(record.status)) conflict('OUTBOX_NOT_RETRYABLE', 'Email tidak dapat diulang pada status saat ini.')
   const { leaseExpiresAt: _lease, ...released } = record
   const updated: EmailOutboxRecord = {
@@ -571,20 +723,34 @@ export async function retryEmailOutbox(context: AuthContext, id: string, event?:
     if (!db) serviceUnavailable('Email outbox tidak tersedia.')
     await db.collection('emailOutbox').doc(id).set(updated)
   }
-  const { recipientEmail: _email, textBody: _body, ...safe } = updated
   const audit = await appendAudit({ actor: context, action: 'EMAIL_OUTBOX_RETRIED', resourceType: 'email_outbox', resourceId: id, after: { status: updated.status, attempts: updated.attempts }, event })
-  return { outbox: safe, auditId: audit.id }
+  return { outbox: emailOutboxSummary(updated, category), auditId: audit.id }
 }
 
-export async function listEmailOutbox(context: AuthContext, limit = 50): Promise<Array<Omit<EmailOutboxRecord, 'recipientEmail' | 'textBody'>>> {
+export async function listEmailOutbox(context: AuthContext, limit = 50): Promise<EmailOutboxSummary[]> {
   requireAdministrator(context)
+  const safeLimit = Math.min(Math.max(limit, 1), 50)
+  const mvp = isLmsMvpProfile()
+  const candidateLimit = mvp ? Math.min(safeLimit * 3, 150) : safeLimit
   let records: EmailOutboxRecord[]
   if (dataMode() === 'mock') records = [...notificationModuleState().outbox.values()].map(record => structuredClone(record))
   else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Email outbox tidak tersedia.')
-    const snapshot = await db.collection('emailOutbox').limit(Math.min(limit, 100)).get()
+    const snapshot = await db.collection('emailOutbox').limit(candidateLimit).get()
     records = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as EmailOutboxRecord)
   }
-  return records.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).slice(0, Math.min(limit, 100)).map(({ recipientEmail: _email, textBody: _body, ...safe }) => safe)
+  const templateCategories = mvp
+    ? new Map((await allNotificationTemplates()).map(template => [template.key, template.category] as const))
+    : undefined
+  return records
+    .map(record => ({
+      record,
+      category: record.category
+        ?? (record.deliveryKind === 'PASSWORD_RESET' || record.templateKey === 'password-reset' ? 'SYSTEM' : templateCategories?.get(record.templateKey)),
+    }))
+    .filter(({ category }) => !mvp || isLmsMvpNotificationCategory(category))
+    .sort((left, right) => right.record.updatedAt.localeCompare(left.record.updatedAt))
+    .slice(0, safeLimit)
+    .map(({ record, category }) => emailOutboxSummary(record, category))
 }

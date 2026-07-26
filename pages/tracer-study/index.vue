@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { AxiosError } from 'axios'
 import type {
-  IssuedSkpiReference,
   TracerAccessView,
   TracerAnswer,
   TracerCareerData,

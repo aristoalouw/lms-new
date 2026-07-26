@@ -1,0 +1,9 @@
+{
+  "advisories": {
+    "GHSA-mh99-v99m-4gvg": {
+      "severity": "high",
+      "expiresOn": "2026-08-17",
+      "reason": "Transitive brace-expansion advisory in trusted build/emulator tooling. The application never accepts user-controlled glob patterns, and production starts the prebuilt Nitro output."
+    }
+  }
+}

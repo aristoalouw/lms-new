@@ -2,6 +2,7 @@ import { createHash, createHmac } from 'node:crypto'
 import type { Firestore } from 'firebase-admin/firestore'
 import { CampusError, serviceUnavailable } from './errors'
 import { dataMode, firestoreAdmin } from './firebase-admin'
+import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from './firestore-ttl'
 
 export interface RateLimitOptions {
   limit: number
@@ -17,7 +18,7 @@ export interface RateLimitStore {
   consume(key: string, options: RateLimitOptions, now: number): Promise<RateLimitConsumption>
 }
 
-interface RateBucket extends RateLimitConsumption {}
+type RateBucket = RateLimitConsumption
 
 export class MemoryRateLimitStore implements RateLimitStore {
   private readonly buckets = new Map<string, RateBucket>()
@@ -57,7 +58,7 @@ export class FirestoreRateLimitStore implements RateLimitStore {
         count: bucket.count,
         resetsAt: bucket.resetsAt,
         updatedAt: new Date(now),
-        expiresAt: new Date(bucket.resetsAt + 24 * 60 * 60 * 1000),
+        purgeAfter: firestorePurgeAfter(bucket.resetsAt, FIRESTORE_TTL_RETENTION_MS.expiredRateLimitGrace),
       })
       return bucket
     })

@@ -8,6 +8,7 @@ const spaceId = computed(() => String(route.params.spaceId || ''))
 const { $api } = useNuxtApp()
 const { detail, loading, error, refresh } = useLearningSpace(spaceId)
 const busy = ref(false)
+const exporting = ref(false)
 const actionError = ref('')
 const notice = ref('')
 
@@ -110,6 +111,31 @@ async function saveAnnouncement() {
 async function archiveAnnouncement(item: LearningAnnouncement) {
   await execute(() => $api.patch(`/learning/announcements/${item.id}`, { title: item.title, body: item.body, pinned: false, status: 'ARCHIVED', expectedVersion: item.version }), 'Pengumuman diarsipkan.')
 }
+
+async function exportClassCsv() {
+  const classId = detail.value?.space.academicClassId
+  if (!classId) return
+  exporting.value = true
+  actionError.value = ''
+  try {
+    const response = await $api.get<Blob>(
+      `/academic/classes/${encodeURIComponent(classId)}/export`,
+      { responseType: 'blob' },
+    )
+    const disposition = String(response.headers['content-disposition'] || '')
+    const fileName = disposition.match(/filename="([^"]+)"/)?.[1] || 'kelas-operasional.csv'
+    const url = URL.createObjectURL(response.data)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = fileName
+    anchor.click()
+    URL.revokeObjectURL(url)
+  } catch (cause) {
+    actionError.value = learningErrorMessage(cause)
+  } finally {
+    exporting.value = false
+  }
+}
 </script>
 
 <template>
@@ -120,6 +146,17 @@ async function archiveAnnouncement(item: LearningAnnouncement) {
     <LearningSpaceFrame v-else-if="detail" :detail="detail">
       <section v-if="!detail.canManage" class="alert alert-danger">Hanya dosen yang ditugaskan pada kelas ini dapat mengelola konten dan nilai.</section>
       <template v-else>
+        <section v-if="detail.space.academicClassId" class="manage-section export-section">
+          <header>
+            <div><small>Data operasional</small><h2>Export kelas</h2></div>
+            <button class="btn btn-sm btn-outline-primary" type="button" :disabled="exporting" @click="exportClassCsv">
+              <span v-if="exporting" class="spinner-border spinner-border-sm me-2" aria-hidden="true" />
+              <i v-else class="uil uil-file-download me-2" aria-hidden="true" />
+              Export CSV
+            </button>
+          </header>
+          <p>Berisi enrolment, presensi, dan metadata attempt/nilai terbit; isi jawaban, feedback, email, dan data file tidak disertakan.</p>
+        </section>
         <section id="modul" class="manage-section"><header><div><small>Struktur</small><h2>Modul</h2></div></header><form class="compact-form" @submit.prevent="createModule"><input v-model="moduleDraft.title" class="form-control" maxlength="160" placeholder="Judul modul" required><input v-model="moduleDraft.description" class="form-control" maxlength="5000" placeholder="Deskripsi"><select v-model="moduleDraft.status" class="form-select"><option value="DRAFT">Draf</option><option value="PUBLISHED">Terbit</option></select><button class="btn btn-primary" :disabled="busy">Tambah</button></form><article v-for="module in detail.modules" :key="module.id" class="record-row"><div><small>#{{ module.order }} · {{ module.status }} · v{{ module.version }}</small><strong>{{ module.title }}</strong></div><div class="row-actions"><button v-if="module.status === 'DRAFT'" class="btn btn-sm btn-outline-success" :disabled="busy" @click="updateModule(module, { status: 'PUBLISHED' })">Terbitkan</button><button class="btn btn-sm btn-outline-secondary" :disabled="busy || module.order <= 1" @click="updateModule(module, { order: module.order - 1 })">↑</button><button v-if="module.status !== 'ARCHIVED'" class="btn btn-sm btn-outline-danger" :disabled="busy" @click="updateModule(module, { status: 'ARCHIVED' })">Arsip</button></div></article></section>
 
         <section id="material-editor" class="manage-section"><header><div><small>Konten berversi</small><h2>{{ materialEditing ? 'Ubah materi' : 'Materi baru' }}</h2></div><button v-if="materialEditing" class="btn btn-sm btn-link" @click="resetMaterial">Batal edit</button></header><form class="full-form" @submit.prevent="saveMaterial"><select v-model="materialDraft.moduleId" class="form-select" :disabled="Boolean(materialEditing)" required><option value="">Pilih modul</option><option v-for="module in detail.modules.filter(item => item.status !== 'ARCHIVED')" :key="module.id" :value="module.id">{{ module.title }}</option></select><input v-model="materialDraft.title" class="form-control" maxlength="180" placeholder="Judul materi" required><input v-model="materialDraft.summary" class="form-control" maxlength="500" placeholder="Ringkasan"><select v-model="materialDraft.kind" class="form-select"><option value="RICH_TEXT">Rich text aman</option><option value="FILE">File privat</option><option value="EXTERNAL_LINK">Tautan HTTPS</option></select><ClientOnly v-if="materialDraft.kind === 'RICH_TEXT'"><MaterialEditor v-model="materialContent" aria-label="Isi materi" /></ClientOnly><FilePicker v-else-if="materialDraft.kind === 'FILE'" v-model="materialDraft.fileId" :space-id="spaceId" /><input v-else v-model="materialDraft.externalUrl" class="form-control" type="url" pattern="https://.*" placeholder="https://…" required><select v-model="materialDraft.status" class="form-select"><option value="DRAFT">Draf</option><option value="PUBLISHED">Terbit</option><option v-if="materialEditing" value="ARCHIVED">Arsip</option></select><button class="btn btn-primary" :disabled="busy">{{ materialEditing ? 'Simpan perubahan' : 'Buat materi' }}</button></form><article v-for="material in detail.materials" :key="material.id" class="record-row"><div><small>#{{ material.order }} · {{ material.kind }} · {{ material.status }} · v{{ material.version }}</small><strong>{{ material.title }}</strong></div><div class="row-actions"><button class="btn btn-sm btn-outline-primary" @click="editMaterial(material)">Ubah</button><button class="btn btn-sm btn-outline-secondary" :disabled="busy || material.order <= 1" @click="updateMaterial(material, { order: material.order - 1 })">↑</button><button v-if="material.status === 'DRAFT'" class="btn btn-sm btn-outline-success" :disabled="busy" @click="updateMaterial(material, { status: 'PUBLISHED' })">Terbitkan</button><button v-if="material.status !== 'ARCHIVED'" class="btn btn-sm btn-outline-danger" :disabled="busy" @click="updateMaterial(material, { status: 'ARCHIVED' })">Arsip</button></div></article></section>
@@ -135,4 +172,5 @@ async function archiveAnnouncement(item: LearningAnnouncement) {
 <style scoped src="~/pages/_workflow.css"></style>
 <style scoped>
 .loading-state{display:flex;gap:.5rem;justify-content:center;padding:4rem}.manage-section{overflow:hidden;border:1px solid #e0e8e3;border-radius:.9rem;background:#fff}.manage-section>header{display:flex;justify-content:space-between;align-items:center;padding:.9rem 1rem;border-bottom:1px solid #edf1ee}.manage-section header small{color:#56806e;font-size:.54rem;font-weight:800;text-transform:uppercase}.manage-section h2{margin:.12rem 0;color:#315145;font-size:.84rem}.compact-form{display:grid;grid-template-columns:1fr 1fr 140px auto;gap:.55rem;padding:.8rem 1rem;background:#fafcfb}.full-form{display:grid;gap:.7rem;padding:1rem;background:#fafcfb}.full-form>button{justify-self:start}.record-row{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:.75rem 1rem;border-top:1px solid #edf1ee}.record-row small,.record-row strong{display:block;color:#3b594d;font-size:.64rem}.record-row small{margin-bottom:.12rem;color:#7c8d85;font-size:.52rem}.row-actions{display:flex;gap:.35rem;flex-wrap:wrap;justify-content:flex-end}@media(max-width:991.98px){.compact-form{grid-template-columns:1fr 1fr}}@media(max-width:575.98px){.compact-form{grid-template-columns:1fr}.record-row{align-items:flex-start;flex-direction:column}.row-actions{justify-content:flex-start}}
+.export-section>p{margin:0;padding:.75rem 1rem;color:#687d73;font-size:.6rem}
 </style>

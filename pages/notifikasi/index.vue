@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import type { EmailOutboxRecord, InAppNotification, NotificationCategory, NotificationPreferences, NotificationTemplate } from '~/server/types/communications'
+import {
+  LMS_MVP_NOTIFICATION_CATEGORIES,
+  type EmailOutboxSummary,
+  type InAppNotification,
+  type NotificationCategory,
+  type NotificationPreferences,
+  type NotificationTemplate,
+} from '~/server/types/communications'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Pusat Notifikasi' })
@@ -16,6 +23,7 @@ const loadingMore = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
 const isAdmin = computed(() => can('notifications:manage'))
+const lmsCategorySet = new Set<NotificationCategory>(LMS_MVP_NOTIFICATION_CATEGORIES)
 
 const notifications = ref<InAppNotification[]>([
   { id: 'notification-demo-001', recipientUid: 'student-001', templateKey: 'ticket-status-updated', category: 'SERVICE', title: 'Status LYN-202607-1042 diperbarui', body: 'Tiket sedang ditinjau oleh Biro Akademik.', actionPath: '/layanan/ticket-demo-001', createdAt: '2026-07-21T04:10:00.000Z' },
@@ -28,16 +36,22 @@ const preferences = reactive<NotificationPreferences>({ uid: 'student-001', inAp
 const templates = ref<NotificationTemplate[]>([
   { key: 'ticket-created', name: 'Tiket layanan dibuat', category: 'SERVICE', titleTemplate: 'Tiket {{ticketNumber}} berhasil dibuat', bodyTemplate: 'Permintaan sudah diterima.', emailSubjectTemplate: 'Tiket {{ticketNumber}}', emailBodyTemplate: 'Permintaan Anda sudah diterima.', channels: ['IN_APP', 'EMAIL'], active: true, version: 1, updatedAt: '2026-07-21T00:00:00.000Z', updatedBy: 'admin-001' },
   { key: 'payment-received', name: 'Pembayaran diterima', category: 'FINANCE', titleTemplate: 'Pembayaran diterima', bodyTemplate: 'Pembayaran telah tercatat.', emailSubjectTemplate: 'Konfirmasi pembayaran', emailBodyTemplate: 'Pembayaran Anda telah tercatat.', channels: ['IN_APP', 'EMAIL'], active: true, version: 1, updatedAt: '2026-07-21T00:00:00.000Z', updatedBy: 'admin-001' },
+  { key: 'learning-announcement-published', name: 'Pengumuman kelas diterbitkan', category: 'LEARNING', titleTemplate: 'Pengumuman kelas baru', bodyTemplate: 'Buka ruang pembelajaran untuk melihat pengumuman.', emailSubjectTemplate: 'Pengumuman kelas baru', emailBodyTemplate: 'Pengumuman kelas baru tersedia di portal.', channels: ['IN_APP', 'EMAIL'], active: true, version: 1, updatedAt: '2026-07-21T00:00:00.000Z', updatedBy: 'admin-001' },
+  { key: 'password-reset', name: 'Pemulihan akun', category: 'SYSTEM', titleTemplate: 'Petunjuk pemulihan akun', bodyTemplate: 'Permintaan pemulihan akun diterima.', emailSubjectTemplate: 'Petunjuk pemulihan akun', emailBodyTemplate: 'Ikuti petunjuk aman yang dikirim oleh sistem.', channels: ['EMAIL'], active: true, version: 1, updatedAt: '2026-07-21T00:00:00.000Z', updatedBy: 'system' },
 ])
-const outbox = ref<Array<Omit<EmailOutboxRecord, 'recipientEmail' | 'textBody'>>>([
-  { id: 'email-demo-001', recipientUid: 'student-001', deliveryKind: 'RENDERED_TEMPLATE', templateKey: 'ticket-created', subject: 'Tiket LYN-202607-1042 berhasil dibuat', status: 'SENT', attempts: 1, maxAttempts: 5, nextAttemptAt: '2026-07-21T03:15:00.000Z', createdAt: '2026-07-21T03:15:00.000Z', updatedAt: '2026-07-21T03:15:08.000Z', sentAt: '2026-07-21T03:15:08.000Z', providerMessageId: 'mail-demo-001' },
-  { id: 'email-demo-002', recipientUid: 'student-002', deliveryKind: 'RENDERED_TEMPLATE', templateKey: 'payment-received', subject: 'Konfirmasi pembayaran', status: 'RETRY_SCHEDULED', attempts: 2, maxAttempts: 5, nextAttemptAt: '2026-07-21T07:30:00.000Z', createdAt: '2026-07-21T07:00:00.000Z', updatedAt: '2026-07-21T07:15:00.000Z', lastError: { code: 'TIMEOUT', message: 'Pengiriman email gagal.', occurredAt: '2026-07-21T07:15:00.000Z' } },
+const outbox = ref<EmailOutboxSummary[]>([
+  { id: 'email-demo-001', deliveryKind: 'RENDERED_TEMPLATE', templateKey: 'learning-announcement-published', category: 'LEARNING', status: 'SENT', attempts: 1, maxAttempts: 5, nextAttemptAt: '2026-07-21T03:15:00.000Z', createdAt: '2026-07-21T03:15:00.000Z', updatedAt: '2026-07-21T03:15:08.000Z', sentAt: '2026-07-21T03:15:08.000Z' },
+  { id: 'email-demo-002', deliveryKind: 'PASSWORD_RESET', templateKey: 'password-reset', category: 'SYSTEM', status: 'RETRY_SCHEDULED', attempts: 2, maxAttempts: 5, nextAttemptAt: '2026-07-21T07:30:00.000Z', createdAt: '2026-07-21T07:00:00.000Z', updatedAt: '2026-07-21T07:15:00.000Z', lastError: { code: 'TIMEOUT', occurredAt: '2026-07-21T07:15:00.000Z' } },
 ])
 
 const categoryMeta: Record<NotificationCategory, { label: string; icon: string; tone: string }> = {
   ACADEMIC: { label: 'Akademik', icon: 'uil-graduation-cap', tone: 'blue' }, FINANCE: { label: 'Keuangan', icon: 'uil-wallet', tone: 'amber' }, LEARNING: { label: 'Pembelajaran', icon: 'uil-book-open', tone: 'forest' }, SERVICE: { label: 'Layanan', icon: 'uil-comment-alt-check', tone: 'coral' }, SYSTEM: { label: 'Sistem', icon: 'uil-shield', tone: 'slate' },
 }
-const profileNotifications = computed(() => isLmsMvp.value ? notifications.value.filter(item => ['LEARNING', 'SYSTEM'].includes(item.category)) : notifications.value)
+const categoryEntries = computed(() => (Object.entries(categoryMeta) as Array<[NotificationCategory, (typeof categoryMeta)[NotificationCategory]]>)
+  .filter(([category]) => !isLmsMvp.value || lmsCategorySet.has(category)))
+const profileNotifications = computed(() => isLmsMvp.value ? notifications.value.filter(item => lmsCategorySet.has(item.category)) : notifications.value)
+const profileTemplates = computed(() => isLmsMvp.value ? templates.value.filter(item => lmsCategorySet.has(item.category)) : templates.value)
+const profileOutbox = computed(() => isLmsMvp.value ? outbox.value.filter(item => item.category && lmsCategorySet.has(item.category)) : outbox.value)
 const unreadCount = computed(() => profileNotifications.value.filter(item => !item.readAt).length)
 const filtered = computed(() => profileNotifications.value.filter(item => filter.value === 'ALL' || (filter.value === 'UNREAD' ? !item.readAt : item.category === filter.value)))
 const selected = computed(() => profileNotifications.value.find(item => item.id === selectedId.value) ?? filtered.value[0])
@@ -46,13 +60,6 @@ const dateTime = (value: string) => new Intl.DateTimeFormat('id-ID', { dateStyle
 const load = async () => {
   if (config.public.demoMode) return
   try {
-    if (isLmsMvp.value) {
-      const response = await $api.get<{ notifications: InAppNotification[]; nextCursor?: string }>('/notifications')
-      notifications.value = response.data.notifications
-      notificationCursor.value = response.data.nextCursor
-      selectedId.value = notifications.value[0]?.id ?? ''
-      return
-    }
     const [notificationsResponse, preferencesResponse] = await Promise.all([
       $api.get<{ notifications: InAppNotification[]; nextCursor?: string }>('/notifications'),
       $api.get<{ preferences: NotificationPreferences }>('/notifications/preferences'),
@@ -64,7 +71,7 @@ const load = async () => {
     if (isAdmin.value) {
       const [templateResponse, outboxResponse] = await Promise.all([
         $api.get<{ templates: NotificationTemplate[] }>('/notifications/templates'),
-        $api.get<{ outbox: Array<Omit<EmailOutboxRecord, 'recipientEmail' | 'textBody'>> }>('/notifications/outbox'),
+        $api.get<{ outbox: EmailOutboxSummary[] }>('/notifications/outbox'),
       ])
       templates.value = templateResponse.data.templates
       outbox.value = outboxResponse.data.outbox
@@ -108,6 +115,7 @@ const savePreferences = async () => {
 }
 
 const toggleTemplate = async (template: NotificationTemplate) => {
+  if (isLmsMvp.value) return
   const next = { ...template, active: !template.active, expectedVersion: template.version }
   if (config.public.demoMode) { template.active = next.active; template.version += 1; return }
   try {
@@ -116,10 +124,10 @@ const toggleTemplate = async (template: NotificationTemplate) => {
   } catch { errorMessage.value = 'Status template belum berhasil diperbarui.' }
 }
 
-const retryOutbox = async (record: Omit<EmailOutboxRecord, 'recipientEmail' | 'textBody'>) => {
+const retryOutbox = async (record: EmailOutboxSummary) => {
   if (config.public.demoMode) { record.status = 'QUEUED'; record.nextAttemptAt = new Date().toISOString(); return }
   try {
-    const { data } = await $api.post<{ outbox: Omit<EmailOutboxRecord, 'recipientEmail' | 'textBody'> }>(`/notifications/outbox/${record.id}/retry`)
+    const { data } = await $api.post<{ outbox: EmailOutboxSummary }>(`/notifications/outbox/${record.id}/retry`)
     outbox.value = outbox.value.map(item => item.id === record.id ? data.outbox : item)
   } catch { errorMessage.value = 'Email belum dapat dijadwalkan ulang.' }
 }
@@ -130,19 +138,19 @@ onMounted(load)
 <template>
   <div class="page-stack notification-page">
     <AppPageHeader eyebrow="Komunikasi kampus" title="Pusat Notifikasi" :description="isLmsMvp ? 'Pembaruan pembelajaran dan sistem dalam satu kotak masuk.' : 'Satu kotak masuk untuk pembaruan akademik, keuangan, pembelajaran, dan layanan administratif.'">
-      <template v-if="!isLmsMvp" #actions><button class="btn btn-outline-secondary" type="button" @click="activeTab = 'preferences'"><i class="uil uil-sliders-v-alt me-2" />Atur preferensi</button></template>
+      <template #actions><button class="btn btn-outline-secondary" type="button" @click="activeTab = 'preferences'"><i class="uil uil-sliders-v-alt me-2" />Atur preferensi</button></template>
     </AppPageHeader>
     <div v-if="errorMessage" class="alert alert-warning">{{ errorMessage }}</div>
 
     <nav class="notification-tabs" aria-label="Bagian pusat notifikasi">
       <button type="button" :class="{ active: activeTab === 'inbox' }" @click="activeTab = 'inbox'"><i class="uil uil-inbox" />Kotak masuk<span>{{ unreadCount }}</span></button>
-      <button v-if="!isLmsMvp" type="button" :class="{ active: activeTab === 'preferences' }" @click="activeTab = 'preferences'"><i class="uil uil-setting" />Preferensi</button>
-      <button v-if="isAdmin && !isLmsMvp" type="button" :class="{ active: activeTab === 'operations' }" @click="activeTab = 'operations'"><i class="uil uil-server-network" />Operasional</button>
+      <button type="button" :class="{ active: activeTab === 'preferences' }" @click="activeTab = 'preferences'"><i class="uil uil-setting" />Preferensi</button>
+      <button v-if="isAdmin" type="button" :class="{ active: activeTab === 'operations' }" @click="activeTab = 'operations'"><i class="uil uil-server-network" />Operasional</button>
     </nav>
 
     <section v-if="activeTab === 'inbox'" class="inbox-shell">
       <aside class="inbox-list">
-        <header><div><span class="section-kicker">Kotak masuk</span><h2>{{ unreadCount }} belum dibaca</h2></div><select v-model="filter" class="form-select form-select-sm" aria-label="Filter notifikasi"><option value="ALL">Semua</option><option value="UNREAD">Belum dibaca</option><option v-for="(meta,key) in categoryMeta" v-show="!isLmsMvp || ['LEARNING','SYSTEM'].includes(key)" :key="key" :value="key">{{ meta.label }}</option></select></header>
+        <header><div><span class="section-kicker">Kotak masuk</span><h2>{{ unreadCount }} belum dibaca</h2></div><select v-model="filter" class="form-select form-select-sm" aria-label="Filter notifikasi"><option value="ALL">Semua</option><option value="UNREAD">Belum dibaca</option><option v-for="[key,meta] in categoryEntries" :key="key" :value="key">{{ meta.label }}</option></select></header>
         <div v-if="filtered.length" class="notification-list">
           <button v-for="item in filtered" :key="item.id" type="button" :class="{ active: selected?.id === item.id, unread: !item.readAt }" @click="openNotification(item)"><span class="notification-icon" :class="`notification-icon--${categoryMeta[item.category].tone}`"><i class="uil" :class="categoryMeta[item.category].icon" /></span><span class="notification-copy"><span><strong>{{ item.title }}</strong><time :datetime="item.createdAt">{{ dateTime(item.createdAt) }}</time></span><small>{{ item.body }}</small></span><span v-if="!item.readAt" class="unread-dot" aria-label="Belum dibaca" /></button>
           <button v-if="notificationCursor" class="load-more" type="button" :disabled="loadingMore" @click="loadMoreNotifications">{{ loadingMore ? 'Memuat…' : 'Muat notifikasi berikutnya' }}</button>
@@ -154,13 +162,13 @@ onMounted(load)
 
     <section v-else-if="activeTab === 'preferences'" class="preferences-layout">
       <article class="settings-card"><header><span class="settings-icon"><i class="uil uil-bell" /></span><div><span class="section-kicker">Kanal pengiriman</span><h2>Pilih cara menerima pembaruan</h2><p>Notifikasi sistem yang kritis tetap tersedia di portal.</p></div></header><label class="setting-row"><span><strong>Notifikasi dalam aplikasi</strong><small>Tampilkan pembaruan di pusat notifikasi.</small></span><input v-model="preferences.inAppEnabled" class="form-check-input" type="checkbox" role="switch"></label><label class="setting-row"><span><strong>Ringkasan melalui email</strong><small>Kirim ke alamat email akun yang sudah diverifikasi.</small></span><input v-model="preferences.emailEnabled" class="form-check-input" type="checkbox" role="switch"></label></article>
-      <article class="settings-card"><header><span class="settings-icon"><i class="uil uil-filter" /></span><div><span class="section-kicker">Kategori email</span><h2>Atur topik yang dikirim lewat email</h2></div></header><label v-for="(meta,key) in categoryMeta" :key="key" class="setting-row"><span><strong>{{ meta.label }}</strong><small>Pembaruan {{ meta.label.toLowerCase() }} yang relevan dengan akun Anda.</small></span><input v-model="preferences.categoryEmail[key]" class="form-check-input" type="checkbox" role="switch" :disabled="!preferences.emailEnabled"></label></article>
+      <article class="settings-card"><header><span class="settings-icon"><i class="uil uil-filter" /></span><div><span class="section-kicker">Kategori email</span><h2>Atur topik yang dikirim lewat email</h2></div></header><label v-for="[key,meta] in categoryEntries" :key="key" class="setting-row"><span><strong>{{ meta.label }}</strong><small>Pembaruan {{ meta.label.toLowerCase() }} yang relevan dengan akun Anda.</small></span><input v-model="preferences.categoryEmail[key]" class="form-check-input" type="checkbox" role="switch" :disabled="!preferences.emailEnabled"></label></article>
       <article class="settings-card quiet-card"><header><span class="settings-icon"><i class="uil uil-moon" /></span><div><span class="section-kicker">Jam tenang</span><h2>Tunda email non-kritis</h2><p>Zona waktu dikunci ke Asia/Jakarta agar jadwal konsisten.</p></div></header><div class="quiet-fields"><label>Mulai<input v-model="preferences.quietHours!.start" class="form-control" type="time"></label><label>Selesai<input v-model="preferences.quietHours!.end" class="form-control" type="time"></label></div><button class="btn btn-primary btn-sm mt-3" type="button" :disabled="saving" @click="savePreferences"><span v-if="saving" class="spinner-border spinner-border-sm me-2" />Simpan preferensi</button></article>
     </section>
 
     <section v-else class="operations-layout">
-      <article class="operations-card"><header><div><span class="section-kicker">Template terkelola</span><h2>{{ templates.length }} template notifikasi</h2><p>Template menggunakan variabel terkontrol dan teks biasa untuk mencegah konten aktif.</p></div><StatusBadge status="active" label="Server-side" /></header><div class="template-list"><div v-for="template in templates" :key="template.key"><span class="notification-icon" :class="`notification-icon--${categoryMeta[template.category].tone}`"><i class="uil" :class="categoryMeta[template.category].icon" /></span><span><strong>{{ template.name }}</strong><small>{{ template.key }} - v{{ template.version }} - {{ template.channels.join(' + ') }}</small></span><button class="form-check form-switch" type="button" @click="toggleTemplate(template)"><input class="form-check-input" type="checkbox" :checked="template.active" tabindex="-1"><span class="visually-hidden">Ubah status template</span></button></div></div></article>
-      <article class="operations-card"><header><div><span class="section-kicker">Email outbox</span><h2>Antrean pengiriman</h2><p>Alamat penerima dan isi email tidak pernah ditampilkan pada panel operasional.</p></div><StatusBadge :status="outbox.some(item => item.status === 'DEAD_LETTER') ? 'failed' : 'active'" /></header><div class="outbox-list"><div v-for="record in outbox" :key="record.id"><span class="outbox-state"><i class="uil" :class="record.status === 'SENT' ? 'uil-check' : record.status === 'DEAD_LETTER' ? 'uil-times' : 'uil-clock'" /></span><span><strong>{{ record.subject }}</strong><small>{{ record.templateKey }} - {{ record.attempts }}/{{ record.maxAttempts }} percobaan - {{ dateTime(record.updatedAt) }}</small></span><StatusBadge :status="record.status === 'SENT' ? 'success' : record.status === 'DEAD_LETTER' ? 'failed' : 'pending'" :label="record.status.replaceAll('_',' ')" /><button v-if="['RETRY_SCHEDULED','DEAD_LETTER'].includes(record.status)" class="btn btn-sm btn-outline-secondary" type="button" @click="retryOutbox(record)"><i class="uil uil-redo" /></button></div></div></article>
+      <article class="operations-card"><header><div><span class="section-kicker">Template terkelola</span><h2>{{ profileTemplates.length }} template notifikasi</h2><p>{{ isLmsMvp ? 'Profil MVP menampilkan template pembelajaran dan sistem dalam mode baca-saja.' : 'Template menggunakan variabel terkontrol dan teks biasa untuk mencegah konten aktif.' }}</p></div><StatusBadge status="active" :label="isLmsMvp ? 'Baca-saja' : 'Server-side'" /></header><div class="template-list"><div v-for="template in profileTemplates" :key="template.key"><span class="notification-icon" :class="`notification-icon--${categoryMeta[template.category].tone}`"><i class="uil" :class="categoryMeta[template.category].icon" /></span><span><strong>{{ template.name }}</strong><small>{{ template.key }} - v{{ template.version }} - {{ template.channels.join(' + ') }}</small></span><StatusBadge v-if="isLmsMvp" :status="template.active ? 'active' : 'pending'" :label="template.active ? 'Aktif' : 'Nonaktif'" /><button v-else class="form-check form-switch" type="button" @click="toggleTemplate(template)"><input class="form-check-input" type="checkbox" :checked="template.active" tabindex="-1"><span class="visually-hidden">Ubah status template</span></button></div></div></article>
+      <article class="operations-card"><header><div><span class="section-kicker">Email outbox</span><h2>Antrean pengiriman</h2><p>Panel hanya menampilkan metadata pengiriman; penerima, subjek, isi, dan detail provider tetap disembunyikan.</p></div><StatusBadge :status="profileOutbox.some(item => item.status === 'DEAD_LETTER') ? 'failed' : 'active'" /></header><div class="outbox-list"><div v-for="record in profileOutbox" :key="record.id"><span class="outbox-state"><i class="uil" :class="record.status === 'SENT' ? 'uil-check' : record.status === 'DEAD_LETTER' ? 'uil-times' : 'uil-clock'" /></span><span><strong>{{ record.templateKey }}</strong><small>{{ record.category ? categoryMeta[record.category].label : 'Kategori tidak tersedia' }} - {{ record.attempts }}/{{ record.maxAttempts }} percobaan - {{ dateTime(record.updatedAt) }}</small></span><StatusBadge :status="record.status === 'SENT' ? 'success' : record.status === 'DEAD_LETTER' ? 'failed' : 'pending'" :label="record.status.replaceAll('_',' ')" /><button v-if="['RETRY_SCHEDULED','DEAD_LETTER'].includes(record.status)" class="btn btn-sm btn-outline-secondary" type="button" aria-label="Jadwalkan ulang email" @click="retryOutbox(record)"><i class="uil uil-redo" /></button></div></div></article>
     </section>
   </div>
 </template>

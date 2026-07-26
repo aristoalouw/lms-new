@@ -3,6 +3,7 @@ import type { AuthContext } from '../types/auth'
 import { appendAudit } from '../utils/audit'
 import { invalidInput } from '../utils/errors'
 import { authAdmin, dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { firestorePurgeAfter } from '../utils/firestore-ttl'
 import { mockState } from '../utils/mock-store'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireRecord, requireString } from '../utils/validation'
@@ -81,7 +82,7 @@ async function reserveRequest(idempotencyKey: string, emailHash: string): Promis
       requestHash: emailHash,
       response: RESET_RESPONSE,
       createdAt: now,
-      expiresAt: new Date(Date.now() + RESET_IDEMPOTENCY_TTL_MS).toISOString(),
+      purgeAfter: firestorePurgeAfter(now, RESET_IDEMPOTENCY_TTL_MS),
       purpose: 'PASSWORD_RESET_REQUEST',
     })
     return true

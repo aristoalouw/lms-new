@@ -1,6 +1,6 @@
 # Nusa Campus
 
-Nusa Campus adalah fondasi platform informasi kampus terpadu untuk PMB, akademik, pembelajaran, keuangan mahasiswa, kemahasiswaan, kelulusan, tracer study, layanan administrasi, dashboard pimpinan, dan pelaporan PDDIKTI. Aplikasi memakai Nuxt 3/Vue 3, Bootstrap, builder Webpack, Firebase, Axios, dan Nginx sebagai satu-satunya pintu masuk produksi.
+Nusa Campus adalah fondasi platform informasi kampus terpadu untuk PMB, akademik, pembelajaran, keuangan mahasiswa, kemahasiswaan, kelulusan, tracer study, layanan administrasi, dashboard pimpinan, dan pelaporan PDDIKTI. Aplikasi memakai Nuxt 3/Vue 3, Bootstrap, builder Webpack, Firebase, dan Axios. Produksi dapat berjalan sebagai Hostinger managed Node.js Web App atau melalui target Docker + Nginx yang dipertahankan sebagai alternatif.
 
 Repositori ini memisahkan mode demo lokal dari runtime produksi. Mode demo tidak boleh diaktifkan di produksi, seluruh otorisasi sensitif tetap diverifikasi pada server/Firebase Security Rules, dan tidak ada fitur berbasis AI dalam cakupan.
 
@@ -26,7 +26,7 @@ npm run build
 
 ## Runtime produksi
 
-Nuxt menghasilkan Nitro server di `.output/server/index.mjs` dan hanya mendengarkan port internal 3000. Nginx menangani TLS, header keamanan, pembatasan trafik, dan cache aman. Kredensial Firebase Admin dipasang sebagai file read-only; secret tidak dibangun ke image maupun dimasukkan ke bundle browser.
+Nuxt menghasilkan Nitro node server di `.output/server/index.mjs`; `npm start` menjalankan entry tersebut. Target utama LMS MVP adalah Hostinger Business managed Node.js Web App, yang menyediakan proxy/TLS dan menyuntikkan `PORT`; aplikasi menambahkan header keamanan dan request ID sendiri. Gunakan [runbook Hostinger](./docs/hostinger-node-deployment.md) dan template `config/hostinger.env.example`. Target Docker + Nginx berikut tetap tersedia untuk lingkungan yang mengelola edge sendiri.
 
 Urutan rilis ringkas:
 
@@ -60,7 +60,7 @@ Instruksi lengkap, termasuk preflight, rollback, rotasi secret, dan health check
 - [Billing mahasiswa, piutang, cicilan, deposit, dan voucher](./docs/billing.md)
 - [Ruang pembelajaran, tugas, forum, dan penilaian](./docs/learning.md)
 - [Administrasi akademik, perwalian, RPS, tugas akhir, dan MBKM](./docs/academic-administration.md)
-- [Deployment](./docs/deployment.md) dan [operasi harian](./docs/operations.md)
+- [Hostinger managed Node.js Web App](./docs/hostinger-node-deployment.md), [deployment Docker/Nginx](./docs/deployment.md), dan [operasi harian](./docs/operations.md)
 - [Privasi, analytics, dan Sentry](./docs/privacy-observability.md)
 - [Backup, restore, dan recovery test](./docs/backup-restore.md)
 - [Payment gateway dan rekonsiliasi](./docs/payment-gateway.md)

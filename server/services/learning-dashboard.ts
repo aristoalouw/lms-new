@@ -16,6 +16,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, invalidInput, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { FIRESTORE_TTL_RETENTION_MS, withFirestorePurgeAfter } from '../utils/firestore-ttl'
 import { opaqueId, requestHash } from '../utils/security'
 import { loadLearningSpace, requireLearningSpaceRead } from './learning'
 import { learningMockState } from './learning-mock'
@@ -65,7 +66,7 @@ export async function updateLearningGamificationPreference(
   if (dataMode() === 'mock') { learningMockState().gamificationPreferences.set(id, clone(preference)); learningMockState().idempotency.set(namespace, { requestHash: hash, response: clone(response) }) }
   else {
     const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan preferensi pembelajaran tidak tersedia.'); const preferenceRef = db.collection('learningGamificationPreferences').doc(id), idemRef = db.collection('learningIdempotency').doc(opaqueId('idem', namespace))
-    const result = await db.runTransaction(async transaction => { const [idem, snapshot] = await Promise.all([transaction.get(idemRef), transaction.get(preferenceRef)]); if (idem.exists) { const stored = idem.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } const fresh = snapshot.exists ? snapshot.data() as LearningGamificationPreference : undefined; if ((fresh?.version ?? 0) !== expectedVersion) conflict('VERSION_CONFLICT', 'Preferensi gamifikasi telah berubah.', { currentVersion: fresh?.version ?? 0 }); transaction.set(preferenceRef, preference); transaction.create(idemRef, { requestHash: hash, response, createdAt: now }); return response }); if (result.replayed) return result
+    const result = await db.runTransaction(async transaction => { const [idem, snapshot] = await Promise.all([transaction.get(idemRef), transaction.get(preferenceRef)]); if (idem.exists) { const stored = idem.data() as { requestHash: string; response: typeof response }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk payload berbeda.'); return { ...stored.response, replayed: true } } const fresh = snapshot.exists ? snapshot.data() as LearningGamificationPreference : undefined; if ((fresh?.version ?? 0) !== expectedVersion) conflict('VERSION_CONFLICT', 'Preferensi gamifikasi telah berubah.', { currentVersion: fresh?.version ?? 0 }); transaction.set(preferenceRef, preference); transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: hash, response, createdAt: now }, now, FIRESTORE_TTL_RETENTION_MS.idempotency)); return response }); if (result.replayed) return result
   }
   const audit = await appendAudit({ actor: context, action: 'LEARNING_GAMIFICATION_PREFERENCE_UPDATED', resourceType: 'learning_gamification_preference', resourceId: id, before: { optedIn: current?.optedIn, version: expectedVersion }, after: { optedIn: preference.optedIn, version: preference.version }, event })
   return { ...response, auditId: audit.id }

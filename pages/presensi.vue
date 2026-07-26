@@ -8,7 +8,6 @@ useHead({ title: 'Konfirmasi presensi', meta: [{ name: 'referrer', content: 'no-
 const STORAGE_KEY = 'lms-attendance-challenge'
 const { isAuthenticated, restoreSession } = useAuth()
 const { $api } = useNuxtApp()
-const route = useRoute()
 const pending = ref(true)
 const errorMessage = ref('')
 const attendance = ref<AttendanceRecord | null>(null)

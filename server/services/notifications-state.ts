@@ -18,7 +18,56 @@ interface NotificationModuleState {
   idempotency: Map<string, NotificationIdempotency>
 }
 
+export const BUILT_IN_LMS_NOTIFICATION_TEMPLATES: readonly NotificationTemplate[] = [
+  {
+    key: 'learning-announcement-published', name: 'Pengumuman kelas diterbitkan', category: 'LEARNING',
+    titleTemplate: 'Pengumuman baru di {{spaceTitle}}',
+    bodyTemplate: '{{resourceTitle}} sudah tersedia di ruang kelas.',
+    emailSubjectTemplate: 'Pengumuman baru di {{spaceTitle}}',
+    emailBodyTemplate: '{{resourceTitle}} sudah tersedia. Buka ruang kelas untuk membaca pengumuman.',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-27T00:00:00.000Z', updatedBy: 'system',
+  },
+  {
+    key: 'learning-material-published', name: 'Materi kelas diterbitkan', category: 'LEARNING',
+    titleTemplate: 'Materi baru di {{spaceTitle}}',
+    bodyTemplate: '{{resourceTitle}} sudah dapat dipelajari.',
+    emailSubjectTemplate: 'Materi baru di {{spaceTitle}}',
+    emailBodyTemplate: '{{resourceTitle}} sudah dapat dipelajari. Buka ruang kelas untuk melihat materi.',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-27T00:00:00.000Z', updatedBy: 'system',
+  },
+  {
+    key: 'learning-assignment-published', name: 'Tugas kelas diterbitkan', category: 'LEARNING',
+    titleTemplate: 'Tugas baru di {{spaceTitle}}',
+    bodyTemplate: '{{resourceTitle}} sudah tersedia. Periksa tenggatnya di ruang kelas.',
+    emailSubjectTemplate: 'Tugas baru di {{spaceTitle}}',
+    emailBodyTemplate: '{{resourceTitle}} sudah tersedia. Buka ruang kelas untuk melihat instruksi dan tenggat.',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-27T00:00:00.000Z', updatedBy: 'system',
+  },
+  {
+    key: 'learning-submission-finalized', name: 'Pengumpulan tugas diterima', category: 'LEARNING',
+    titleTemplate: 'Pengumpulan baru di {{spaceTitle}}',
+    bodyTemplate: 'Ada pengumpulan baru untuk {{resourceTitle}}.',
+    emailSubjectTemplate: 'Pengumpulan baru di {{spaceTitle}}',
+    emailBodyTemplate: 'Ada pengumpulan baru untuk {{resourceTitle}}. Buka ruang kelas untuk meninjaunya.',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-27T00:00:00.000Z', updatedBy: 'system',
+  },
+  {
+    key: 'learning-grade-published', name: 'Nilai tugas diterbitkan', category: 'LEARNING',
+    titleTemplate: 'Nilai tersedia di {{spaceTitle}}',
+    bodyTemplate: 'Nilai dan umpan balik untuk {{resourceTitle}} sudah tersedia.',
+    emailSubjectTemplate: 'Nilai tersedia di {{spaceTitle}}',
+    emailBodyTemplate: 'Nilai dan umpan balik untuk {{resourceTitle}} sudah tersedia. Buka ruang kelas untuk melihatnya.',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-27T00:00:00.000Z', updatedBy: 'system',
+  },
+]
+
 const templates: NotificationTemplate[] = [
+  ...BUILT_IN_LMS_NOTIFICATION_TEMPLATES,
   {
     key: 'ticket-created', name: 'Tiket layanan dibuat', category: 'SERVICE',
     titleTemplate: 'Tiket {{ticketNumber}} berhasil dibuat',

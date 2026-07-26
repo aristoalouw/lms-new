@@ -24,6 +24,7 @@ export default defineConfig({
       ENABLE_DEMO_AUTH: 'true',
       NUXT_PUBLIC_DEMO_MODE: 'true',
       NUXT_PUBLIC_APP_ENVIRONMENT: 'test',
+      EMAIL_WORKER_SECRET: 'playwright-email-worker-secret-not-for-production',
     },
   },
 })

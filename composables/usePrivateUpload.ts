@@ -1,4 +1,5 @@
 import type { PrivateFileRecord } from '~/shared/contracts/lms'
+import { learningRequestKey } from './useLearningSpace'
 
 interface UploadSessionResponse {
   file: PrivateFileRecord
@@ -45,6 +46,8 @@ export const usePrivateUpload = () => {
           studentIds: [],
           learningSpaceIds: [learningSpaceId],
         },
+      }, {
+        headers: { 'Idempotency-Key': learningRequestKey('private-upload-session') },
       })
       stage.value = 'Mengunggah ke penyimpanan privat…'
       await send(data.upload, file)

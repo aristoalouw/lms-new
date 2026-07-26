@@ -5,7 +5,6 @@ import type {
   AdvisingSession,
   LeaveRequest,
   MbkmActivity,
-  RpsVersion,
   SemesterResult,
   ThesisRecord,
 } from '~/server/types/academic-administration'

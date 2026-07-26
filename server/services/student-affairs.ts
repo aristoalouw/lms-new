@@ -16,8 +16,6 @@ import type {
   PointPolicy,
   PointRule,
   PortfolioKind,
-  PortfolioStatus,
-  RequirementDocumentStatus,
   ScholarshipApplication,
   ScholarshipApplicationStatus,
   ScholarshipEligibilitySnapshot,
@@ -78,7 +76,6 @@ const PORTFOLIO_LEVELS: StudentPortfolioRecord['level'][] = ['CAMPUS', 'REGIONAL
 const CASE_SEVERITIES: CaseSeverity[] = ['MINOR', 'MODERATE', 'MAJOR', 'CRITICAL']
 const CASE_STATUSES: CaseStatus[] = ['REPORTED', 'NOTIFIED', 'STUDENT_RESPONSE', 'UNDER_REVIEW', 'RESOLVED', 'DISMISSED']
 const APPLICATION_STATUSES: ScholarshipApplicationStatus[] = ['SUBMITTED', 'UNDER_REVIEW', 'AWARDED', 'REJECTED', 'WITHDRAWN']
-const DOCUMENT_STATUSES: RequirementDocumentStatus[] = ['PENDING', 'VERIFIED', 'REJECTED']
 const LETTER_STATUSES: LetterRequestStatus[] = ['SUBMITTED', 'VERIFIED', 'REJECTED', 'ISSUED']
 
 function clone<T>(value: T): T {

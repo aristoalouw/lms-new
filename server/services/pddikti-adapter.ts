@@ -7,7 +7,6 @@ import type {
   PddiktiPushBatchResult,
   PddiktiPushItemResult,
   PddiktiRemoteRecord,
-  PddiktiRemoteSnapshotRequest,
   PddiktiScalar,
 } from '../types/pddikti'
 import { PDDIKTI_ENTITY_TYPES } from '../types/domain'

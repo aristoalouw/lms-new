@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { AxiosError } from 'axios'
-import type { AcademicClassRecord } from '~/shared/contracts/lms'
+import type { AcademicClassRecord, LmsAcademicCatalog } from '~/shared/contracts/lms'
 
 interface AccountOption { id: string; displayName: string; roles: string[] }
 interface AccountPage { items: AccountOption[] }
@@ -19,12 +19,15 @@ const nextCursor = ref<string>()
 const loadingMore = ref(false)
 const lecturers = ref<AccountOption[]>([])
 const selectedLecturers = ref<string[]>([])
+const catalog = ref<LmsAcademicCatalog>({ programs: [], periods: [], courses: [] })
 const firstMeeting = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 16)
 const form = reactive({
-  courseCode: '', courseName: '', credits: 3, section: 'A', periodId: '2026-2027-1',
-  programStudyId: '', unitId: '', capacity: 40, firstMeetingStartsAt: firstMeeting,
+  courseVersionId: '', section: 'A', periodId: '',
+  capacity: 40, firstMeetingStartsAt: firstMeeting,
   meetingCount: 16, meetingDurationMinutes: 100,
 })
+const selectedCourse = computed(() => catalog.value.courses.find(item => item.id === form.courseVersionId))
+const selectedProgram = computed(() => catalog.value.programs.find(item => item.id === selectedCourse.value?.programStudyId))
 
 const key = (purpose: string) => `${purpose}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const messageFor = (error: unknown) => {
@@ -32,19 +35,28 @@ const messageFor = (error: unknown) => {
   return data?.statusMessage || data?.message || (error instanceof Error ? error.message : 'Permintaan kelas gagal diproses.')
 }
 const formatDate = (value: string) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(value))
+const termLabel = (term: string) => ({ ODD: 'Ganjil', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
 
 async function load(reset = true) {
   if (reset) { loading.value = true; nextCursor.value = undefined }
   else loadingMore.value = true
   errorMessage.value = ''
   try {
-    const [classResponse, lecturerResponse] = await Promise.all([
+    const [classResponse, lecturerResponse, catalogResponse] = await Promise.all([
       $api.get<{ items: AcademicClassRecord[]; nextCursor?: string }>('/academic/classes', { params: { limit: 50, ...(!reset && nextCursor.value ? { cursor: nextCursor.value } : {}) } }),
       $api.get<AccountPage>('/accounts', { params: { role: 'lecturer', status: 'active', pageSize: 50 } }),
+      $api.get<LmsAcademicCatalog>('/academic/classes/catalog'),
     ])
     classes.value = reset ? classResponse.data.items : [...classes.value, ...classResponse.data.items]
     nextCursor.value = classResponse.data.nextCursor
     lecturers.value = lecturerResponse.data.items
+    catalog.value = catalogResponse.data
+    if (!catalog.value.courses.some(item => item.id === form.courseVersionId)) {
+      form.courseVersionId = catalog.value.courses[0]?.id || ''
+    }
+    if (!catalog.value.periods.some(item => item.id === form.periodId)) {
+      form.periodId = catalog.value.periods[0]?.id || ''
+    }
   } catch (error) {
     errorMessage.value = messageFor(error)
   } finally {
@@ -67,7 +79,7 @@ async function createClass() {
       lecturerNames: selected.map(item => item.displayName),
     }, { headers: { 'Idempotency-Key': key('class-create') } })
     noticeMessage.value = 'Kelas dan ruang LMS berhasil dibuat secara atomik.'
-    form.courseCode = ''; form.courseName = ''; form.section = 'A'
+    form.section = 'A'
     await load()
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -106,23 +118,23 @@ onMounted(() => load())
     <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
     <div v-if="!can('classes:manage')" class="alert alert-warning">Halaman ini hanya tersedia untuk administrator.</div>
 
-    <section v-else class="admin-class-grid">
+    <template v-else>
+      <AcademicCatalogManager :catalog="catalog" @created="load()" />
+      <section class="admin-class-grid">
       <article class="surface-card">
         <header><span class="section-kicker">Kelas baru</span><h2>Buat kelas dan ruang LMS</h2></header>
         <form class="class-form" @submit.prevent="createClass">
-          <label><span>Kode mata kuliah</span><input v-model="form.courseCode" class="form-control" required maxlength="30" placeholder="MGT401"></label>
-          <label class="span-2"><span>Nama mata kuliah</span><input v-model="form.courseName" class="form-control" required maxlength="160"></label>
-          <label><span>SKS</span><input v-model.number="form.credits" class="form-control" type="number" min="1" max="24" required></label>
+          <div v-if="!loading && (!catalog.courses.length || !catalog.periods.length)" class="alert alert-warning span-2 mb-0" role="alert">Buat minimal satu versi mata kuliah ACTIVE dan periode aktif melalui API katalog sebelum membuat kelas.</div>
+          <label class="span-2"><span>Versi mata kuliah</span><select v-model="form.courseVersionId" class="form-select" required><option value="" disabled>Pilih versi mata kuliah</option><option v-for="course in catalog.courses" :key="course.id" :value="course.id">{{ course.code }} · {{ course.name }} (v{{ course.version }})</option></select><small>Hanya versi ACTIVE dan immutable yang dapat dipakai.</small></label>
           <label><span>Section</span><input v-model="form.section" class="form-control" required maxlength="20"></label>
-          <label><span>Periode</span><input v-model="form.periodId" class="form-control" required></label>
-          <label><span>Program studi</span><input v-model="form.programStudyId" class="form-control" required placeholder="management-s1"></label>
-          <label><span>Unit</span><input v-model="form.unitId" class="form-control" required placeholder="faculty-economics"></label>
+          <label><span>Periode akademik</span><select v-model="form.periodId" class="form-select" required><option value="" disabled>Pilih periode aktif</option><option v-for="period in catalog.periods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ termLabel(period.term) }}</option></select></label>
+          <div v-if="selectedCourse && selectedProgram" class="catalog-summary span-2" aria-live="polite"><div><small>Kode / SKS</small><strong>{{ selectedCourse.code }} · {{ selectedCourse.credits }} SKS</strong></div><div><small>Program studi</small><strong>{{ selectedProgram.name }}</strong></div><div><small>Unit</small><strong>{{ selectedProgram.facultyId }}</strong></div></div>
           <label><span>Kapasitas</span><input v-model.number="form.capacity" class="form-control" type="number" min="1" max="5000" required></label>
           <label class="span-2"><span>Dosen pengampu</span><select v-model="selectedLecturers" class="form-select" multiple required size="4"><option v-for="lecturer in lecturers" :key="lecturer.id" :value="lecturer.id">{{ lecturer.displayName }}</option></select><small>Pilih minimal satu dosen.</small></label>
           <label><span>Pertemuan pertama (WIB)</span><input v-model="form.firstMeetingStartsAt" class="form-control" type="datetime-local" required></label>
           <label><span>Jumlah pertemuan</span><input v-model.number="form.meetingCount" class="form-control" type="number" min="1" max="32" required></label>
           <label><span>Durasi (menit)</span><input v-model.number="form.meetingDurationMinutes" class="form-control" type="number" min="30" max="360" required></label>
-          <button class="btn btn-primary span-2" type="submit" :disabled="saving || !selectedLecturers.length"><span v-if="saving" class="spinner-border spinner-border-sm me-2" />Buat kelas</button>
+          <button class="btn btn-primary span-2" type="submit" :disabled="saving || !selectedLecturers.length || !form.courseVersionId || !form.periodId"><span v-if="saving" class="spinner-border spinner-border-sm me-2" />Buat kelas</button>
         </form>
       </article>
 
@@ -139,10 +151,11 @@ onMounted(() => load())
         </div>
         <EmptyState v-else title="Belum ada kelas" description="Buat kelas pertama untuk menghasilkan ruang LMS otomatis." />
       </article>
-    </section>
+      </section>
+    </template>
   </div>
 </template>
 
 <style scoped>
-.page-stack{display:grid;gap:1.25rem}.admin-class-grid{display:grid;grid-template-columns:minmax(320px,.8fr) minmax(0,1.2fr);gap:1rem;align-items:start}.surface-card{padding:1rem;border:1px solid #dfe8e3;border-radius:1rem;background:#fff}.surface-card header{margin-bottom:1rem}.surface-card h2{margin:.2rem 0 0;color:#294c40;font-size:1rem}.section-kicker{color:#668278;font-size:.65rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.class-form{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}.class-form label>span,.class-form small{display:block;margin-bottom:.3rem;color:#5c7269;font-size:.7rem;font-weight:700}.class-form small{margin:.3rem 0 0;color:#82918c;font-weight:500}.span-2{grid-column:1/-1}.class-list{display:grid;gap:.65rem}.class-list>article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.65rem;padding:.85rem;border:1px solid #e4ebe7;border-radius:.8rem}.class-list strong,.class-list small{display:block}.class-list strong{color:#315449;font-size:.82rem}.class-list small{margin-top:.25rem;color:#77877f;font-size:.68rem}.class-actions{grid-column:1/-1;display:flex;gap:.5rem}.loading-state{display:flex;gap:.5rem;align-items:center;min-height:140px;justify-content:center;color:#6e8179}@media(max-width:991.98px){.admin-class-grid{grid-template-columns:1fr}}@media(max-width:575.98px){.class-form{grid-template-columns:1fr}.span-2{grid-column:auto}.class-list>article{grid-template-columns:1fr}}
+.page-stack{display:grid;gap:1.25rem}.admin-class-grid{display:grid;grid-template-columns:minmax(320px,.8fr) minmax(0,1.2fr);gap:1rem;align-items:start}.surface-card{padding:1rem;border:1px solid #dfe8e3;border-radius:1rem;background:#fff}.surface-card header{margin-bottom:1rem}.surface-card h2{margin:.2rem 0 0;color:#294c40;font-size:1rem}.section-kicker{color:#668278;font-size:.65rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.class-form{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}.class-form label>span,.class-form small{display:block;margin-bottom:.3rem;color:#5c7269;font-size:.7rem;font-weight:700}.class-form small{margin:.3rem 0 0;color:#82918c;font-weight:500}.span-2{grid-column:1/-1}.catalog-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem;padding:.75rem;border:1px solid #dfe8e3;border-radius:.75rem;background:#f7faf8}.catalog-summary small,.catalog-summary strong{display:block}.catalog-summary strong{color:#315449;font-size:.75rem}.class-list{display:grid;gap:.65rem}.class-list>article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.65rem;padding:.85rem;border:1px solid #e4ebe7;border-radius:.8rem}.class-list strong,.class-list small{display:block}.class-list strong{color:#315449;font-size:.82rem}.class-list small{margin-top:.25rem;color:#77877f;font-size:.68rem}.class-actions{grid-column:1/-1;display:flex;gap:.5rem}.loading-state{display:flex;gap:.5rem;align-items:center;min-height:140px;justify-content:center;color:#6e8179}@media(max-width:991.98px){.admin-class-grid{grid-template-columns:1fr}}@media(max-width:575.98px){.class-form,.catalog-summary{grid-template-columns:1fr}.span-2{grid-column:auto}.class-list>article{grid-template-columns:1fr}}
 </style>

@@ -697,12 +697,50 @@
       ]
     },
     {
+      "collectionGroup": "learningForumThreads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "spaceId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "learningForumThreads",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "spaceId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "learningForumPosts",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "threadId", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "learningForumPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "threadId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "learningForumPosts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "threadId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "DESCENDING" }
       ]
     }
   ],
@@ -720,6 +758,42 @@
     {
       "collectionGroup": "idempotencyKeys",
       "fieldPath": "response",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "idempotencyKeys",
+      "fieldPath": "purgeAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "learningIdempotency",
+      "fieldPath": "purgeAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "communicationIdempotency",
+      "fieldPath": "purgeAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "rateLimitBuckets",
+      "fieldPath": "purgeAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "fileUploadSessions",
+      "fieldPath": "purgeAfter",
+      "ttl": true,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "attendanceChallenges",
+      "fieldPath": "purgeAfter",
+      "ttl": true,
       "indexes": []
     },
     {

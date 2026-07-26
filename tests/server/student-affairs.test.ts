@@ -13,7 +13,6 @@ import {
   listLetterRequests,
   listPortfolio,
   listScholarshipApplications,
-  listViolationCases,
   requestActiveStudentLetter,
   resetStudentAffairsStateForTests,
   respondToViolationCase,

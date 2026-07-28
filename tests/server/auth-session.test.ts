@@ -1,0 +1,155 @@
+import type { H3Event } from 'h3'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const firebase = vi.hoisted(() => {
+  const state = {
+    account: {} as Record<string, unknown>,
+    decoded: {} as Record<string, unknown>,
+  }
+  const verifyIdToken = vi.fn(async () => state.decoded)
+  const createSessionCookie = vi.fn()
+  const get = vi.fn(async () => ({
+    exists: true,
+    data: () => state.account,
+  }))
+  const doc = vi.fn(() => ({ get }))
+  const collection = vi.fn(() => ({ doc }))
+  return {
+    state,
+    verifyIdToken,
+    createSessionCookie,
+    get,
+    doc,
+    collection,
+  }
+})
+
+vi.mock('../../server/utils/firebase-admin', () => ({
+  authAdmin: () => ({
+    verifyIdToken: firebase.verifyIdToken,
+    createSessionCookie: firebase.createSessionCookie,
+  }),
+  firestoreAdmin: () => ({ collection: firebase.collection }),
+}))
+
+import {
+  authenticate,
+  createFirebaseSession,
+  verifyFirebaseAppSessionToken,
+} from '../../server/utils/auth'
+
+function requestWithCookie(token: string): H3Event {
+  return {
+    context: {},
+    node: {
+      req: {
+        headers: { cookie: `campus_session=${token}` },
+        socket: {},
+      },
+    },
+  } as unknown as H3Event
+}
+
+describe('Firebase application sessions', () => {
+  const originalSecret = process.env.NUXT_SESSION_SECRET
+  const originalFeatureProfile = process.env.APP_FEATURE_PROFILE
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-28T08:00:00.000Z'))
+    process.env.NUXT_SESSION_SECRET = 'test-application-session-secret-32-bytes-minimum'
+    process.env.APP_FEATURE_PROFILE = 'lms-mvp'
+    firebase.verifyIdToken.mockClear()
+    firebase.createSessionCookie.mockClear()
+    firebase.get.mockClear()
+    firebase.doc.mockClear()
+    firebase.collection.mockClear()
+    firebase.state.decoded = {
+      uid: 'firebase-admin-001',
+      roles: ['student'],
+      scope: { studentIds: ['stale-student'] },
+      auth_time: Math.floor(Date.now() / 1000),
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor((Date.now() + 60 * 60 * 1000) / 1000),
+    }
+    firebase.state.account = {
+      email: 'admin@example.test',
+      displayName: 'Administrator',
+      roles: ['administrator'],
+      scope: { unitIds: ['campus'], programStudyIds: [], cohortYears: [], studentIds: [] },
+      status: 'active',
+      version: 7,
+    }
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    if (originalSecret === undefined) delete process.env.NUXT_SESSION_SECRET
+    else process.env.NUXT_SESSION_SECRET = originalSecret
+    if (originalFeatureProfile === undefined) delete process.env.APP_FEATURE_PROFILE
+    else process.env.APP_FEATURE_PROFILE = originalFeatureProfile
+  })
+
+  it('verifies the Firebase ID token locally and derives authorization from the canonical account', async () => {
+    const created = await createFirebaseSession('fresh-firebase-id-token')
+
+    expect(firebase.verifyIdToken).toHaveBeenCalledWith('fresh-firebase-id-token', false)
+    expect(firebase.createSessionCookie).not.toHaveBeenCalled()
+    expect(created.context).toMatchObject({
+      uid: 'firebase-admin-001',
+      roles: ['administrator'],
+      provider: 'firebase',
+    })
+    expect(created.context.scope.studentIds).toEqual([])
+    expect(verifyFirebaseAppSessionToken(created.token)).toMatchObject({
+      uid: 'firebase-admin-001',
+      accountVersion: 7,
+    })
+
+    await expect(authenticate(requestWithCookie(created.token))).resolves.toMatchObject({
+      uid: 'firebase-admin-001',
+      roles: ['administrator'],
+    })
+  })
+
+  it('rejects tampered, expired, changed-version, and disabled-account sessions', async () => {
+    const { token } = await createFirebaseSession('fresh-firebase-id-token')
+    const tampered = `${token.slice(0, -1)}${token.endsWith('a') ? 'b' : 'a'}`
+    expect(verifyFirebaseAppSessionToken(tampered)).toBeNull()
+
+    firebase.state.account = { ...firebase.state.account, version: 8 }
+    await expect(authenticate(requestWithCookie(token))).resolves.toBeNull()
+
+    firebase.state.account = { ...firebase.state.account, version: 7, status: 'disabled' }
+    await expect(authenticate(requestWithCookie(token))).resolves.toBeNull()
+
+    vi.advanceTimersByTime(8 * 60 * 60 * 1000 + 1)
+    expect(verifyFirebaseAppSessionToken(token)).toBeNull()
+  })
+
+  it('rejects an ID token issued before the account session-revocation boundary', async () => {
+    firebase.state.account = {
+      ...firebase.state.account,
+      sessionValidAfter: Date.now() + 1_000,
+    }
+
+    await expect(createFirebaseSession('revoked-firebase-id-token')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'RECENT_LOGIN_REQUIRED',
+    })
+  })
+
+  it('distinguishes invalid identity tokens from upstream authentication failures', async () => {
+    firebase.verifyIdToken.mockRejectedValueOnce({ code: 'auth/argument-error' })
+    await expect(createFirebaseSession('malformed-token')).rejects.toMatchObject({
+      statusCode: 401,
+      code: 'INVALID_ID_TOKEN',
+    })
+
+    firebase.verifyIdToken.mockRejectedValueOnce({ code: 'app/network-error' })
+    await expect(createFirebaseSession('temporarily-unverifiable-token')).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'AUTH_UNAVAILABLE',
+    })
+  })
+})

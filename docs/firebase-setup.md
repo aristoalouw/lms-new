@@ -67,7 +67,7 @@ Custom claims ringkas:
 }
 ```
 
-Jangan memasukkan nama, NIM, nomor identitas, atau daftar scope yang sangat besar ke token. Gunakan stable IDs. Setelah role/scope berubah, revoke refresh/session token dan minta login ulang. Session produksi berumur maksimal delapan jam pada baseline dan cookie harus `HttpOnly`, `Secure`, `SameSite=Strict`, path `/`.
+Jangan memasukkan nama, NIM, nomor identitas, atau daftar scope yang sangat besar ke token. Gunakan stable IDs. Server memverifikasi Firebase ID token saat login, lalu menerbitkan cookie sesi aplikasi bertanda tangan HMAC yang hanya memuat UID, versi akun, waktu terbit, dan waktu kedaluwarsa. Setiap request memuat ulang `accounts/{uid}` dan menolak akun nonaktif atau versi yang berubah; role dan scope selalu berasal dari dokumen kanonik, bukan cookie. `sessionValidAfter` menolak ID token yang dibuat sebelum pencabutan seluruh sesi. Session produksi berumur maksimal delapan jam dan cookie harus `HttpOnly`, `Secure`, `SameSite=Strict`, path `/`.
 
 ## 6. Security Rules
 

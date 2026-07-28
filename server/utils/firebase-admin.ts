@@ -1,6 +1,6 @@
 import { applicationDefault, cert, getApps, initializeApp, type App, type ServiceAccount } from 'firebase-admin/app'
 import { getAuth, type Auth } from 'firebase-admin/auth'
-import { getFirestore, type Firestore } from 'firebase-admin/firestore'
+import { getFirestore, initializeFirestore, type Firestore } from 'firebase-admin/firestore'
 
 export type FirebaseAdminState =
   | { available: true; app: App; mode: 'emulator' | 'service-account' | 'application-default' }
@@ -8,11 +8,15 @@ export type FirebaseAdminState =
 
 let cachedState: FirebaseAdminState | undefined
 
+export function serviceAccountJsonFromEnvironment(): string | undefined {
+  const inlineJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()
+  if (inlineJson) return inlineJson
+  const encodedJson = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64?.trim()
+  return encodedJson ? Buffer.from(encodedJson, 'base64').toString('utf8') : undefined
+}
+
 function serviceAccountFromEnvironment(): Record<string, unknown> | undefined {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON
-    ?? (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64
-      ? Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8')
-      : undefined)
+  const raw = serviceAccountJsonFromEnvironment()
   if (!raw) {
     if (process.env.FIREBASE_PROJECT_ID && process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
       return {
@@ -83,7 +87,18 @@ export function firebaseAdminState(): FirebaseAdminState {
 
 export function firestoreAdmin(): Firestore | null {
   const state = firebaseAdminState()
-  return state.available ? getFirestore(state.app) : null
+  if (!state.available) return null
+
+  // Hostinger's managed Node runtime can stall on Firestore's default gRPC
+  // streaming transport. The REST transport supports the reads, writes, and
+  // transactions used by this application without relying on HTTP/2.
+  return prefersFirestoreRestTransport()
+    ? initializeFirestore(state.app, { preferRest: true })
+    : getFirestore(state.app)
+}
+
+export function prefersFirestoreRestTransport(): boolean {
+  return process.env.DEPLOYMENT_TARGET === 'hostinger'
 }
 
 export function authAdmin(): Auth | null {

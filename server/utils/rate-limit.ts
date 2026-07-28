@@ -19,6 +19,27 @@ export interface RateLimitStore {
 }
 
 type RateBucket = RateLimitConsumption
+const RATE_LIMIT_STORE_TIMEOUT_MS = 5_000
+
+async function consumeWithTimeout(
+  store: RateLimitStore,
+  key: string,
+  options: RateLimitOptions,
+  now: number,
+): Promise<RateLimitConsumption> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      store.consume(key, options, now),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('RATE_LIMIT_STORE_TIMEOUT')), RATE_LIMIT_STORE_TIMEOUT_MS)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 export class MemoryRateLimitStore implements RateLimitStore {
   private readonly buckets = new Map<string, RateBucket>()
@@ -101,7 +122,7 @@ export async function enforceRateLimit(
 ): Promise<{ remaining: number; resetsAt: number }> {
   let bucket: RateLimitConsumption
   try {
-    bucket = await resolveStore().consume(key, options, now)
+    bucket = await consumeWithTimeout(resolveStore(), key, options, now)
   } catch (error) {
     if (error instanceof CampusError) throw error
     serviceUnavailable('Pembatasan permintaan sementara tidak tersedia.')

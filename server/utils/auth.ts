@@ -8,14 +8,34 @@ import {
 } from 'h3'
 import { DEMO_PROFILES } from '../data/mock-data'
 import type { AccessScope, AuthContext, PublicSession, UserRole } from '../types/auth'
-import { CampusError, forbidden } from './errors'
-import { authAdmin } from './firebase-admin'
+import { CampusError, forbidden, serviceUnavailable } from './errors'
+import { authAdmin, firestoreAdmin } from './firebase-admin'
 import { LMS_MVP_USER_ROLES, permissionsForRole } from '../../shared/auth'
 import { normalizeFeatureProfile } from '../../shared/features'
 import { normalizeRoles, permissionsFor } from './rbac'
 
 export const SESSION_COOKIE_NAME = 'campus_session'
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000
+const AUTH_UPSTREAM_TIMEOUT_MS = 10_000
+
+interface FirebaseAppSessionPayload {
+  uid: string
+  accountVersion: number
+  issuedAt: number
+  expiresAt: number
+}
+
+interface FirebaseSessionAccount {
+  uid: string
+  email?: string
+  displayName: string
+  roles: UserRole[]
+  scope: AccessScope
+  version: number
+  sessionValidAfter: number
+}
+
+class AuthUpstreamTimeoutError extends Error {}
 
 function emptyScope(): AccessScope {
   return { unitIds: [], programStudyIds: [], cohortYears: [], studentIds: [] }
@@ -55,6 +75,69 @@ function demoSecret(): string {
 
 function sign(encodedPayload: string): string {
   return createHmac('sha256', demoSecret()).update(encodedPayload).digest('base64url')
+}
+
+function applicationSessionSecret(): string {
+  const configured = process.env.NUXT_SESSION_SECRET
+  if (configured && configured.length >= 32) return configured
+  if (process.env.NODE_ENV === 'production') serviceUnavailable('Layanan sesi belum dikonfigurasi.')
+  return 'campus-app-session-development-only-change-me'
+}
+
+function signFirebaseSession(encodedPayload: string): string {
+  return createHmac('sha256', applicationSessionSecret())
+    .update(`firebase-session\0${encodedPayload}`)
+    .digest('base64url')
+}
+
+function signedFirebaseSessionToken(payload: FirebaseAppSessionPayload): string {
+  const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  return `firebase.${encoded}.${signFirebaseSession(encoded)}`
+}
+
+export function verifyFirebaseAppSessionToken(token: string): FirebaseAppSessionPayload | null {
+  const [prefix, encoded, signature] = token.split('.')
+  if (prefix !== 'firebase' || !encoded || !signature) return null
+  const expected = Buffer.from(signFirebaseSession(encoded))
+  const actual = Buffer.from(signature)
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null
+  try {
+    const value = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Partial<FirebaseAppSessionPayload>
+    if (
+      typeof value.uid !== 'string'
+      || !value.uid
+      || value.uid.length > 128
+      || !Number.isInteger(value.accountVersion)
+      || Number(value.accountVersion) < 1
+      || !Number.isFinite(value.issuedAt)
+      || !Number.isFinite(value.expiresAt)
+      || Number(value.expiresAt) <= Date.now()
+      || Number(value.issuedAt) > Date.now() + 60_000
+    ) return null
+    return {
+      uid: value.uid,
+      accountVersion: Number(value.accountVersion),
+      issuedAt: Number(value.issuedAt),
+      expiresAt: Number(value.expiresAt),
+    }
+  } catch {
+    return null
+  }
+}
+
+async function withAuthTimeout<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new AuthUpstreamTimeoutError()), AUTH_UPSTREAM_TIMEOUT_MS)
+        timer.unref?.()
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function signedDemoToken(context: AuthContext): string {
@@ -114,40 +197,101 @@ export function createDemoSession(profileId: string, now = Date.now()): { contex
   return { context, token: signedDemoToken(context) }
 }
 
-function firebaseContext(claims: Record<string, unknown>): AuthContext {
-  const roles = normalizeRoles(claims.roles ?? claims.role)
-  if (!roles.length) forbidden('Akun belum memiliki role yang valid.')
+async function firebaseSessionAccount(uid: string): Promise<FirebaseSessionAccount | null> {
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan akun tidak tersedia.')
+  let snapshot
+  try {
+    snapshot = await withAuthTimeout(db.collection('accounts').doc(uid).get())
+  } catch {
+    serviceUnavailable('Penyimpanan akun sementara tidak tersedia.')
+  }
+  if (!snapshot.exists) return null
+  const data = snapshot.data() as Record<string, unknown>
+  if (data.status !== 'active') return null
+  const roles = normalizeRoles(data.roles)
+  const version = Number(data.version)
+  if (!roles.length || !Number.isInteger(version) || version < 1) return null
   return {
-    uid: String(claims.uid || claims.sub).slice(0, 128),
-    email: typeof claims.email === 'string' ? claims.email.slice(0, 254) : undefined,
-    displayName: typeof claims.name === 'string' ? claims.name.slice(0, 150) : 'Pengguna Kampus',
+    uid,
+    email: typeof data.email === 'string' ? data.email.slice(0, 254) : undefined,
+    displayName: typeof data.displayName === 'string' ? data.displayName.slice(0, 150) : 'Pengguna Kampus',
     roles,
-    scope: normalizeScope(claims.scope),
+    scope: normalizeScope(data.scope),
+    version,
+    sessionValidAfter: Number.isFinite(Number(data.sessionValidAfter)) ? Number(data.sessionValidAfter) : 0,
+  }
+}
+
+function firebaseAccountContext(
+  account: FirebaseSessionAccount,
+  timing: { issuedAt: number; expiresAt: number },
+): AuthContext {
+  return contextForFeatureProfile({
+    uid: account.uid,
+    email: account.email,
+    displayName: account.displayName,
+    roles: account.roles,
+    scope: account.scope,
     provider: 'firebase',
-    issuedAt: Number(claims.iat) * 1000,
-    expiresAt: Number(claims.exp) * 1000,
+    issuedAt: timing.issuedAt,
+    expiresAt: timing.expiresAt,
+  })
+}
+
+async function contextForFirebaseAppSession(payload: FirebaseAppSessionPayload): Promise<AuthContext | null> {
+  const account = await firebaseSessionAccount(payload.uid)
+  if (!account || account.version !== payload.accountVersion) return null
+  return firebaseAccountContext(account, payload)
+}
+
+async function verifyFirebaseIdToken(idToken: string): Promise<Record<string, unknown>> {
+  const admin = authAdmin()
+  if (!admin) throw new CampusError(503, 'AUTH_UNAVAILABLE', 'Layanan autentikasi belum dikonfigurasi.')
+  try {
+    return await withAuthTimeout(admin.verifyIdToken(idToken, false)) as unknown as Record<string, unknown>
+  } catch (error) {
+    if (error instanceof AuthUpstreamTimeoutError) {
+      throw new CampusError(503, 'AUTH_TIMEOUT', 'Layanan autentikasi sementara tidak merespons.')
+    }
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : ''
+    if ([
+      'auth/argument-error',
+      'auth/id-token-expired',
+      'auth/id-token-revoked',
+      'auth/invalid-id-token',
+      'auth/user-disabled',
+      'auth/user-not-found',
+    ].includes(code)) {
+      throw new CampusError(401, 'INVALID_ID_TOKEN', 'Token identitas tidak valid.')
+    }
+    throw new CampusError(503, 'AUTH_UNAVAILABLE', 'Layanan autentikasi sementara tidak tersedia.')
   }
 }
 
 export async function authenticate(event: H3Event): Promise<AuthContext | null> {
   const cookie = getCookie(event, SESSION_COOKIE_NAME)
   if (cookie?.startsWith('demo.')) return verifyDemoSessionToken(cookie)
-
-  const admin = authAdmin()
-  if (cookie && admin) {
-    try {
-      return contextForFeatureProfile(firebaseContext(await admin.verifySessionCookie(cookie, true) as unknown as Record<string, unknown>))
-    } catch {
-      return null
-    }
+  if (cookie?.startsWith('firebase.')) {
+    const payload = verifyFirebaseAppSessionToken(cookie)
+    return payload ? contextForFirebaseAppSession(payload) : null
   }
 
   const authorization = getHeader(event, 'authorization')
   const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]
-  if (bearer && admin) {
+  if (bearer) {
     try {
-      return contextForFeatureProfile(firebaseContext(await admin.verifyIdToken(bearer, true) as unknown as Record<string, unknown>))
-    } catch {
+      const decoded = await verifyFirebaseIdToken(bearer)
+      const uid = String(decoded.uid || decoded.sub).slice(0, 128)
+      const account = uid ? await firebaseSessionAccount(uid) : null
+      const authTime = Number(decoded.auth_time) * 1000
+      if (!account || !authTime || authTime < account.sessionValidAfter) return null
+      return firebaseAccountContext(account, {
+        issuedAt: Number(decoded.iat) * 1000,
+        expiresAt: Number(decoded.exp) * 1000,
+      })
+    } catch (error) {
+      if (error instanceof CampusError && error.statusCode >= 500) throw error
       return null
     }
   }
@@ -164,21 +308,30 @@ export async function createFirebaseSession(
   idToken: string,
   options: { onVerified?: (context: AuthContext) => Promise<void> } = {},
 ): Promise<{ context: AuthContext; token: string }> {
-  const admin = authAdmin()
-  if (!admin) throw new CampusError(503, 'AUTH_UNAVAILABLE', 'Layanan autentikasi belum dikonfigurasi.')
-  let decoded: Record<string, unknown>
-  try {
-    decoded = await admin.verifyIdToken(idToken, true) as unknown as Record<string, unknown>
-  } catch {
-    throw new CampusError(401, 'INVALID_ID_TOKEN', 'Token identitas tidak valid.')
-  }
-  const context = contextForFeatureProfile(firebaseContext({ ...decoded, exp: Math.floor((Date.now() + SESSION_DURATION_MS) / 1000) }))
-  await options.onVerified?.(context)
+  const decoded = await verifyFirebaseIdToken(idToken)
+  const uid = String(decoded.uid || decoded.sub).slice(0, 128)
+  const account = uid ? await firebaseSessionAccount(uid) : null
+  if (!account) forbidden('Akun tidak aktif atau belum terdaftar.')
   const authTime = Number(decoded.auth_time) * 1000
-  if (!authTime || Date.now() - authTime > 5 * 60 * 1000) {
+  if (
+    !authTime
+    || Date.now() - authTime > 5 * 60 * 1000
+    || authTime < account.sessionValidAfter
+  ) {
     throw new CampusError(401, 'RECENT_LOGIN_REQUIRED', 'Silakan login kembali sebelum membuat sesi.')
   }
-  const token = await admin.createSessionCookie(idToken, { expiresIn: SESSION_DURATION_MS })
+  const now = Date.now()
+  const context = firebaseAccountContext(account, {
+    issuedAt: now,
+    expiresAt: now + SESSION_DURATION_MS,
+  })
+  await options.onVerified?.(context)
+  const token = signedFirebaseSessionToken({
+    uid: account.uid,
+    accountVersion: account.version,
+    issuedAt: context.issuedAt,
+    expiresAt: context.expiresAt,
+  })
   return { context, token }
 }
 

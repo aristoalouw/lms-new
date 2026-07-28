@@ -24,6 +24,7 @@ export interface AccountRecord {
   status: AccountStatus
   guardianStudentIds: string[]
   version: number
+  sessionValidAfter?: number
   createdAt: string
   createdBy: string
   updatedAt: string

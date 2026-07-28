@@ -62,6 +62,12 @@ The validator enforces the Hostinger-specific contract:
 - no Docker image, TLS file, ADC file, or Google credential path requirement;
 - Firebase project/bucket consistency, independent random secrets, Firestore rate limiting, Sentry release matching, and no emulator.
 
+Pada target Hostinger, Firebase Admin menggunakan transport Firestore REST
+(`preferRest`) agar read, write, dan transaction tidak bergantung pada koneksi
+gRPC/HTTP2 yang dapat tertahan oleh runtime managed hosting. Endpoint sesi juga
+memiliki timeout upstream terbatas; jangan menggantinya dengan timeout browser
+yang lebih panjang.
+
 For an initial Firebase Spark pilot, set `FILE_UPLOADS_ENABLED=false`,
 `EMAIL_DELIVERY_ENABLED=false`, and `SENTRY_ENABLED=false`. Keep the related
 bucket, ClamAV, email gateway, and Sentry values blank. The LMS then runs with

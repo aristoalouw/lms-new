@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AUTH_IP_BURST_LIMIT,
   AUTH_USER_LIMIT,
@@ -21,6 +21,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   resetRateLimitsForTests()
   if (originalBackend === undefined) delete process.env.RATE_LIMIT_BACKEND
   else process.env.RATE_LIMIT_BACKEND = originalBackend
@@ -70,5 +71,19 @@ describe('distributed-ready authentication rate limiting', () => {
     expect(keys.join(' ')).not.toContain('198.51.100.25')
     expect(keys.join(' ')).not.toContain('sensitive-firebase-uid')
     expect(keys.every((key) => /^[a-z:-]+:[a-f0-9]{64}$/.test(key))).toBe(true)
+  })
+
+  it('fails closed within five seconds when the shared limiter stalls', async () => {
+    vi.useFakeTimers()
+    configureRateLimitStore({
+      consume: () => new Promise(() => undefined),
+    })
+
+    const assertion = expect(enforceAuthIpBurst('192.0.2.10', 1_000)).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'SERVICE_UNAVAILABLE',
+    })
+    await vi.advanceTimersByTimeAsync(5_001)
+    await assertion
   })
 })

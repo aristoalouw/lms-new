@@ -36,7 +36,7 @@ import {
 } from './learning-record-ids'
 import { enqueueLearningNotificationBatch } from './notifications'
 import { fileUploadsEnabled } from '../utils/capabilities'
-import { normalizeFeatureProfile } from '../../shared/features'
+import { serverFeatureProfile } from '../utils/feature-profile'
 import {
   cleanLearningId,
   cleanLearningIds,
@@ -301,7 +301,7 @@ export async function cleanLearningFileReference(context: AuthContext, fileId: s
   const currentVersion = detail.file.currentVersion
   const version = detail.versions.find(item => item.version === currentVersion)
   if (detail.file.deleted || detail.file.status !== 'CLEAN' || !currentVersion || version?.status !== 'CLEAN') conflict('LEARNING_FILE_NOT_CLEAN', 'Materi hanya dapat memakai file privat yang telah lolos pemeriksaan keamanan.')
-  if (targetSpaceId && normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp'
+  if (targetSpaceId && serverFeatureProfile() === 'lms-mvp'
     && !detail.file.access.learningSpaceIds?.includes(targetSpaceId)) {
     conflict('LEARNING_FILE_SCOPE_MISMATCH', 'File harus diunggah dengan lingkup ruang kelas tujuan.')
   }

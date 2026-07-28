@@ -19,7 +19,7 @@ import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { listActiveAccountsByIds } from './accounts'
 import { BUILT_IN_LMS_NOTIFICATION_TEMPLATES, notificationModuleState } from './notifications-state'
-import { normalizeFeatureProfile } from '../../shared/features'
+import { serverFeatureProfile } from '../utils/feature-profile'
 import { emailDeliveryEnabled } from '../utils/capabilities'
 
 const CATEGORY_ROLES: Record<NotificationCategory, UserRole[]> = {
@@ -133,7 +133,7 @@ function defaultPreferences(uid: string, now = new Date().toISOString()): Notifi
 }
 
 function isLmsMvpProfile(): boolean {
-  return normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp'
+  return serverFeatureProfile() === 'lms-mvp'
 }
 
 function isLmsMvpNotificationCategory(category: NotificationCategory | undefined): category is 'LEARNING' | 'SYSTEM' {

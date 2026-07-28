@@ -10,6 +10,15 @@ const errorMessage = ref('')
 const noticeMessage = ref('')
 const year = new Date().getFullYear()
 
+const program = reactive({
+  id: '',
+  facultyId: '',
+  code: '',
+  name: '',
+  level: 'S1' as 'D3' | 'S1' | 'S2',
+  accreditationStatus: '',
+  accreditationExpiresAt: '',
+})
 const period = reactive({
   id: `${year}-${year + 1}-1`,
   academicYear: `${year}/${year + 1}`,
@@ -35,6 +44,7 @@ const latestCourseVersion = computed(() => Math.max(
     .map(item => item.version),
 ))
 const existingPeriodVersion = computed(() => props.catalog.periods.find(item => item.id === period.id.trim())?.version ?? 0)
+const existingProgramVersion = computed(() => props.catalog.programs.find(item => item.id === program.id.trim())?.version ?? 0)
 const requestKey = (purpose: string) => `${purpose}-${globalThis.crypto.randomUUID()}`
 const instant = (date: string, end = false) => new Date(`${date}T${end ? '23:59:59' : '00:00:00'}+07:00`).toISOString()
 const messageFor = (error: unknown) => {
@@ -57,6 +67,35 @@ async function savePeriod() {
       expectedVersion: existingPeriodVersion.value,
     }, { headers: { 'Idempotency-Key': requestKey('catalog-period') } })
     noticeMessage.value = 'Periode aktif tersimpan.'
+    emit('created')
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function saveProgram() {
+  busy.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post('/academic/classes/catalog/programs', {
+      ...program,
+      id: program.id.trim(),
+      facultyId: program.facultyId.trim(),
+      code: program.code.trim().toUpperCase(),
+      name: program.name.trim(),
+      accreditationStatus: program.accreditationStatus.trim(),
+      active: true,
+      expectedVersion: existingProgramVersion.value,
+    }, { headers: { 'Idempotency-Key': requestKey('catalog-program') } })
+    noticeMessage.value = 'Program studi aktif tersimpan.'
+    program.id = ''
+    program.code = ''
+    program.name = ''
+    program.accreditationStatus = ''
+    program.accreditationExpiresAt = ''
     emit('created')
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -101,6 +140,21 @@ async function saveCourse() {
     </header>
     <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div>
     <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
+
+    <details>
+      <summary>Tambah atau perbarui program studi</summary>
+      <form class="catalog-form" @submit.prevent="saveProgram">
+        <label><span>ID program studi</span><input v-model="program.id" class="form-control" maxlength="128" placeholder="manajemen-s1" required><small>ID stabil tanpa spasi.</small></label>
+        <label><span>ID unit/fakultas</span><input v-model="program.facultyId" class="form-control" maxlength="128" placeholder="stt-saint-paul" required><small>ID stabil tanpa spasi.</small></label>
+        <label><span>Kode program</span><input v-model="program.code" class="form-control text-uppercase" maxlength="20" placeholder="MANAJEMEN" required></label>
+        <label><span>Jenjang</span><select v-model="program.level" class="form-select"><option value="D3">D3</option><option value="S1">S1</option><option value="S2">S2</option></select></label>
+        <label class="wide"><span>Nama program studi</span><input v-model="program.name" class="form-control" maxlength="180" required></label>
+        <label><span>Status akreditasi</span><input v-model="program.accreditationStatus" class="form-control" maxlength="80" placeholder="Baik Sekali" required></label>
+        <label><span>Berlaku sampai</span><input v-model="program.accreditationExpiresAt" class="form-control" type="date" required></label>
+        <p class="version-note">Versi berikutnya: {{ existingProgramVersion + 1 }}.</p>
+        <button class="btn btn-outline-primary" type="submit" :disabled="busy">Simpan program studi</button>
+      </form>
+    </details>
 
     <details>
       <summary>Tambah atau aktifkan periode</summary>

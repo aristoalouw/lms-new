@@ -10,8 +10,15 @@ import {
 } from '../../shared/features'
 import { permissionsForRole } from '../../shared/auth'
 import { sanitizeSentryEvent } from '../../shared/observability/sentry'
+import { navigationCommandsForAccess } from '../../config/navigation'
 
 describe('LMS MVP profile and telemetry invariants', () => {
+  it('supports an explicit fail-closed LMS fallback for a missing or invalid profile value', () => {
+    expect(normalizeFeatureProfile(undefined, 'lms-mvp')).toBe('lms-mvp')
+    expect(normalizeFeatureProfile('typo', 'lms-mvp')).toBe('lms-mvp')
+    expect(normalizeFeatureProfile('full-campus')).toBe('full-campus')
+  })
+
   it('blocks every non-MVP domain while retaining required routes', () => {
     const profile = normalizeFeatureProfile('lms-mvp')
     expect(isFeatureEnabled(profile, featureForPagePath('/pembelajaran/class-a/tugas')!)).toBe(true)
@@ -33,6 +40,7 @@ describe('LMS MVP profile and telemetry invariants', () => {
     expect(isMvpApiAllowed('/api/academic/classes/class-a/attendance/check-in', 'POST')).toBe(true)
     expect(isMvpApiAllowed('/api/academic/classes/class-a/attendance', 'GET')).toBe(true)
     expect(isMvpApiAllowed('/api/academic/classes/catalog', 'GET')).toBe(true)
+    expect(isMvpApiAllowed('/api/academic/classes/catalog/programs', 'POST')).toBe(true)
     expect(isMvpApiAllowed('/api/academic/classes/catalog/courses', 'POST')).toBe(true)
     expect(isMvpApiAllowed('/api/academic/classes/catalog/periods', 'POST')).toBe(true)
     expect(isMvpApiAllowed('/api/files/upload-sessions/file-a/content', 'PUT')).toBe(true)
@@ -57,6 +65,18 @@ describe('LMS MVP profile and telemetry invariants', () => {
     expect(permissions).not.toContain('learning:submit')
     expect(permissions).not.toContain('learning:grade')
     expect(permissions).not.toContain('learning.write')
+  })
+
+  it('keeps every rendered LMS navigation command on the page allowlist', () => {
+    const commands = navigationCommandsForAccess(
+      feature => isFeatureEnabled('lms-mvp', feature),
+      () => true,
+      path => isMvpPageAllowed(path),
+    )
+    expect(commands.length).toBeGreaterThan(0)
+    expect(commands.every(item => isMvpPageAllowed(item.to))).toBe(true)
+    expect(commands.map(item => item.to)).not.toContain('/modul/pengaturan')
+    expect(commands.map(item => item.to)).not.toContain('/pmb')
   })
 
   it('scrubs credentials and student learning data from Sentry events', () => {

@@ -14,15 +14,15 @@
     <div class="topbar-actions">
       <div class="topbar-period d-none d-xl-flex">
         <span class="live-dot" aria-hidden="true" />
-        Sinkron terakhir 08.42 WIB
+        {{ isLmsMvp ? 'Mode LMS aktif' : 'Platform kampus' }}
       </div>
       <button class="topbar-icon" type="button" aria-label="Bantuan">
         <i class="uil uil-question-circle" aria-hidden="true" />
       </button>
       <div class="topbar-popover-wrap">
-        <button class="topbar-icon topbar-icon--notified" type="button" :aria-expanded="notificationsOpen" aria-label="3 notifikasi baru" @click="notificationsOpen = !notificationsOpen">
+        <button class="topbar-icon" :class="{ 'topbar-icon--notified': visibleNotices.length }" type="button" :aria-expanded="notificationsOpen" aria-label="Buka notifikasi" @click="notificationsOpen = !notificationsOpen">
           <i class="uil uil-bell" aria-hidden="true" />
-          <span class="notification-ping" />
+          <span v-if="visibleNotices.length" class="notification-ping" />
         </button>
         <div v-if="notificationsOpen" class="notification-popover shadow-lg">
           <div class="notification-popover__head">
@@ -34,8 +34,9 @@
               <span class="notification-item__icon" :class="`notification-item__icon--${notice.tone}`"><i class="uil" :class="notice.icon" /></span>
               <span><strong>{{ notice.title }}</strong><small>{{ notice.detail }}</small><time>{{ notice.time }}</time></span>
             </NuxtLink>
+            <p v-if="!visibleNotices.length" class="px-3 py-3 mb-0 text-muted small">Buka pusat notifikasi untuk melihat aktivitas terbaru.</p>
           </div>
-          <NuxtLink to="/modul/notifikasi" class="notification-popover__all" @click="notificationsOpen = false">Lihat seluruh notifikasi <i class="uil uil-arrow-right" /></NuxtLink>
+          <NuxtLink to="/notifikasi" class="notification-popover__all" @click="notificationsOpen = false">Lihat seluruh notifikasi <i class="uil uil-arrow-right" /></NuxtLink>
         </div>
       </div>
 
@@ -60,7 +61,7 @@
             </button>
           </div>
           <div class="dropdown-divider" />
-          <NuxtLink class="dropdown-item" to="/modul/pengaturan"><i class="uil uil-user-circle" /> Profil & preferensi</NuxtLink>
+          <NuxtLink v-if="!isLmsMvp" class="dropdown-item" to="/modul/pengaturan"><i class="uil uil-user-circle" /> Profil & preferensi</NuxtLink>
           <button class="dropdown-item text-danger" type="button" @click="logout"><i class="uil uil-signout" /> Keluar</button>
         </div>
       </div>
@@ -92,7 +93,7 @@ import type { Feature } from '~/shared/features'
 
 const { toggleSidebar, commandOpen, notificationsOpen } = useAppShell()
 const { user, can, logout, switchRole } = useAuth()
-const { enabled } = useFeatureFlags()
+const { enabled, pageEnabled, isLmsMvp } = useFeatureFlags()
 const searchInput = ref<HTMLInputElement>()
 const query = ref('')
 
@@ -106,9 +107,11 @@ const noticeFeatures: Record<string, Feature> = {
   '/keuangan': 'finance',
   '/akademik/krs': 'krs',
 }
-const visibleNotices = computed(() => notices.filter(notice => enabled(noticeFeatures[notice.to] || 'notifications')))
+const visibleNotices = computed(() => isLmsMvp.value
+  ? []
+  : notices.filter(notice => enabled(noticeFeatures[notice.to] || 'notifications') && pageEnabled(notice.to)))
 
-const commands = computed(() => navigationCommandsForAccess(enabled, can))
+const commands = computed(() => navigationCommandsForAccess(enabled, can, pageEnabled))
 const filteredCommands = computed(() => commands.value.filter(item => `${item.label} ${item.context}`.toLowerCase().includes(query.value.toLowerCase())).slice(0, 7))
 const activeRoleLabel = computed(() => user.value ? roleLabels[user.value.activeRole] : '')
 

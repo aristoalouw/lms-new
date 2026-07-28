@@ -14,6 +14,7 @@ This document records the deployed collection names used by the LMS code. It is 
 | Collection | Key and invariant |
 | --- | --- |
 | `accounts/{uid}` | Account status, roles, active role, scope, session revision, and version. Firebase custom claims are a compact projection, not a second source of truth. |
+| `accountStudentIds/{studentId}` | Transactional one-to-one reservation from the canonical student ID/NIM to one account UID. It prevents two identities from inheriting the same enrolments, submissions, or grades. |
 | `users/{uid}` | Minimum profile. A non-admin owner may update only the Rules-validated display fields. |
 | `academicPeriodDefinitions/{periodId}` | Versioned academic period and KRS window; an LMS class references an active period. |
 | `academicCourseHeads/{courseId}` | Pointer to the latest immutable course version. |

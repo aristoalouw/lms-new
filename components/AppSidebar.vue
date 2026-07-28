@@ -19,7 +19,7 @@
         <span class="semester-context__icon"><i class="uil uil-calendar-alt" aria-hidden="true" /></span>
         <span class="semester-context__copy">
           <small>Periode aktif</small>
-          <strong>Genap 2025/2026</strong>
+          <strong>{{ isLmsMvp ? 'Per kelas' : 'Sesuai konfigurasi' }}</strong>
         </span>
         <i class="uil uil-angle-down semester-context__chevron" aria-hidden="true" />
       </div>
@@ -46,8 +46,8 @@
         <div class="system-status">
           <span class="system-status__dot" aria-hidden="true" />
           <span>
-            <strong>Semua layanan normal</strong>
-            <small>Diperiksa 2 menit lalu</small>
+            <strong>Status layanan</strong>
+            <small>Pantau melalui audit &amp; health</small>
           </span>
         </div>
         <button class="compact-toggle d-none d-lg-flex" type="button" :aria-label="sidebarCompact ? 'Perluas navigasi' : 'Ringkas navigasi'" @click="toggleCompact">
@@ -64,9 +64,9 @@ import { navigation } from '~/config/navigation'
 
 const { sidebarOpen, sidebarCompact, closeSidebar, toggleCompact } = useAppShell()
 const { can } = useAuth()
-const { enabled } = useFeatureFlags()
+const { enabled, pageEnabled, isLmsMvp } = useFeatureFlags()
 
 const visibleNavigation = computed(() => navigation
-  .map(group => ({ ...group, items: group.items.filter(item => enabled(item.feature) && can(item.permission)) }))
+  .map(group => ({ ...group, items: group.items.filter(item => enabled(item.feature) && pageEnabled(item.to) && can(item.permission)) }))
   .filter(group => group.items.length))
 </script>

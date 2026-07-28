@@ -50,6 +50,7 @@ $required = @(
     "DEPLOYMENT_TARGET",
     "TRUSTED_PROXY_HOPS",
     "APP_FEATURE_PROFILE",
+    "NUXT_PUBLIC_FEATURE_PROFILE",
     "APP_VERSION",
     "NUXT_SESSION_SECRET",
     "RATE_LIMIT_KEY_SECRET",
@@ -114,8 +115,11 @@ foreach ($name in $required) {
 if ($envValues["NODE_ENV"] -ne "production") {
     Add-Failure "NODE_ENV must be production."
 }
-if ($envValues["APP_FEATURE_PROFILE"] -notin @("lms-mvp", "full-campus")) {
+if ($envValues["APP_FEATURE_PROFILE"] -cnotin @("lms-mvp", "full-campus")) {
     Add-Failure "APP_FEATURE_PROFILE must be lms-mvp or full-campus."
+}
+if ($envValues["NUXT_PUBLIC_FEATURE_PROFILE"] -cne $envValues["APP_FEATURE_PROFILE"]) {
+    Add-Failure "NUXT_PUBLIC_FEATURE_PROFILE must match APP_FEATURE_PROFILE."
 }
 if ($envValues["APP_VERSION"] -eq "development" -or $envValues["APP_VERSION"] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$') {
     Add-Failure "APP_VERSION must identify the immutable production release."

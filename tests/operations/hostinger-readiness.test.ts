@@ -31,6 +31,7 @@ function hostingerEnvironment(): Record<string, string> {
     DEPLOYMENT_TARGET: 'hostinger',
     TRUSTED_PROXY_HOPS: '1',
     APP_FEATURE_PROFILE: 'lms-mvp',
+    NUXT_PUBLIC_FEATURE_PROFILE: 'lms-mvp',
     APP_VERSION: release,
     NUXT_PUBLIC_APP_ENVIRONMENT: 'production',
     NUXT_PUBLIC_API_BASE_URL: '/api',
@@ -119,6 +120,7 @@ describe('Hostinger Nitro artifact contract', () => {
     expect(packageJson.engines.node).toContain('20.19.0')
     expect(nuxtConfig).toContain("preset: 'node-server'")
     expect(template).toContain('DEPLOYMENT_TARGET=hostinger')
+    expect(template).toContain('NUXT_PUBLIC_FEATURE_PROFILE=lms-mvp')
     expect(template).toContain('FIREBASE_SERVICE_ACCOUNT_BASE64=')
     expect(template).not.toMatch(/^(?:PORT|NITRO_PORT)=/m)
     expect(runbook).toContain('Node.js `22.x`')
@@ -180,6 +182,18 @@ describe.runIf(Boolean(powerShellExecutable))('Hostinger production environment 
     const output = `${result.stdout}\n${result.stderr}`
     expect(result.status).toBe(1)
     expect(output).toContain('FILE_UPLOADS_ENABLED must be true or false.')
+  })
+
+  it('rejects feature-profile casing that would diverge from exact runtime parsing', () => {
+    const values = {
+      ...hostingerEnvironment(),
+      APP_FEATURE_PROFILE: 'LMS-MVP',
+      NUXT_PUBLIC_FEATURE_PROFILE: 'LMS-MVP',
+    }
+    const result = validateEnvironment(values)
+    const output = `${result.stdout}\n${result.stderr}`
+    expect(result.status).toBe(1)
+    expect(output).toContain('APP_FEATURE_PROFILE must be lms-mvp or full-campus.')
   })
 
   it('retains the immutable image and mounted-file requirements for Docker', () => {

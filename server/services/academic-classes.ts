@@ -29,7 +29,7 @@ import { firestorePurgeAfter } from '../utils/firestore-ttl'
 import { hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { normalizeIsoInstant, optionalString, requireInteger, requireRecord, requireString, requireStringArray } from '../utils/validation'
-import { normalizeFeatureProfile } from '../../shared/features'
+import { serverFeatureProfile } from '../utils/feature-profile'
 import { resolveLmsClassCatalogSelection } from './academic-administration'
 import { learningMockState } from './learning-mock'
 
@@ -823,7 +823,7 @@ async function parseCreateClassInput(context: AuthContext, value: unknown): Prom
   const courseVersionId = body.courseVersionId === undefined
     ? undefined
     : stableIdentifier(body.courseVersionId, 'courseVersionId')
-  const profile = normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE)
+  const profile = serverFeatureProfile()
   if (!courseVersionId) {
     if (profile === 'lms-mvp') invalidInput('courseVersionId wajib dipilih dari katalog akademik LMS.')
     return {
@@ -1063,7 +1063,7 @@ export async function updateAcademicClass(
   const updatedRecord = (current: AcademicClassRecord): AcademicClassRecord => {
     const currentVersion = current.version ?? 1
     if (currentVersion !== input.expectedVersion) conflict('VERSION_CONFLICT', 'Kelas telah berubah.', { currentVersion })
-    if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp' && current.courseVersionId) {
+    if (serverFeatureProfile() === 'lms-mvp' && current.courseVersionId) {
       const protectedFields = ['courseCode', 'courseName', 'credits', 'periodId', 'programStudyId', 'unitId'] as const
       const changedFields = protectedFields.filter(field => input[field] !== undefined && input[field] !== current[field])
       if (changedFields.length) {
@@ -1523,7 +1523,7 @@ export async function getAcademicClassDetail(context: AuthContext, classId: stri
   const ownEnrollment = hasRole(context, 'student') && !canManageClass(context, record)
     ? await requireActiveStudentEnrollment(context, safeId)
     : undefined
-  const boundedRosterLimit = normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp' ? 50 : 2_000
+  const boundedRosterLimit = serverFeatureProfile() === 'lms-mvp' ? 50 : 2_000
   let roster: ClassRosterEntry[]
   let journals: TeachingJournal[]
   let attendance: AttendanceRecord[]

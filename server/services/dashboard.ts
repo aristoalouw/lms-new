@@ -4,7 +4,7 @@ import type { DashboardSnapshot } from '../types/domain'
 import { notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { can, filterProgramScope, requirePermission } from '../utils/rbac'
-import { normalizeFeatureProfile } from '../../shared/features'
+import { serverFeatureProfile } from '../utils/feature-profile'
 
 export interface DashboardSummary {
   periodId: string
@@ -35,7 +35,7 @@ export async function dashboardSummary(
 
   const sections: DashboardSummary['sections'] = {}
   if (can(context, 'dashboard:view_academic')) sections.academic = snapshot.academic
-  if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp') {
+  if (serverFeatureProfile() === 'lms-mvp') {
     return {
       periodId: snapshot.periodId,
       updatedAt: snapshot.updatedAt,

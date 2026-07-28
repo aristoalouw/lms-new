@@ -14,8 +14,9 @@ const MVP_FEATURES: readonly Feature[] = [
   'notifications', 'audit', 'health',
 ]
 
-export function normalizeFeatureProfile(value: unknown): FeatureProfile {
-  return value === 'lms-mvp' ? 'lms-mvp' : 'full-campus'
+export function normalizeFeatureProfile(value: unknown, fallback: FeatureProfile = 'full-campus'): FeatureProfile {
+  if (value === 'lms-mvp' || value === 'full-campus') return value
+  return fallback
 }
 
 export function isFeatureEnabled(profile: FeatureProfile, feature: Feature): boolean {
@@ -94,6 +95,7 @@ export const MVP_ALLOWED_API_ROUTES = [
   'GET /api/academic/classes',
   'POST /api/academic/classes',
   'GET /api/academic/classes/catalog',
+  'POST /api/academic/classes/catalog/programs',
   'POST /api/academic/classes/catalog/courses',
   'POST /api/academic/classes/catalog/periods',
   'GET /api/academic/classes/:id',

@@ -433,6 +433,17 @@ export async function upsertLmsCatalogPeriod(
   return upsertAcademicPeriod(context, value, key, event, clock)
 }
 
+export async function upsertLmsCatalogProgram(
+  context: AuthContext,
+  value: unknown,
+  key: string,
+  event?: H3Event,
+  clock = new Date(),
+): ReturnType<typeof upsertAcademicProgram> {
+  requirePermission(context, 'classes:manage')
+  return upsertAcademicProgram(context, value, key, event, clock)
+}
+
 export async function createLmsCatalogCourseVersion(
   context: AuthContext,
   value: unknown,

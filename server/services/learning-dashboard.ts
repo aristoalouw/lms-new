@@ -21,7 +21,7 @@ import { opaqueId, requestHash } from '../utils/security'
 import { loadLearningSpace, requireLearningSpaceRead } from './learning'
 import { learningMockState } from './learning-mock'
 import { cleanLearningId, cleanLearningInteger } from './learning-validation'
-import { normalizeFeatureProfile } from '../../shared/features'
+import { serverFeatureProfile } from '../utils/feature-profile'
 
 export const LEARNING_GAMIFICATION_RULES: LearningGamificationRule[] = [
   { id: 'ON_TIME_SUBMISSION', label: 'Mengirim tugas sebelum atau saat tenggat', points: 10, maximumPerSpace: 100 },
@@ -75,7 +75,7 @@ export async function updateLearningGamificationPreference(
 export async function getLearningProgressDashboard(context: AuthContext, spaceId: string): Promise<LearningProgressDashboard> {
   const space = await loadLearningSpace(cleanLearningId(spaceId, 'spaceId'))
   const access = await requireLearningSpaceRead(context, space)
-  const isMvp = normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp'
+  const isMvp = serverFeatureProfile() === 'lms-mvp'
   const [modules, materials, assignments, submissions, attempts, events, threads, posts, preference] = await Promise.all([
     bySpace<LearningModule>(space.id, 'learningModules', () => [...learningMockState().modules.values()].filter(item => item.spaceId === space.id), 500),
     bySpace<LearningMaterial>(space.id, 'learningMaterials', () => [...learningMockState().materials.values()].filter(item => item.spaceId === space.id), 1_000),

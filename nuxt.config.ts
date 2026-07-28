@@ -5,6 +5,13 @@ const publicCapabilityEnabled = (name: string) => {
   return process.env.NODE_ENV !== 'production'
 }
 
+const featureProfileFallback = process.env.NODE_ENV === 'development' ? 'full-campus' : 'lms-mvp'
+const resolveFeatureProfile = (value: string | undefined) => value === 'full-campus' || value === 'lms-mvp'
+  ? value
+  : featureProfileFallback
+const serverFeatureProfile = resolveFeatureProfile(process.env.APP_FEATURE_PROFILE)
+const publicFeatureProfile = resolveFeatureProfile(process.env.NUXT_PUBLIC_FEATURE_PROFILE || serverFeatureProfile)
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-01-15',
   builder: 'webpack',
@@ -35,7 +42,7 @@ export default defineNuxtConfig({
     },
   },
   runtimeConfig: {
-    featureProfile: process.env.APP_FEATURE_PROFILE || 'full-campus',
+    featureProfile: serverFeatureProfile,
     sessionSecret: process.env.NUXT_SESSION_SECRET || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',
     firebaseClientEmail: process.env.FIREBASE_CLIENT_EMAIL || '',
@@ -47,9 +54,9 @@ export default defineNuxtConfig({
     sentryEnvironment: process.env.SENTRY_ENVIRONMENT || process.env.NUXT_PUBLIC_APP_ENVIRONMENT || 'development',
     sentryRelease: process.env.SENTRY_RELEASE || process.env.APP_VERSION || '',
     public: {
-      featureProfile: process.env.APP_FEATURE_PROFILE || 'full-campus',
+      featureProfile: publicFeatureProfile,
       appName: process.env.NUXT_PUBLIC_APP_NAME || 'Nusa Campus',
-      appEnvironment: process.env.NUXT_PUBLIC_APP_ENVIRONMENT || 'development',
+      appEnvironment: process.env.NUXT_PUBLIC_APP_ENVIRONMENT || (process.env.NODE_ENV === 'production' ? 'production' : 'development'),
       demoMode: process.env.NODE_ENV !== 'production' && process.env.NUXT_PUBLIC_DEMO_MODE !== 'false',
       apiBaseUrl: process.env.NUXT_PUBLIC_API_BASE_URL || '/api',
       firebaseApiKey: process.env.NUXT_PUBLIC_FIREBASE_API_KEY || '',

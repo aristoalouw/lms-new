@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import catalogHandler from '../../server/api/academic/classes/catalog/index.get'
 import courseHandler from '../../server/api/academic/classes/catalog/courses.post'
 import periodHandler from '../../server/api/academic/classes/catalog/periods.post'
+import programHandler from '../../server/api/academic/classes/catalog/programs.post'
 import { resetAcademicAdministrationStateForTests } from '../../server/services/academic-administration'
 import { createDemoSession, SESSION_COOKIE_NAME } from '../../server/utils/auth'
 import { featureForApiPath, isFeatureEnabled } from '../../shared/features'
@@ -124,6 +125,26 @@ describe('LMS academic catalog API', () => {
     expect(periodResponse.status).toBe(200)
     await expect(periodResponse.json()).resolves.toMatchObject({ value: { id: '2026-2027-1', active: true } })
 
+    const programResponse = await request(programHandler, {
+      method: 'POST',
+      headers: { ...headers, 'idempotency-key': 'lms-catalog-api-program-0001' },
+      body: JSON.stringify({
+        id: 'informatics-s1',
+        facultyId: 'faculty-engineering',
+        code: 'IF',
+        name: 'Informatika',
+        level: 'S1',
+        active: true,
+        accreditationStatus: 'Baik Sekali',
+        accreditationExpiresAt: '2030-12-31',
+        expectedVersion: 0,
+      }),
+    })
+    expect(programResponse.status).toBe(200)
+    await expect(programResponse.json()).resolves.toMatchObject({
+      value: { id: 'informatics-s1', active: true, version: 1 },
+    })
+
     const courseResponse = await request(courseHandler, {
       method: 'POST',
       headers: { ...headers, 'idempotency-key': 'lms-catalog-api-0002' },
@@ -147,9 +168,11 @@ describe('LMS academic catalog API', () => {
 
     const catalogResponse = await request(catalogHandler, { headers: { cookie: adminCookie() } })
     const catalog = await catalogResponse.json() as {
+      programs: Array<{ id: string }>
       periods: Array<{ id: string }>
       courses: Array<{ id: string }>
     }
+    expect(catalog.programs.map((item: { id: string }) => item.id)).toContain('informatics-s1')
     expect(catalog.periods.map((item: { id: string }) => item.id)).toContain('2026-2027-1')
     expect(catalog.courses.map((item: { id: string }) => item.id)).toContain('course-lms-api_v1')
   })

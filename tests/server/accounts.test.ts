@@ -91,6 +91,91 @@ describe('account lifecycle', () => {
     }, 'account-create-key-0005')).rejects.toMatchObject({ code: 'INVALID_INPUT' } satisfies Partial<CampusError>)
   })
 
+  it('rejects a non-canonical scope identifier before creating account side effects', async () => {
+    const before = accountRuntimeForTests()
+    const auditCount = mockState().auditEntries.length
+
+    await expect(createAccount(admin(), {
+      ...scopedStaffPayload,
+      scope: { ...scopedStaffPayload.scope, unitIds: ['STT Saint Paul'] },
+    }, 'account-create-invalid-scope')).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_INPUT',
+      message: 'scope.unitIds[0] memiliki format yang tidak valid.',
+    } satisfies Partial<CampusError>)
+
+    expect(accountRuntimeForTests().accounts).toHaveLength(before.accounts.length)
+    expect(accountRuntimeForTests().identities).toHaveLength(before.identities.length)
+    expect(mockState().auditEntries).toHaveLength(auditCount)
+  })
+
+  it('enforces role-specific LMS scope independently of the account editor', async () => {
+    const previousProfile = process.env.APP_FEATURE_PROFILE
+    process.env.APP_FEATURE_PROFILE = 'lms-mvp'
+    try {
+      await expect(createAccount(admin(), {
+        email: 'mixed.roles@example.test',
+        displayName: 'Mixed Roles',
+        roles: ['administrator', 'lecturer'],
+        scope: { unitIds: [], programStudyIds: [], cohortYears: [], studentIds: [] },
+        status: 'active',
+      }, 'account-lms-mixed-roles')).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'INVALID_INPUT',
+      } satisfies Partial<CampusError>)
+
+      await expect(createAccount(admin(), {
+        email: 'student.scope@example.test',
+        displayName: 'Student Scope',
+        roles: ['student'],
+        scope: { unitIds: ['campus'], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: ['2026001'] },
+        status: 'active',
+      }, 'account-lms-scope-student')).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'INVALID_INPUT',
+      } satisfies Partial<CampusError>)
+
+      await expect(createAccount(admin(), {
+        email: 'duplicate.student@example.test',
+        displayName: 'Duplicate Student',
+        roles: ['student'],
+        scope: { unitIds: [], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: ['student-001'] },
+        status: 'active',
+      }, 'account-lms-duplicate-student')).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'STUDENT_ID_ALREADY_USED',
+      } satisfies Partial<CampusError>)
+
+      await expect(createAccount(admin(), {
+        email: 'lecturer.scope@example.test',
+        displayName: 'Lecturer Scope',
+        roles: ['lecturer'],
+        scope: { unitIds: [], programStudyIds: ['management-s1'], cohortYears: [], studentIds: ['student-001'] },
+        status: 'active',
+      }, 'account-lms-scope-lecturer')).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'INVALID_INPUT',
+      } satisfies Partial<CampusError>)
+
+      const administrator = await createAccount(admin(), {
+        email: 'administrator.scope@example.test',
+        displayName: 'Administrator Scope',
+        roles: ['administrator'],
+        scope: { unitIds: ['campus'], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: [] },
+        status: 'active',
+      }, 'account-lms-scope-administrator')
+      expect(administrator.account.scope).toEqual({
+        unitIds: [],
+        programStudyIds: [],
+        cohortYears: [],
+        studentIds: [],
+      })
+    } finally {
+      if (previousProfile === undefined) delete process.env.APP_FEATURE_PROFILE
+      else process.env.APP_FEATURE_PROFILE = previousProfile
+    }
+  })
+
   it('rejects duplicate email and an idempotency key reused for another payload', async () => {
     await expect(createAccount(admin(), { ...scopedStaffPayload, email: 'rina.wijaya@example.test' }, 'account-create-key-0006'))
       .rejects.toMatchObject({ statusCode: 409, code: 'EMAIL_ALREADY_USED' } satisfies Partial<CampusError>)
@@ -153,6 +238,109 @@ describe('account lifecycle', () => {
     expect(accountRuntimeForTests().revokedSessionUids).toContain('student-001')
     expect(accountRuntimeForTests().identities.find((item) => item.uid === 'student-001')?.disabled).toBe(true)
     expect(mockState().auditEntries.filter((entry) => entry.action === 'ACCOUNT_STATE_CHANGED')).toHaveLength(1)
+  })
+
+  it('can block a legacy LMS account without accepting its obsolete scope on authorization changes', async () => {
+    const previousProfile = process.env.APP_FEATURE_PROFILE
+    process.env.APP_FEATURE_PROFILE = 'lms-mvp'
+    try {
+      const blocked = await updateAccount(admin(), 'student-001', {
+        status: 'blocked',
+        expectedVersion: 2,
+      }, 'account-update-legacy-block')
+
+      expect(blocked.account).toMatchObject({
+        status: 'blocked',
+        version: 3,
+        scope: { unitIds: ['faculty-economics'] },
+      })
+
+      await expect(updateAccount(admin(), 'student-002', {
+        scope: {
+          unitIds: ['faculty-economics'],
+          programStudyIds: ['management-s1'],
+          cohortYears: [2023],
+          studentIds: ['student-002'],
+        },
+        expectedVersion: 1,
+      }, 'account-update-legacy-scope')).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'INVALID_INPUT',
+      } satisfies Partial<CampusError>)
+    } finally {
+      if (previousProfile === undefined) delete process.env.APP_FEATURE_PROFILE
+      else process.env.APP_FEATURE_PROFILE = previousProfile
+    }
+  })
+
+  it('validates current scope and student identity before reactivating a contained LMS account', async () => {
+    const previousProfile = process.env.APP_FEATURE_PROFILE
+    process.env.APP_FEATURE_PROFILE = 'full-campus'
+    try {
+      const duplicate = await createAccount(admin(), {
+        email: 'legacy.duplicate@example.test',
+        displayName: 'Legacy Duplicate',
+        roles: ['student'],
+        scope: {
+          unitIds: [],
+          programStudyIds: ['management-s1'],
+          cohortYears: [2023],
+          studentIds: ['student-001'],
+        },
+        status: 'active',
+      }, 'account-create-legacy-duplicate')
+
+      process.env.APP_FEATURE_PROFILE = 'lms-mvp'
+      const blocked = await updateAccount(admin(), duplicate.account.id, {
+        status: 'blocked',
+        expectedVersion: 1,
+      }, 'account-block-legacy-duplicate')
+      expect(blocked.account.status).toBe('blocked')
+
+      await expect(updateAccount(admin(), duplicate.account.id, {
+        status: 'active',
+        expectedVersion: 2,
+      }, 'account-reactivate-legacy-duplicate')).rejects.toMatchObject({
+        statusCode: 409,
+        code: 'STUDENT_ID_ALREADY_USED',
+      } satisfies Partial<CampusError>)
+    } finally {
+      if (previousProfile === undefined) delete process.env.APP_FEATURE_PROFILE
+      else process.env.APP_FEATURE_PROFILE = previousProfile
+    }
+  })
+
+  it('does not reactivate a contained account with a legacy non-LMS role', async () => {
+    const previousProfile = process.env.APP_FEATURE_PROFILE
+    process.env.APP_FEATURE_PROFILE = 'full-campus'
+    try {
+      const guardian = await createAccount(admin(), {
+        email: 'legacy.guardian@example.test',
+        displayName: 'Legacy Guardian',
+        roles: ['guardian'],
+        scope: { unitIds: [], programStudyIds: [], cohortYears: [], studentIds: [] },
+        guardianStudentIds: ['student-001'],
+        status: 'active',
+      }, 'account-create-legacy-guardian')
+
+      process.env.APP_FEATURE_PROFILE = 'lms-mvp'
+      const blocked = await updateAccount(admin(), guardian.account.id, {
+        status: 'blocked',
+        expectedVersion: 1,
+      }, 'account-block-legacy-guardian')
+      expect(blocked.account.status).toBe('blocked')
+
+      await expect(updateAccount(admin(), guardian.account.id, {
+        status: 'active',
+        expectedVersion: 2,
+      }, 'account-reactivate-legacy-guardian')).rejects.toMatchObject({
+        statusCode: 400,
+        code: 'INVALID_INPUT',
+      } satisfies Partial<CampusError>)
+    } finally {
+      if (previousProfile === undefined) delete process.env.APP_FEATURE_PROFILE
+      else process.env.APP_FEATURE_PROFILE = previousProfile
+    }
   })
 
   it('revokes existing sessions when role or scope is reduced', async () => {

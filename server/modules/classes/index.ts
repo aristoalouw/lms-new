@@ -13,6 +13,7 @@ export {
   createLmsCatalogCourseVersion,
   listLmsAcademicCatalog,
   resolveLmsClassCatalogSelection,
+  upsertLmsCatalogProgram,
   upsertLmsCatalogPeriod,
 } from '../../services/academic-administration'
 export type {

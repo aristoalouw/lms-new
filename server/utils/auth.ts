@@ -11,7 +11,7 @@ import type { AccessScope, AuthContext, PublicSession, UserRole } from '../types
 import { CampusError, forbidden, serviceUnavailable } from './errors'
 import { authAdmin, firestoreAdmin } from './firebase-admin'
 import { LMS_MVP_USER_ROLES, permissionsForRole } from '../../shared/auth'
-import { normalizeFeatureProfile } from '../../shared/features'
+import { serverFeatureProfile } from './feature-profile'
 import { normalizeRoles, permissionsFor } from './rbac'
 
 export const SESSION_COOKIE_NAME = 'campus_session'
@@ -146,7 +146,7 @@ function signedDemoToken(context: AuthContext): string {
 }
 
 export function contextForFeatureProfile(context: AuthContext): AuthContext {
-  if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) !== 'lms-mvp') return context
+  if (serverFeatureProfile() !== 'lms-mvp') return context
   const allowed = new Set<UserRole>(LMS_MVP_USER_ROLES)
   const roles = context.roles.filter(role => allowed.has(role))
   if (!roles.length) forbidden('Akun tidak memiliki role yang tersedia pada profil aplikasi ini.')
@@ -373,7 +373,7 @@ export function availableDemoProfiles(): Array<{ id: string; label: string; role
   if (!isDemoAuthEnabled()) return []
   const allowed = new Set<UserRole>(LMS_MVP_USER_ROLES)
   return DEMO_PROFILES
-    .map(profile => ({ ...profile, roles: normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp' ? profile.roles.filter(role => allowed.has(role)) : [...profile.roles] }))
+    .map(profile => ({ ...profile, roles: serverFeatureProfile() === 'lms-mvp' ? profile.roles.filter(role => allowed.has(role)) : [...profile.roles] }))
     .filter(profile => profile.roles.length > 0)
     .map(profile => ({ id: profile.profileId, label: profile.label, roles: [...profile.roles] }))
 }

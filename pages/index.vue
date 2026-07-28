@@ -57,6 +57,10 @@ const links = computed(() => isLmsMvp.value ? [
 
 async function load() {
   loading.value = true; errorMessage.value = ''
+  if (isLmsMvp.value) {
+    loading.value = false
+    return
+  }
   try {
     const { data } = await $api.get<Summary>('/dashboard/summary', { params: { periodId: filters.periodId || undefined, programStudyId: filters.programStudyId || undefined } })
     summary.value = data
@@ -80,11 +84,11 @@ onMounted(load)
       <template v-if="!isLmsMvp" #actions><button class="btn btn-outline-secondary" :disabled="exporting || !summary" @click="download('csv')"><i class="uil uil-file-spreadsheet me-2" />Spreadsheet</button><button class="btn btn-primary" :disabled="exporting || !summary" @click="download('pdf')"><i class="uil uil-file-graph me-2" />PDF</button></template>
     </AppPageHeader>
 
-    <div v-if="errorMessage" class="alert alert-danger mb-0">{{ errorMessage }}</div>
-    <section class="filter-bar"><div class="filter-context"><span><i class="uil uil-filter" /></span><div><strong>Sudut pandang laporan</strong><small>{{ summary ? `Diperbarui ${updatedLabel}` : 'Memuat snapshot…' }}</small></div></div><div class="filter-controls"><label><span>Periode stabil</span><input v-model="filters.periodId" class="form-control form-control-sm" placeholder="2025-2026-2"></label><label><span>Program studi (opsional)</span><input v-model="filters.programStudyId" class="form-control form-control-sm" placeholder="management-s1"></label><button class="btn btn-sm btn-outline-secondary" :disabled="loading" @click="load">Terapkan</button></div></section>
+    <div v-if="errorMessage && !isLmsMvp" class="alert alert-danger mb-0">{{ errorMessage }}</div>
+    <section v-if="!isLmsMvp" class="filter-bar"><div class="filter-context"><span><i class="uil uil-filter" /></span><div><strong>Sudut pandang laporan</strong><small>{{ summary ? `Diperbarui ${updatedLabel}` : 'Memuat snapshot…' }}</small></div></div><div class="filter-controls"><label><span>Periode stabil</span><input v-model="filters.periodId" class="form-control form-control-sm" placeholder="2025-2026-2"></label><label><span>Program studi (opsional)</span><input v-model="filters.programStudyId" class="form-control form-control-sm" placeholder="management-s1"></label><button class="btn btn-sm btn-outline-secondary" :disabled="loading" @click="load">Terapkan</button></div></section>
 
-    <div v-if="loading" class="loading-state"><span class="spinner-border spinner-border-sm" /> Memuat snapshot dashboard…</div>
-    <template v-else-if="summary">
+    <div v-if="loading && !isLmsMvp" class="loading-state"><span class="spinner-border spinner-border-sm" /> Memuat snapshot dashboard…</div>
+    <template v-else-if="summary && !isLmsMvp">
       <section v-if="cards.length" class="metric-grid"><StatCard v-for="card in cards" :key="card.label" :label="card.label" :value="card.value" :detail="card.detail" :trend="summary.periodId" :tone="card.tone" /></section>
       <section v-else class="empty-dashboard"><i class="uil uil-shield-check" /><h2>Dashboard institusi dibatasi</h2><p>Role Anda tetap dapat membuka pekerjaan pribadi melalui pintasan di bawah. Ringkasan lintas mahasiswa tidak ditampilkan.</p></section>
 
@@ -97,6 +101,7 @@ onMounted(load)
 
       <section><div class="section-heading"><span class="section-kicker">Pintasan</span><h2>Lanjutkan pekerjaan utama</h2></div><div class="quick-grid"><NuxtLink v-for="item in links" :key="item.to" :to="item.to"><span><i class="uil" :class="item.icon" /></span><div><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><i class="uil uil-angle-right-b" /></NuxtLink></div></section>
     </template>
+    <section v-if="isLmsMvp"><div class="section-heading"><span class="section-kicker">Pintasan LMS</span><h2>Lanjutkan pekerjaan utama</h2></div><div class="quick-grid"><NuxtLink v-for="item in links" :key="item.to" :to="item.to"><span><i class="uil" :class="item.icon" /></span><div><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><i class="uil uil-angle-right-b" /></NuxtLink></div></section>
   </div>
 </template>
 

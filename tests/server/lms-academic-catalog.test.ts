@@ -4,6 +4,7 @@ import {
   listLmsAcademicCatalog,
   resetAcademicAdministrationStateForTests,
   resolveLmsClassCatalogSelection,
+  upsertLmsCatalogProgram,
   upsertLmsCatalogPeriod,
 } from '../../server/services/academic-administration'
 import { academicAdministrationState } from '../../server/services/academic-administration-state'
@@ -50,6 +51,17 @@ describe('LMS administrator academic catalog', () => {
   })
 
   it('reuses versioned period and course writes behind the classes permission', async () => {
+    const program = await upsertLmsCatalogProgram(administrator(), {
+      id: 'informatics-s1',
+      facultyId: 'faculty-engineering',
+      code: 'IF',
+      name: 'Informatika',
+      level: 'S1',
+      active: true,
+      accreditationStatus: 'Baik Sekali',
+      accreditationExpiresAt: '2030-12-31',
+      expectedVersion: 0,
+    }, 'lms-catalog-program-0001')
     const period = await upsertLmsCatalogPeriod(administrator(), {
       id: '2026-2027-1',
       academicYear: '2026/2027',
@@ -74,12 +86,17 @@ describe('LMS administrator academic catalog', () => {
       expectedCurrentVersion: 1,
     }, 'lms-catalog-course-0001', undefined, new Date('2026-07-27T00:00:00.000Z'))
 
+    expect(program.value).toMatchObject({ id: 'informatics-s1', active: true, version: 1 })
     expect(period.value).toMatchObject({ id: '2026-2027-1', active: true, version: 1 })
     expect(course.value).toMatchObject({ id: 'course-mgt401_v2', immutable: true, status: 'ACTIVE' })
     expect((await listLmsAcademicCatalog(administrator())).courses.map(item => item.id))
       .toEqual(['course-mgt401_v2', 'course-mgt401_v1'])
     await expect(upsertLmsCatalogPeriod(lecturer(), period.value, 'lms-catalog-period-0002'))
       .rejects.toMatchObject({ statusCode: 403 })
+    await expect(upsertLmsCatalogProgram(lecturer(), {
+      ...program.value,
+      expectedVersion: program.value.version,
+    }, 'lms-catalog-program-0002')).rejects.toMatchObject({ statusCode: 403 })
   })
 
   it('derives the class snapshot from an active immutable course version and active period', async () => {

@@ -258,6 +258,13 @@ function buildPlan(options) {
       email: person.email,
       ...fields,
     })
+    if (person.roles.includes('student') && person.scope.studentIds[0]) {
+      addEntry(entries, `accountStudentIds/${person.scope.studentIds[0]}`, {
+        accountId: person.uid,
+        studentId: person.scope.studentIds[0],
+        ...fields,
+      })
+    }
   }
 
   addEntry(entries, `academicProgramStudies/${PROGRAM_ID}`, {

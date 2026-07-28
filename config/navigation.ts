@@ -60,9 +60,10 @@ export const navigation: NavigationGroup[] = [
 export function navigationCommandsForAccess(
   featureEnabled: (feature: Feature) => boolean,
   permissionAllowed: (permission?: string) => boolean,
+  pageAllowed: (path: string) => boolean = () => true,
 ): NavigationCommand[] {
   return navigation.flatMap(group => group.items
-    .filter(item => featureEnabled(item.feature) && permissionAllowed(item.permission))
+    .filter(item => featureEnabled(item.feature) && pageAllowed(item.to) && permissionAllowed(item.permission))
     .map(item => ({ ...item, context: group.label })))
 }
 

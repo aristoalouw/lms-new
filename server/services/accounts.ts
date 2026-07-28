@@ -10,7 +10,8 @@ import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireRecord, requireString } from '../utils/validation'
 import { LMS_MVP_USER_ROLES } from '../../shared/auth'
-import { normalizeFeatureProfile } from '../../shared/features'
+import { CANONICAL_SCOPE_ID_PATTERN } from '../../shared/auth/scope-identifiers'
+import { serverFeatureProfile } from '../utils/feature-profile'
 
 export const ACCOUNT_STATUSES = ['active', 'disabled', 'blocked'] as const
 export type AccountStatus = (typeof ACCOUNT_STATUSES)[number]
@@ -263,7 +264,7 @@ function parseRoles(value: unknown): UserRole[] {
     return normalized as UserRole
   })
   if (new Set(roles).size !== roles.length) invalidInput('roles tidak boleh berisi nilai duplikat.')
-  if (normalizeFeatureProfile(process.env.APP_FEATURE_PROFILE) === 'lms-mvp') {
+  if (serverFeatureProfile() === 'lms-mvp') {
     const mvpRoles = new Set<UserRole>(LMS_MVP_USER_ROLES)
     if (roles.some(role => !mvpRoles.has(role))) invalidInput('Profil LMS MVP hanya menerima role student, lecturer, atau administrator.')
   }
@@ -275,7 +276,7 @@ function parseStringList(value: unknown, label: string, maxItems = 20): string[]
   if (!Array.isArray(value) || value.length > maxItems) invalidInput(`${label} harus berupa array dengan maksimal ${maxItems} item.`)
   const values = value.map((item, index) => requireString(item, `${label}[${index}]`, {
     max: 80,
-    pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]*$/,
+    pattern: CANONICAL_SCOPE_ID_PATTERN,
   }))
   if (new Set(values).size !== values.length) invalidInput(`${label} tidak boleh berisi nilai duplikat.`)
   return values
@@ -322,6 +323,12 @@ function validateRoleScope(
   guardianStudentIds: string[],
   explicitScope: boolean,
 ): AccessScope {
+  if (serverFeatureProfile() === 'lms-mvp') {
+    const mvpRoles = new Set<UserRole>(LMS_MVP_USER_ROLES)
+    if (roles.length !== 1 || roles.some(role => !mvpRoles.has(role))) {
+      invalidInput('Profil LMS MVP hanya menerima tepat satu role: student, lecturer, atau administrator.')
+    }
+  }
   const directRoles = roles.filter((role) => DIRECT_IDENTITY_ROLES.has(role))
   if (directRoles.length && roles.length !== 1) {
     invalidInput('Role applicant, student, dan guardian tidak dapat digabung dengan role lain.')
@@ -358,6 +365,22 @@ function validateRoleScope(
     && !roles.includes('leader')
   if (needsOrganizationalScope && !sourceScope.unitIds.length && !sourceScope.programStudyIds.length) {
     invalidInput('Role staf terlingkup wajib memiliki unit atau program studi.')
+  }
+
+  if (serverFeatureProfile() === 'lms-mvp') {
+    if (roles.includes('administrator')) {
+      const administratorScope = EMPTY_SCOPE()
+      validateClaimsSize(roles, administratorScope)
+      return administratorScope
+    }
+    if (roles.includes('student') && sourceScope.unitIds.length) {
+      invalidInput('Scope mahasiswa LMS tidak boleh memuat unit; akses ditentukan oleh enrolment kelas.')
+    }
+    if (roles.includes('lecturer')) {
+      if (sourceScope.unitIds.length || sourceScope.cohortYears.length || sourceScope.studentIds.length) {
+        invalidInput('Scope dosen LMS hanya boleh memuat program studi; akses kelas ditentukan oleh penugasan dosen.')
+      }
+    }
   }
 
   validateClaimsSize(roles, sourceScope)
@@ -531,7 +554,17 @@ function buildUpdatedAccount(current: AccountRecord, actor: AuthContext, input: 
   const roles = input.roles ?? current.roles
   const guardianStudentIds = input.guardianStudentIds ?? current.guardianStudentIds
   const sourceScope = input.scope ?? current.scope
-  const scope = validateRoleScope(roles, sourceScope, guardianStudentIds, input.explicitScope)
+  const authorizationInputChanged = input.roles !== undefined
+    || input.scope !== undefined
+    || input.guardianStudentIds !== undefined
+  const authorizationValidationRequired = authorizationInputChanged
+    || (input.status === 'active' && current.status !== 'active')
+  // Security operators must still be able to block a legacy account whose
+  // stored scope predates current validation. Validate it only when the
+  // authorization fields are being changed or the account is reactivated.
+  const scope = authorizationValidationRequired
+    ? validateRoleScope(roles, sourceScope, guardianStudentIds, input.explicitScope)
+    : cloneValue(current.scope)
   const account: AccountRecord = {
     ...cloneValue(current),
     ...(input.email !== undefined ? { email: input.email } : {}),
@@ -580,6 +613,48 @@ async function validateGuardianTargets(accountId: string, roles: UserRole[], gua
 
 function rolesOrScopeChanged(before: AccountRecord, after: AccountRecord): boolean {
   return requestHash({ roles: before.roles, scope: before.scope }) !== requestHash({ roles: after.roles, scope: after.scope })
+}
+
+function studentIdentityId(account: AccountRecord): string | undefined {
+  return account.roles.includes('student') ? account.scope.studentIds[0] : undefined
+}
+
+async function validateAccountReferences(account: AccountRecord, requireActivePrograms: boolean): Promise<void> {
+  if (serverFeatureProfile() !== 'lms-mvp') return
+  const studentId = studentIdentityId(account)
+
+  if (dataMode() === 'mock') {
+    if (studentId && [...mockAccounts.values()].some(stored =>
+      stored.id !== account.id
+      && stored.roles.includes('student')
+      && stored.scope.studentIds.includes(studentId))) {
+      conflict('STUDENT_ID_ALREADY_USED', 'ID mahasiswa telah ditautkan ke akun lain.')
+    }
+    return
+  }
+
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan akun tidak tersedia.')
+  const programSnapshots = await Promise.all(account.scope.programStudyIds.map(programStudyId =>
+    db.collection('academicProgramStudies').doc(programStudyId).get()))
+  const missingProgramIndex = programSnapshots.findIndex(snapshot =>
+    !snapshot.exists || (requireActivePrograms && snapshot.data()?.active === false))
+  if (missingProgramIndex >= 0) {
+    invalidInput(`Program studi ${account.scope.programStudyIds[missingProgramIndex]} tidak tersedia atau tidak aktif.`)
+  }
+
+  if (studentId) {
+    const legacyOwners = await db.collection('accounts')
+      .where('scope.studentIds', 'array-contains', studentId)
+      .limit(500)
+      .get()
+    if (legacyOwners.docs.some(document =>
+      document.id !== account.id
+      && Array.isArray(document.data()?.roles)
+      && document.data()!.roles.includes('student'))) {
+      conflict('STUDENT_ID_ALREADY_USED', 'ID mahasiswa telah ditautkan ke akun lain.')
+    }
+  }
 }
 
 function accountAuditView(account: AccountRecord): Record<string, unknown> {
@@ -686,6 +761,7 @@ export async function createAccount(
     const replay = mockReplay(namespace, hash)
     if (replay) return replay
     if ([...mockAccounts.values()].some((stored) => stored.email === account.email)) conflict('EMAIL_ALREADY_USED', 'Email telah digunakan akun lain.')
+    await validateAccountReferences(account, true)
     await validateGuardianTargets(account.id, account.roles, account.guardianStudentIds)
     await identityGateway().ensureAccount(account)
     result = { account: cloneValue(account), replayed: false }
@@ -698,6 +774,7 @@ export async function createAccount(
       await identityGateway().synchronizeAccount(replay.account, replay.account.status !== 'active')
       return replay
     }
+    await validateAccountReferences(account, true)
     await validateGuardianTargets(account.id, account.roles, account.guardianStudentIds)
     await identityGateway().ensureAccount(account)
     const db = firestoreAdmin()
@@ -705,12 +782,15 @@ export async function createAccount(
     const accountRef = db.collection('accounts').doc(account.id)
     const emailRef = db.collection('accountEmailIndex').doc(opaqueId('email', account.email))
     const idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace))
+    const studentId = studentIdentityId(account)
+    const studentIdentityRef = studentId ? db.collection('accountStudentIds').doc(studentId) : undefined
     result = await db.runTransaction(async (transaction) => {
       const [previous, existingEmail, existingAccount] = await Promise.all([
         transaction.get(idemRef),
         transaction.get(emailRef),
         transaction.get(accountRef),
       ])
+      const existingStudentIdentity = studentIdentityRef ? await transaction.get(studentIdentityRef) : undefined
       if (previous.exists) {
         const data = previous.data() as { requestHash: string; response: AccountWriteResult }
         if (data.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key telah digunakan untuk payload berbeda.')
@@ -718,9 +798,15 @@ export async function createAccount(
       }
       if (existingEmail.exists && existingEmail.data()?.accountId !== account.id) conflict('EMAIL_ALREADY_USED', 'Email telah digunakan akun lain.')
       if (existingAccount.exists) conflict('ACCOUNT_ALREADY_EXISTS', 'Akun telah tersedia.')
+      if (existingStudentIdentity?.exists && existingStudentIdentity.data()?.accountId !== account.id) {
+        conflict('STUDENT_ID_ALREADY_USED', 'ID mahasiswa telah ditautkan ke akun lain.')
+      }
       const response: AccountWriteResult = { account, replayed: false }
       transaction.create(accountRef, account)
       transaction.set(emailRef, { accountId: account.id, email: account.email, createdAt: now })
+      if (studentIdentityRef && studentId) {
+        transaction.set(studentIdentityRef, { accountId: account.id, studentId, createdAt: now, updatedAt: now })
+      }
       transaction.create(idemRef, {
         requestHash: hash,
         response,
@@ -775,7 +861,13 @@ export async function updateAccount(
     if ([...mockAccounts.values()].some((account) => account.id !== safeId && account.email === after.email)) {
       conflict('EMAIL_ALREADY_USED', 'Email telah digunakan akun lain.')
     }
-    await validateGuardianTargets(after.id, after.roles, after.guardianStudentIds)
+    const authorizationChanged = rolesOrScopeChanged(before, after)
+      || !sameStrings(before.guardianStudentIds, after.guardianStudentIds)
+      || (before.status !== 'active' && after.status === 'active')
+    if (authorizationChanged) {
+      await validateAccountReferences(after, input.explicitScope)
+      await validateGuardianTargets(after.id, after.roles, after.guardianStudentIds)
+    }
     const revokeSessions = (after.status !== 'active' && before.status !== after.status) || rolesOrScopeChanged(before, after)
     await identityGateway().synchronizeAccount(after, revokeSessions)
     mockAccounts.set(after.id, cloneValue(after))
@@ -794,7 +886,13 @@ export async function updateAccount(
     if (!snapshot.exists) notFound('Akun')
     before = { id: snapshot.id, ...snapshot.data() } as AccountRecord
     after = buildUpdatedAccount(before, context, input, now)
-    await validateGuardianTargets(after.id, after.roles, after.guardianStudentIds)
+    const authorizationChanged = rolesOrScopeChanged(before, after)
+      || !sameStrings(before.guardianStudentIds, after.guardianStudentIds)
+      || (before.status !== 'active' && after.status === 'active')
+    if (authorizationChanged) {
+      await validateAccountReferences(after, input.explicitScope)
+      await validateGuardianTargets(after.id, after.roles, after.guardianStudentIds)
+    }
     await ensureIdentityEmailAvailable(after.id, after.email)
     const securitySensitive = before.status !== after.status || rolesOrScopeChanged(before, after)
     if (securitySensitive) {
@@ -803,6 +901,10 @@ export async function updateAccount(
     const oldEmailRef = db.collection('accountEmailIndex').doc(opaqueId('email', before.email))
     const newEmailRef = db.collection('accountEmailIndex').doc(opaqueId('email', after.email))
     const idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace))
+    const beforeStudentId = studentIdentityId(before)
+    const afterStudentId = studentIdentityId(after)
+    const oldStudentIdentityRef = beforeStudentId ? db.collection('accountStudentIds').doc(beforeStudentId) : undefined
+    const newStudentIdentityRef = afterStudentId ? db.collection('accountStudentIds').doc(afterStudentId) : undefined
     try {
       result = await db.runTransaction(async (transaction) => {
         const [previous, current, emailOwner] = await Promise.all([
@@ -810,6 +912,12 @@ export async function updateAccount(
           transaction.get(accountRef),
           transaction.get(newEmailRef),
         ])
+        const oldStudentIdentity = authorizationChanged && oldStudentIdentityRef
+          ? await transaction.get(oldStudentIdentityRef)
+          : undefined
+        const newStudentIdentity = authorizationChanged && newStudentIdentityRef && newStudentIdentityRef.path !== oldStudentIdentityRef?.path
+          ? await transaction.get(newStudentIdentityRef)
+          : oldStudentIdentity
         if (previous.exists) {
           const data = previous.data() as { requestHash: string; response: AccountWriteResult }
           if (data.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key telah digunakan untuk payload berbeda.')
@@ -822,10 +930,24 @@ export async function updateAccount(
         }
         if (emailOwner.exists && emailOwner.data()?.accountId !== safeId) conflict('EMAIL_ALREADY_USED', 'Email telah digunakan akun lain.')
         const transactionAfter = buildUpdatedAccount(transactionBefore, context, input, now)
+        if (authorizationChanged && newStudentIdentity?.exists && newStudentIdentity.data()?.accountId !== safeId) {
+          conflict('STUDENT_ID_ALREADY_USED', 'ID mahasiswa telah ditautkan ke akun lain.')
+        }
         const response: AccountWriteResult = { account: transactionAfter, replayed: false }
         transaction.update(accountRef, transactionAfter)
         if (transactionBefore.email !== transactionAfter.email) transaction.delete(oldEmailRef)
         transaction.set(newEmailRef, { accountId: safeId, email: transactionAfter.email, updatedAt: now })
+        if (authorizationChanged && oldStudentIdentityRef && oldStudentIdentityRef.path !== newStudentIdentityRef?.path && oldStudentIdentity?.data()?.accountId === safeId) {
+          transaction.delete(oldStudentIdentityRef)
+        }
+        if (authorizationChanged && newStudentIdentityRef && afterStudentId) {
+          transaction.set(newStudentIdentityRef, {
+            accountId: safeId,
+            studentId: afterStudentId,
+            createdAt: newStudentIdentity?.data()?.createdAt || now,
+            updatedAt: now,
+          })
+        }
         transaction.create(idemRef, {
           requestHash: hash,
           response,

@@ -42,6 +42,9 @@ $isLmsMvp = $envValues["APP_FEATURE_PROFILE"] -eq "lms-mvp"
 $deploymentTarget = [string]$envValues["DEPLOYMENT_TARGET"]
 $isDocker = $deploymentTarget -eq "docker"
 $isHostinger = $deploymentTarget -eq "hostinger"
+$fileUploadsEnabled = $envValues["FILE_UPLOADS_ENABLED"] -ceq "true"
+$emailDeliveryEnabled = $envValues["EMAIL_DELIVERY_ENABLED"] -ceq "true"
+$sentryEnabled = $envValues["SENTRY_ENABLED"] -ceq "true"
 
 $required = @(
     "DEPLOYMENT_TARGET",
@@ -50,27 +53,27 @@ $required = @(
     "APP_VERSION",
     "NUXT_SESSION_SECRET",
     "RATE_LIMIT_KEY_SECRET",
-    "PASSWORD_RESET_CONTINUE_URL",
-    "EMAIL_DELIVERY_ENDPOINT",
-    "EMAIL_DELIVERY_BEARER_TOKEN",
-    "EMAIL_FROM",
-    "EMAIL_WORKER_SECRET",
     "FIREBASE_PROJECT_ID",
     "NUXT_PUBLIC_FIREBASE_API_KEY",
     "NUXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
     "NUXT_PUBLIC_FIREBASE_PROJECT_ID",
-    "NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
     "NUXT_PUBLIC_FIREBASE_APP_ID",
-    "FIREBASE_STORAGE_BUCKET",
+    "FILE_UPLOADS_ENABLED",
+    "EMAIL_DELIVERY_ENABLED",
+    "SENTRY_ENABLED",
     "FILE_CURSOR_SECRET",
-    "CLAMAV_HOST",
-    "CLAMAV_PORT",
-    "SENTRY_DSN",
-    "NUXT_PUBLIC_SENTRY_DSN",
-    "SENTRY_ENVIRONMENT",
-    "SENTRY_RELEASE",
-    "NUXT_PUBLIC_SENTRY_RELEASE"
+    "SENTRY_ENVIRONMENT"
 )
+
+if ($fileUploadsEnabled) {
+    $required += @("NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET", "FIREBASE_STORAGE_BUCKET", "CLAMAV_HOST", "CLAMAV_PORT")
+}
+if ($emailDeliveryEnabled) {
+    $required += @("PASSWORD_RESET_CONTINUE_URL", "EMAIL_DELIVERY_ENDPOINT", "EMAIL_DELIVERY_BEARER_TOKEN", "EMAIL_FROM", "EMAIL_WORKER_SECRET")
+}
+if ($sentryEnabled) {
+    $required += @("SENTRY_DSN", "NUXT_PUBLIC_SENTRY_DSN", "SENTRY_RELEASE", "NUXT_PUBLIC_SENTRY_RELEASE")
+}
 
 if ($isDocker) {
     $required += @(
@@ -116,6 +119,11 @@ if ($envValues["APP_FEATURE_PROFILE"] -notin @("lms-mvp", "full-campus")) {
 }
 if ($envValues["APP_VERSION"] -eq "development" -or $envValues["APP_VERSION"] -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$') {
     Add-Failure "APP_VERSION must identify the immutable production release."
+}
+foreach ($capabilityName in @("FILE_UPLOADS_ENABLED", "EMAIL_DELIVERY_ENABLED", "SENTRY_ENABLED")) {
+    if ($envValues[$capabilityName] -cnotin @("true", "false")) {
+        Add-Failure "$capabilityName must be true or false."
+    }
 }
 if ($isDocker) {
     $imageIsPinned = $envValues["APP_IMAGE"] -match '@sha256:[a-f0-9]{64}$' -or $envValues["APP_IMAGE"] -match ':[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
@@ -178,8 +186,17 @@ if (-not [string]::IsNullOrWhiteSpace($envValues["FIRESTORE_EMULATOR_HOST"])) {
 if ($envValues["NUXT_PUBLIC_FIREBASE_PROJECT_ID"] -ne $envValues["FIREBASE_PROJECT_ID"]) {
     Add-Failure "Public and server Firebase project IDs must target the same environment."
 }
-if ($envValues["NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET"] -ne $envValues["FIREBASE_STORAGE_BUCKET"]) {
-    Add-Failure "Public and server Firebase Storage bucket names must target the same environment."
+if ($fileUploadsEnabled) {
+    if ($envValues["NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET"] -ne $envValues["FIREBASE_STORAGE_BUCKET"]) {
+        Add-Failure "Public and server Firebase Storage bucket names must target the same environment."
+    }
+}
+else {
+    foreach ($storageName in @("NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET", "FIREBASE_STORAGE_BUCKET", "CLAMAV_HOST")) {
+        if (-not [string]::IsNullOrWhiteSpace($envValues[$storageName])) {
+            Add-Failure "$storageName must be blank when FILE_UPLOADS_ENABLED=false."
+        }
+    }
 }
 $fileCursorSecret = if ($envValues.ContainsKey("FILE_CURSOR_SECRET")) { $envValues["FILE_CURSOR_SECRET"] } else { "" }
 if ($fileCursorSecret.Length -lt 43) {
@@ -193,13 +210,22 @@ if (-not $isLmsMvp) {
     if ($pmbHashSecret.Length -lt 43) { Add-Failure "PMB_PII_HASH_SECRET must contain at least 32 random bytes (43 base64url characters)." }
     if ($pmbHashSecret -and @($pmbHashSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) { Add-Failure "PMB_PII_HASH_SECRET does not appear sufficiently random." }
 }
-foreach ($emailSecretName in @("EMAIL_DELIVERY_BEARER_TOKEN", "EMAIL_WORKER_SECRET")) {
-    $emailSecret = if ($envValues.ContainsKey($emailSecretName)) { $envValues[$emailSecretName] } else { "" }
-    if ($emailSecret.Length -lt 43) {
-        Add-Failure "$emailSecretName must contain at least 32 random bytes (43 base64url characters)."
+if ($emailDeliveryEnabled) {
+    foreach ($emailSecretName in @("EMAIL_DELIVERY_BEARER_TOKEN", "EMAIL_WORKER_SECRET")) {
+        $emailSecret = if ($envValues.ContainsKey($emailSecretName)) { $envValues[$emailSecretName] } else { "" }
+        if ($emailSecret.Length -lt 43) {
+            Add-Failure "$emailSecretName must contain at least 32 random bytes (43 base64url characters)."
+        }
+        if ($emailSecret -and @($emailSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
+            Add-Failure "$emailSecretName does not appear sufficiently random."
+        }
     }
-    if ($emailSecret -and @($emailSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
-        Add-Failure "$emailSecretName does not appear sufficiently random."
+}
+else {
+    foreach ($emailName in @("PASSWORD_RESET_CONTINUE_URL", "EMAIL_DELIVERY_ENDPOINT", "EMAIL_DELIVERY_BEARER_TOKEN", "EMAIL_FROM", "EMAIL_WORKER_SECRET")) {
+        if (-not [string]::IsNullOrWhiteSpace($envValues[$emailName])) {
+            Add-Failure "$emailName must be blank when EMAIL_DELIVERY_ENABLED=false."
+        }
     }
 }
 $independentSecretNames = @(
@@ -224,12 +250,14 @@ for ($leftIndex = 0; $leftIndex -lt $independentSecretNames.Count; $leftIndex++)
         }
     }
 }
-if ($envValues["CLAMAV_HOST"] -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$') {
-    Add-Failure "CLAMAV_HOST must be a DNS name or IP address without a scheme or port."
-}
-$clamAvPort = 0
-if (-not [int]::TryParse($envValues["CLAMAV_PORT"], [ref]$clamAvPort) -or $clamAvPort -lt 1 -or $clamAvPort -gt 65535) {
-    Add-Failure "CLAMAV_PORT must be an integer from 1 through 65535."
+if ($fileUploadsEnabled) {
+    if ($envValues["CLAMAV_HOST"] -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$') {
+        Add-Failure "CLAMAV_HOST must be a DNS name or IP address without a scheme or port."
+    }
+    $clamAvPort = 0
+    if (-not [int]::TryParse($envValues["CLAMAV_PORT"], [ref]$clamAvPort) -or $clamAvPort -lt 1 -or $clamAvPort -gt 65535) {
+        Add-Failure "CLAMAV_PORT must be an integer from 1 through 65535."
+    }
 }
 $fileQuotaBytes = 0L
 if ($envValues.ContainsKey("FILE_QUOTA_BYTES") -and -not [string]::IsNullOrWhiteSpace($envValues["FILE_QUOTA_BYTES"])) {
@@ -249,7 +277,7 @@ $tracerStudyPublicUrl = if ($envValues.ContainsKey("TRACER_STUDY_PUBLIC_URL")) {
 if ($tracerStudyPublicUrl -and $tracerStudyPublicUrl -notmatch '^https://[^/?#@]+(?::\d+)?(?:/[^?#]*)?$') {
     Add-Failure "TRACER_STUDY_PUBLIC_URL must be an HTTPS URL without credentials, query parameters, or fragments."
 }
-if ($envValues["EMAIL_FROM"] -notmatch '^[^\s@]+@[^\s@]+\.[^\s@]+$' -or $envValues["EMAIL_FROM"].Length -gt 254) {
+if ($emailDeliveryEnabled -and ($envValues["EMAIL_FROM"] -notmatch '^[^\s@]+@[^\s@]+\.[^\s@]+$' -or $envValues["EMAIL_FROM"].Length -gt 254)) {
     Add-Failure "EMAIL_FROM must be a valid sender address."
 }
 if ($isDocker) {
@@ -307,9 +335,18 @@ if ($isHostinger) {
 if ($envValues["SENTRY_ENVIRONMENT"] -notmatch '^[a-z][a-z0-9._-]{2,63}$' -or $envValues["SENTRY_ENVIRONMENT"] -in @("development", "test")) {
     Add-Failure "SENTRY_ENVIRONMENT must be a stable non-development environment such as staging or production."
 }
-foreach ($releaseName in @("SENTRY_RELEASE", "NUXT_PUBLIC_SENTRY_RELEASE")) {
-    if ($envValues[$releaseName] -ne $envValues["APP_VERSION"]) {
-        Add-Failure "$releaseName must match APP_VERSION."
+if ($sentryEnabled) {
+    foreach ($releaseName in @("SENTRY_RELEASE", "NUXT_PUBLIC_SENTRY_RELEASE")) {
+        if ($envValues[$releaseName] -ne $envValues["APP_VERSION"]) {
+            Add-Failure "$releaseName must match APP_VERSION."
+        }
+    }
+}
+else {
+    foreach ($sentryName in @("SENTRY_DSN", "NUXT_PUBLIC_SENTRY_DSN", "SENTRY_RELEASE", "NUXT_PUBLIC_SENTRY_RELEASE")) {
+        if (-not [string]::IsNullOrWhiteSpace($envValues[$sentryName])) {
+            Add-Failure "$sentryName must be blank when SENTRY_ENABLED=false."
+        }
     }
 }
 if (-not $isLmsMvp) {

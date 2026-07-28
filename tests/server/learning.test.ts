@@ -32,6 +32,7 @@ const openedAt = Date.parse('2026-07-22T03:00:00.000Z')
 describe('learning spaces, assignments, submissions, and forums', () => {
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
+    delete process.env.FILE_UPLOADS_ENABLED
     resetMockState(); resetAcademicClassStateForTests(); resetLearningMockState(); resetNotificationModuleState()
   })
 
@@ -66,6 +67,34 @@ describe('learning spaces, assignments, submissions, and forums', () => {
     await expect(createLearningAssignment(lecturer(), { spaceId, title: 'Jendela salah', instructions: { format: 'PLAIN_TEXT', text: 'Kerjakan.' }, opensAt: '2026-07-25T00:00:00.000Z', dueAt: '2026-07-24T00:00:00.000Z', closesAt: '2026-07-26T00:00:00.000Z', maximumPoints: 100, maximumAttempts: 1, maximumFiles: 0, status: 'PUBLISHED' }, 'learning-assignment-001')).rejects.toMatchObject({ statusCode: 400 } satisfies Partial<CampusError>)
     const result = await createLearningAssignment(lecturer(), { spaceId, moduleId: 'learning-module-strategy-foundations', title: 'Refleksi mingguan', instructions: { format: 'PLAIN_TEXT', text: 'Tulis refleksi singkat.' }, opensAt: '2026-07-20T00:00:00.000Z', dueAt: '2026-07-30T00:00:00.000Z', closesAt: '2026-08-02T00:00:00.000Z', maximumPoints: 25, maximumAttempts: 2, maximumFiles: 0, status: 'PUBLISHED' }, 'learning-assignment-002')
     expect(result).toMatchObject({ assignment: { currentVersion: 1, maximumPoints: 25 }, definition: { version: 1 } })
+  })
+
+  it('enforces text-only assignments while Spark uploads are disabled', async () => {
+    process.env.FILE_UPLOADS_ENABLED = 'false'
+    const input = {
+      spaceId,
+      title: 'Refleksi teks',
+      instructions: { format: 'PLAIN_TEXT' as const, text: 'Tulis refleksi singkat.' },
+      opensAt: '2026-07-20T00:00:00.000Z',
+      dueAt: '2026-07-30T00:00:00.000Z',
+      closesAt: '2026-08-02T00:00:00.000Z',
+      maximumPoints: 25,
+      maximumAttempts: 1,
+      status: 'PUBLISHED' as const,
+    }
+    await expect(createLearningAssignment(lecturer(), {
+      ...input,
+      maximumFiles: 1,
+    }, 'learning-assignment-spark-001')).rejects.toMatchObject({
+      statusCode: 400,
+      code: 'INVALID_INPUT',
+    } satisfies Partial<CampusError>)
+    await expect(createLearningAssignment(lecturer(), {
+      ...input,
+      maximumFiles: 0,
+    }, 'learning-assignment-spark-002')).resolves.toMatchObject({
+      assignment: { maximumFiles: 0 },
+    })
   })
 
   it('separates mutable drafts from immutable final attempts and classifies lateness', async () => {

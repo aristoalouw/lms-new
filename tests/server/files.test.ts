@@ -46,6 +46,7 @@ async function uploadPdf(owner = authContext('student-owner', ['student'])) {
 describe('private file management', () => {
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
+    delete process.env.FILE_UPLOADS_ENABLED
     delete process.env.FILE_QUOTA_BYTES
     resetMockState()
     resetAcademicClassStateForTests()
@@ -56,6 +57,7 @@ describe('private file management', () => {
   })
 
   afterEach(() => {
+    delete process.env.FILE_UPLOADS_ENABLED
     delete process.env.FILE_QUOTA_BYTES
     configureMalwareScanner(undefined)
     resetFileStorageForTests()
@@ -73,6 +75,40 @@ describe('private file management', () => {
 
     const actions = (await import('../../server/utils/mock-store')).mockState().auditEntries.map(entry => entry.action)
     expect(actions).toEqual(expect.arrayContaining(['FILE_UPLOAD_RESERVED', 'FILE_QUARANTINED', 'FILE_ACCEPTED']))
+  })
+
+  it('rejects disabled uploads before creating metadata or reserving quota', async () => {
+    process.env.FILE_UPLOADS_ENABLED = 'false'
+    const owner = authContext('student-owner', ['student'])
+
+    await expect(createFileUploadSession(owner, {
+      name: 'Tugas.pdf',
+      declaredMimeType: 'application/pdf',
+      sizeBytes: cleanPdf.byteLength,
+    })).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'FILE_UPLOADS_DISABLED',
+    } satisfies Partial<CampusError>)
+
+    expect(fileMockStateForTests().files.size).toBe(0)
+    expect(fileMockStateForTests().versions.size).toBe(0)
+    expect(fileMockStateForTests().sessions.size).toBe(0)
+    expect(fileMockStateForTests().quotas.size).toBe(0)
+  })
+
+  it('rejects content and finalization when uploads are disabled after reservation', async () => {
+    const owner = authContext('student-owner', ['student'])
+    const created = await createFileUploadSession(owner, {
+      name: 'Tugas.pdf',
+      declaredMimeType: 'application/pdf',
+      sizeBytes: cleanPdf.byteLength,
+    })
+    process.env.FILE_UPLOADS_ENABLED = 'false'
+
+    await expect(storeMockUploadContent(owner, created.session.id, cleanPdf, 'application/pdf'))
+      .rejects.toMatchObject({ statusCode: 503, code: 'FILE_UPLOADS_DISABLED' } satisfies Partial<CampusError>)
+    await expect(finalizeFileUpload(owner, created.session.id))
+      .rejects.toMatchObject({ statusCode: 503, code: 'FILE_UPLOADS_DISABLED' } satisfies Partial<CampusError>)
   })
 
   it('replays an upload reservation by idempotency key without double-reserving quota', async () => {

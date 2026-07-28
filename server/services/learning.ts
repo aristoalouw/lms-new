@@ -35,6 +35,7 @@ import {
   learningSubmissionId,
 } from './learning-record-ids'
 import { enqueueLearningNotificationBatch } from './notifications'
+import { fileUploadsEnabled } from '../utils/capabilities'
 import { normalizeFeatureProfile } from '../../shared/features'
 import {
   cleanLearningId,
@@ -762,7 +763,11 @@ function normalizeAssignment(input: Omit<CreateLearningAssignmentInput, 'spaceId
   if (!['DRAFT', 'PUBLISHED', 'CLOSED'].includes(input.status)) invalidInput('Status tugas tidak valid.')
   const opensAt = cleanLearningInstant(input.opensAt, 'opensAt'), dueAt = cleanLearningInstant(input.dueAt, 'dueAt'), closesAt = cleanLearningInstant(input.closesAt, 'closesAt')
   if (!(Date.parse(opensAt) < Date.parse(dueAt) && Date.parse(dueAt) <= Date.parse(closesAt))) invalidInput('Jendela tugas harus memenuhi opensAt < dueAt <= closesAt.')
-  return { title: cleanLearningText(input.title, 'Judul tugas', 180), instructions: validateSafeRichContent(input.instructions, 'Instruksi tugas'), opensAt, dueAt, closesAt, maximumPoints: cleanLearningInteger(input.maximumPoints, 'Nilai maksimum', 1, 1_000), maximumAttempts: cleanLearningInteger(input.maximumAttempts, 'Percobaan maksimum', 1, 10), maximumFiles: cleanLearningInteger(input.maximumFiles, 'File maksimum', 0, 10), status: input.status }
+  const maximumFiles = cleanLearningInteger(input.maximumFiles, 'File maksimum', 0, 10)
+  if (!fileUploadsEnabled() && maximumFiles > 0) {
+    invalidInput('Lampiran file belum tersedia pada paket awal. Atur file maksimum menjadi 0.')
+  }
+  return { title: cleanLearningText(input.title, 'Judul tugas', 180), instructions: validateSafeRichContent(input.instructions, 'Instruksi tugas'), opensAt, dueAt, closesAt, maximumPoints: cleanLearningInteger(input.maximumPoints, 'Nilai maksimum', 1, 1_000), maximumAttempts: cleanLearningInteger(input.maximumAttempts, 'Percobaan maksimum', 1, 10), maximumFiles, status: input.status }
 }
 
 function assignmentSnapshot(record: LearningAssignment): LearningAssignmentVersion { return { id: `${record.id}_v${record.currentVersion}`, assignmentId: record.id, spaceId: record.spaceId, version: record.currentVersion, title: record.title, instructions: record.instructions, opensAt: record.opensAt, dueAt: record.dueAt, closesAt: record.closesAt, maximumPoints: record.maximumPoints, maximumAttempts: record.maximumAttempts, maximumFiles: record.maximumFiles, status: record.status, createdAt: record.updatedAt, createdBy: record.updatedBy } }

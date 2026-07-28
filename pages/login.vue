@@ -21,6 +21,11 @@ const resetPending = ref(false)
 const resetMessage = ref('')
 const resetError = ref('')
 let resetIdempotencyKey = ''
+const {
+  available: passwordResetAvailable,
+  deliveryLabel: passwordResetDeliveryLabel,
+  requestPasswordReset,
+} = usePasswordReset()
 
 const redirectAfterLogin = computed(() => {
   const value = typeof route.query.redirect === 'string' ? route.query.redirect : ''
@@ -44,6 +49,7 @@ const submitLogin = async () => {
 }
 
 const openReset = () => {
+  if (!passwordResetAvailable.value) return
   showReset.value = true
   resetEmail.value = email.value.trim()
   resetMessage.value = ''
@@ -56,10 +62,7 @@ const submitReset = async () => {
   resetError.value = ''
   try {
     if (!resetIdempotencyKey) resetIdempotencyKey = `password-reset-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
-    const { data } = await useNuxtApp().$api.post<{ message: string }>('/auth/password-reset/request', {
-      email: resetEmail.value.trim(),
-    }, { headers: { 'Idempotency-Key': resetIdempotencyKey } })
-    resetMessage.value = data.message
+    resetMessage.value = await requestPasswordReset(resetEmail.value, resetIdempotencyKey)
   } catch (error) {
     const candidate = error as { response?: { data?: { statusMessage?: string; message?: string } } }
     resetError.value = candidate.response?.data?.statusMessage || candidate.response?.data?.message || 'Permintaan belum dapat diproses. Coba kembali nanti.'
@@ -160,8 +163,8 @@ watch(resetEmail, () => { resetIdempotencyKey = '' })
           <div>
             <div class="d-flex align-items-center justify-content-between gap-3">
               <label class="form-label" for="password">Kata sandi</label>
-              <button class="forgot-link" type="button" @click="openReset">
-                Lupa kata sandi?
+              <button class="forgot-link" type="button" :disabled="!passwordResetAvailable" @click="openReset">
+                {{ passwordResetAvailable ? 'Lupa kata sandi?' : 'Pemulihan email belum tersedia' }}
               </button>
             </div>
             <div class="input-shell">
@@ -201,7 +204,7 @@ watch(resetEmail, () => { resetIdempotencyKey = '' })
 
         <form v-if="showReset" class="reset-panel" aria-labelledby="reset-title" @submit.prevent="submitReset">
           <div class="reset-panel__heading"><div><span class="eyebrow-text">Pemulihan akun</span><h3 id="reset-title">Atur ulang kata sandi</h3></div><button type="button" aria-label="Tutup formulir pemulihan" @click="showReset = false"><i class="uil uil-times" aria-hidden="true" /></button></div>
-          <p>Masukkan email akun. Respons yang sama digunakan untuk seluruh alamat agar status akun tetap rahasia.</p>
+          <p>Masukkan email akun. Petunjuk dikirim melalui {{ passwordResetDeliveryLabel }} dan respons yang sama digunakan agar status akun tetap rahasia.</p>
           <div v-if="resetMessage" class="alert alert-success py-2" role="status">{{ resetMessage }}</div>
           <div v-if="resetError" class="alert alert-danger py-2" role="alert">{{ resetError }}</div>
           <label class="form-label" for="reset-email">Email akun</label>

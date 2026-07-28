@@ -52,6 +52,8 @@ interface FileDetailResponse {
 }
 
 interface FilePolicy {
+  uploadsEnabled: boolean
+  disabledReason?: string
   quotaBytes: number
   uploadSessionTtlSeconds: number
   downloadUrlTtlSeconds: number
@@ -67,6 +69,7 @@ interface UploadSessionResponse {
 
 const { user } = useAuth()
 const { $api } = useNuxtApp()
+const config = useRuntimeConfig()
 
 useHead({ title: 'Berkas Privat' })
 
@@ -95,6 +98,8 @@ const uploadProgress = ref(0)
 const uploadStage = ref('')
 const uploading = ref(false)
 const uploadError = ref('')
+const uploadsEnabled = computed(() => policy.value?.uploadsEnabled ?? Boolean(config.public.fileUploadsEnabled))
+const uploadDisabledReason = computed(() => policy.value?.disabledReason || 'Unggahan file belum tersedia pada paket awal; gunakan rich text atau tautan HTTPS.')
 
 const detailDialog = ref<HTMLDialogElement>()
 const detail = ref<FileDetailResponse | null>(null)
@@ -202,6 +207,7 @@ function onDrop(event: DragEvent) {
 }
 
 function openUpload(target?: FileRecord) {
+  if (!uploadsEnabled.value) return
   versionTarget.value = target || null
   selectedFile.value = null
   shareFile.value = target?.access.visibility === 'SCOPED'
@@ -341,11 +347,15 @@ onMounted(async () => {
       description="Unggah, periksa, dan bagikan dokumen kampus tanpa membuat URL publik permanen."
     >
       <template #actions>
-        <button class="btn btn-primary" type="button" @click="openUpload()">
+        <button class="btn btn-primary" type="button" :disabled="!uploadsEnabled" @click="openUpload()">
           <i class="uil uil-cloud-upload me-2" aria-hidden="true" />Unggah file
         </button>
       </template>
     </AppPageHeader>
+
+    <div v-if="!uploadsEnabled" class="alert alert-info mb-0" role="status">
+      <i class="uil uil-info-circle me-2" aria-hidden="true" />{{ uploadDisabledReason }}
+    </div>
 
     <div v-if="notice" class="notice" :class="`notice--${notice.tone}`" role="status">
       <i :class="notice.tone === 'success' ? 'uil uil-check-circle' : 'uil uil-shield-exclamation'" aria-hidden="true" />
@@ -388,9 +398,9 @@ onMounted(async () => {
       <div v-if="pageError" class="inline-error" role="alert"><i class="uil uil-exclamation-octagon" /><span>{{ pageError }}</span><button type="button" @click="pageError = ''; loadFiles()">Coba lagi</button></div>
 
       <div v-if="loading" class="files-loading" aria-live="polite"><span class="spinner-border spinner-border-sm" /><span>Memuat metadata berkas privat…</span></div>
-      <EmptyState v-else-if="files.length === 0" title="Belum ada file pada tampilan ini" description="Unggah file baru atau ubah lingkup dan filter pencarian." icon="uil-folder-open">
+      <EmptyState v-else-if="files.length === 0" title="Belum ada file pada tampilan ini" :description="uploadsEnabled ? 'Unggah file baru atau ubah lingkup dan filter pencarian.' : 'Penyimpanan file belum aktif pada paket awal.'" icon="uil-folder-open">
         <div class="d-flex gap-2 justify-content-center mt-2">
-          <button class="btn btn-sm btn-primary" type="button" @click="openUpload()">Unggah file pertama</button>
+          <button v-if="uploadsEnabled" class="btn btn-sm btn-primary" type="button" @click="openUpload()">Unggah file pertama</button>
           <button v-if="nextCursor" class="btn btn-sm btn-outline-secondary" type="button" :disabled="loadingMore" @click="loadFiles(false)">Lanjutkan pencarian</button>
         </div>
       </EmptyState>
@@ -456,7 +466,7 @@ onMounted(async () => {
         <div v-if="detailLoading" class="detail-loading"><span class="spinner-border spinner-border-sm" />Memuat riwayat versi…</div>
         <template v-else-if="detail">
           <section class="detail-summary"><span class="detail-file-icon"><i class="uil" :class="fileIcon(detail.file.mimeType)" /></span><div><StatusBadge :status="statusPresentation[detail.file.status].badge" :label="statusPresentation[detail.file.status].label" /><p>{{ detail.file.ownerName }} · {{ detail.file.access.visibility === 'OWNER' ? 'Hanya pemilik' : 'Lingkup terbatas' }}</p></div><strong>{{ formatBytes(detail.file.sizeBytes) }}</strong></section>
-          <section class="version-section"><header><div><span>Jejak perubahan</span><h3>Riwayat versi</h3></div><button class="btn btn-sm btn-outline-secondary" type="button" :disabled="detail.file.deleted" @click="detailDialog?.close(); openUpload(detail.file)"><i class="uil uil-plus me-1" />Versi baru</button></header><ol><li v-for="version in detail.versions" :key="version.id"><span class="version-number">v{{ version.version }}</span><div><strong>{{ version.name }}</strong><small>{{ formatDate(version.createdAt) }} · {{ formatBytes(version.sizeBytes || version.expectedSizeBytes) }}</small><em v-if="version.scanResult === 'UNAVAILABLE'">Menunggu pemindai keamanan</em><em v-if="version.rejectionCode === 'MALWARE_DETECTED'" class="text-danger">Malware terdeteksi; objek ditolak</em></div><StatusBadge :status="statusPresentation[version.status].badge" :label="statusPresentation[version.status].label" /><button v-if="version.status === 'CLEAN'" type="button" aria-label="Unduh versi ini" @click="downloadFile(detail.file, version.version)"><i class="uil uil-download-alt" /></button></li></ol></section>
+          <section class="version-section"><header><div><span>Jejak perubahan</span><h3>Riwayat versi</h3></div><button class="btn btn-sm btn-outline-secondary" type="button" :disabled="detail.file.deleted || !uploadsEnabled" @click="detailDialog?.close(); openUpload(detail.file)"><i class="uil uil-plus me-1" />Versi baru</button></header><ol><li v-for="version in detail.versions" :key="version.id"><span class="version-number">v{{ version.version }}</span><div><strong>{{ version.name }}</strong><small>{{ formatDate(version.createdAt) }} · {{ formatBytes(version.sizeBytes || version.expectedSizeBytes) }}</small><em v-if="version.scanResult === 'UNAVAILABLE'">Menunggu pemindai keamanan</em><em v-if="version.rejectionCode === 'MALWARE_DETECTED'" class="text-danger">Malware terdeteksi; objek ditolak</em></div><StatusBadge :status="statusPresentation[version.status].badge" :label="statusPresentation[version.status].label" /><button v-if="version.status === 'CLEAN'" type="button" aria-label="Unduh versi ini" @click="downloadFile(detail.file, version.version)"><i class="uil uil-download-alt" /></button></li></ol></section>
           <footer><button class="btn btn-sm btn-outline-danger" type="button" :disabled="actionId === `delete:${detail.file.id}` || detail.file.deleted" @click="deleteFile(detail.file)"><i class="uil uil-trash-alt me-1" />Hapus file</button><button class="btn btn-sm btn-primary" type="button" :disabled="detail.file.status !== 'CLEAN'" @click="downloadFile(detail.file)"><i class="uil uil-download-alt me-1" />Unduh terbaru</button></footer>
         </template>
       </div>

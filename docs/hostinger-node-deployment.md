@@ -1,6 +1,11 @@
-# Hostinger Business managed Node.js Web App
+# Hostinger Business Node.js deployment
 
 This is the production path for Hostinger Business **Node.js Web App** hosting. It does not use the repository Nginx container, Docker image, mounted TLS files, or file-mounted Application Default Credentials. The Docker + Nginx path in `infra/` remains an alternate deployment target.
+
+The current campus account exposes this through cPanel **Setup Node.js App**.
+The approved application URL is only `lms.sttsaintpaul.ac.id/`, with application
+root `/home/u8756881/public_html/lms.sttsaintpaul.ac.id`. Do not edit, stop,
+restart, or reuse the separate `artsysto.space` application.
 
 Hostinger currently supports server-side Nuxt applications and Node.js 22. The platform builds and runs the app behind its managed proxy/TLS layer. See Hostinger's [Node.js Web App guide](https://www.hostinger.com/support/how-to-deploy-a-nodejs-website-in-hostinger/) and [redeployment guide](https://www.hostinger.com/support/how-to-redeploy-a-node-js-application/).
 
@@ -20,6 +25,11 @@ Use these hPanel settings:
 | Output directory, if requested | `.output` |
 
 `npm start` is deliberately exact: `node .output/server/index.mjs`. Hostinger injects `PORT`; do not set `PORT` or `NITRO_PORT`. Set `NITRO_HOST=0.0.0.0`.
+
+On cPanel, set the application startup file to `.output/server/index.mjs` when
+the selector accepts nested paths. If the selector only accepts a root file,
+use a reviewed ESM launcher; do not improvise a CommonJS wrapper during a live
+deployment.
 
 ## Prepare environment variables
 
@@ -48,8 +58,51 @@ The validator enforces the Hostinger-specific contract:
 
 - `DEPLOYMENT_TARGET=hostinger`, production mode, immutable release ID, LMS profile, and demo/mock disabled;
 - `FIREBASE_USE_APPLICATION_DEFAULT=false` with exactly one `FIREBASE_SERVICE_ACCOUNT_BASE64`;
+- explicit capability switches for uploads, email delivery, and Sentry;
 - no Docker image, TLS file, ADC file, or Google credential path requirement;
 - Firebase project/bucket consistency, independent random secrets, Firestore rate limiting, Sentry release matching, and no emulator.
+
+For an initial Firebase Spark pilot, set `FILE_UPLOADS_ENABLED=false`,
+`EMAIL_DELIVERY_ENABLED=false`, and `SENTRY_ENABLED=false`. Keep the related
+bucket, ClamAV, email gateway, and Sentry values blank. The LMS then runs with
+Firebase Auth, Firestore, text/link materials, text-only submissions, in-app
+notifications, discussions, grades, and QR attendance. Uploads and password
+reset through the application email gateway remain disabled; account recovery
+uses Firebase Authentication's native reset email at no extra service cost.
+Do not use placeholder bucket names or credentials.
+
+Spark does not include Firestore TTL deletion. Prepare and deploy the
+Spark-safe index contract, which preserves every composite index and indexing
+exemption but omits the six TTL policy flags:
+
+```powershell
+npm run firebase:prepare:spark
+firebase deploy --config .firebase-spark/firebase.json --project <firebase-project-id> --only firestore:rules,firestore:indexes
+```
+
+Application expiry checks remain synchronous, so expired challenges, sessions,
+rate-limit buckets, and idempotency records cannot be used even though Spark
+does not delete them automatically. Upgrade to the standard
+`firebase/firebase.json` contract only after billing is explicitly approved.
+
+## Bootstrap the first administrator
+
+The first production identity is created out of band because no administrator
+exists yet. Run this only from authenticated Cloud Shell with project-owner
+approval:
+
+```bash
+npm run bootstrap:lms-admin -- \
+  --project=sttsp-lms-staging \
+  --confirm-project=sttsp-lms-staging \
+  --email=<approved-admin-email> \
+  --display-name="<administrator-name>"
+```
+
+The command does not create or print a password. It writes the canonical
+account/profile, minimal custom claims, and an audit entry, then enables the
+identity. The administrator activates access through **Lupa kata sandi** on
+the LMS login page, which uses Firebase Authentication's native email.
 
 ## External dependencies to resolve before deployment
 

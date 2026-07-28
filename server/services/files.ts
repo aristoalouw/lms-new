@@ -18,6 +18,7 @@ import type {
 } from '../types/files'
 import { appendAudit } from '../utils/audit'
 import { CampusError, conflict, forbidden, notFound, serviceUnavailable } from '../utils/errors'
+import { fileUploadsEnabled } from '../utils/capabilities'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from '../utils/firestore-ttl'
 import { opaqueId, requestHash } from '../utils/security'
@@ -55,6 +56,16 @@ function clone<T>(value: T): T {
 
 function nowIso(now = Date.now()): string {
   return new Date(now).toISOString()
+}
+
+function requireFileUploadsEnabled() {
+  if (!fileUploadsEnabled()) {
+    throw new CampusError(
+      503,
+      'FILE_UPLOADS_DISABLED',
+      'Unggahan file belum tersedia pada paket awal; gunakan rich text atau tautan HTTPS.',
+    )
+  }
 }
 
 function versionId(fileId: string, version: number): string {
@@ -347,6 +358,7 @@ export async function createFileUploadSession(
   idempotencyKeyOrEvent?: string | H3Event,
   event?: H3Event,
 ): Promise<CreateUploadSessionResult> {
+  requireFileUploadsEnabled()
   const explicitIdempotencyKey = typeof idempotencyKeyOrEvent === 'string' ? idempotencyKeyOrEvent : undefined
   const auditEvent = typeof idempotencyKeyOrEvent === 'string' ? event : idempotencyKeyOrEvent
   if (explicitIdempotencyKey && !/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/.test(explicitIdempotencyKey)) {
@@ -602,6 +614,7 @@ export async function storeMockUploadContent(
   bytes: Uint8Array,
   contentType: string,
 ): Promise<void> {
+  requireFileUploadsEnabled()
   const session = await getUploadSession(sessionId)
   requireSessionActor(context, session)
   if (session.status !== 'RESERVED') conflict('UPLOAD_SESSION_CLOSED', 'Sesi unggahan tidak lagi menerima data.')
@@ -616,6 +629,7 @@ export async function storeMockUploadContent(
 }
 
 export async function getMockUploadLimit(context: AuthContext, sessionId: string): Promise<number> {
+  requireFileUploadsEnabled()
   const session = await getUploadSession(sessionId)
   requireSessionActor(context, session)
   if (session.status !== 'RESERVED') conflict('UPLOAD_SESSION_CLOSED', 'Sesi unggahan tidak lagi menerima data.')
@@ -857,6 +871,7 @@ export async function finalizeFileUpload(
   sessionId: string,
   event?: H3Event,
 ): Promise<FileDetailResult> {
+  requireFileUploadsEnabled()
   const session = await getUploadSession(sessionId)
   requireSessionActor(context, session)
   if (session.status !== 'RESERVED') conflict('UPLOAD_SESSION_CLOSED', 'Sesi unggahan telah diproses.')

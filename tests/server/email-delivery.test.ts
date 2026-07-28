@@ -10,10 +10,12 @@ import { resetMockState } from '../../server/utils/mock-store'
 describe('email delivery boundary', () => {
   const previousNodeEnvironment = process.env.NODE_ENV
   const previousProductionMock = process.env.ALLOW_PRODUCTION_MOCK
+  const previousEmailDeliveryEnabled = process.env.EMAIL_DELIVERY_ENABLED
 
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
     process.env.NODE_ENV = 'test'
+    process.env.EMAIL_DELIVERY_ENABLED = 'true'
     resetMockState()
     resetAccountStateForTests()
     resetPasswordResetStateForTests()
@@ -25,6 +27,8 @@ describe('email delivery boundary', () => {
     else process.env.NODE_ENV = previousNodeEnvironment
     if (previousProductionMock === undefined) delete process.env.ALLOW_PRODUCTION_MOCK
     else process.env.ALLOW_PRODUCTION_MOCK = previousProductionMock
+    if (previousEmailDeliveryEnabled === undefined) delete process.env.EMAIL_DELIVERY_ENABLED
+    else process.env.EMAIL_DELIVERY_ENABLED = previousEmailDeliveryEnabled
   })
 
   it('queues password recovery in production without generating or persisting a reset link', async () => {

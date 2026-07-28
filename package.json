@@ -21,10 +21,12 @@
     "test": "vitest run",
     "test:api": "vitest run tests/server tests/security",
     "test:rules": "firebase emulators:exec --config firebase/firebase.json --project demo-lms-mvp --only firestore,storage \"vitest run tests/integration/firebase\"",
+    "firebase:prepare:spark": "node scripts/prepare-firebase-spark.mjs",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "seed:lms-mvp": "node scripts/seed-lms-mvp.mjs"
+    "seed:lms-mvp": "node scripts/seed-lms-mvp.mjs",
+    "bootstrap:lms-admin": "node scripts/bootstrap-lms-admin.mjs"
   },
   "dependencies": {
     "@popperjs/core": "2.11.8",

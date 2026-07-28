@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { Timestamp, type Firestore } from 'firebase-admin/firestore'
 import { describe, expect, it } from 'vitest'
@@ -53,6 +55,30 @@ describe('Firestore TTL safeguards', () => {
       && Array.isArray(override.indexes)
       && override.indexes.length === 0
     ))).toBe(true)
+  })
+
+  it('generates a Spark-safe deployment config without TTL billing policies', () => {
+    const outputDirectory = mkdtempSync(resolve(tmpdir(), 'lms-firebase-spark-'))
+    try {
+      execFileSync(process.execPath, [
+        resolve(process.cwd(), 'scripts/prepare-firebase-spark.mjs'),
+        `--out=${outputDirectory}`,
+      ], { stdio: 'pipe' })
+      const source = JSON.parse(
+        readFileSync(resolve(process.cwd(), 'firebase/firestore.indexes.json'), 'utf8'),
+      ) as { indexes: unknown[]; fieldOverrides: FieldOverride[] }
+      const generated = JSON.parse(
+        readFileSync(resolve(outputDirectory, 'firestore.indexes.json'), 'utf8'),
+      ) as { indexes: unknown[]; fieldOverrides: FieldOverride[] }
+
+      expect(generated.indexes).toEqual(source.indexes)
+      expect(generated.fieldOverrides).toHaveLength(source.fieldOverrides.length)
+      expect(generated.fieldOverrides.some(override => override.ttl === true)).toBe(false)
+      expect(generated.fieldOverrides.filter(override => override.fieldPath === 'purgeAfter'))
+        .toHaveLength(6)
+    } finally {
+      rmSync(outputDirectory, { recursive: true, force: true })
+    }
   })
 
   it('writes rate-limit bucket expiry with a TTL-safe Timestamp and cleanup grace', async () => {

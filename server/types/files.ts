@@ -143,6 +143,8 @@ export interface SignedDownloadResult {
 }
 
 export interface FilePolicyDescriptor {
+  uploadsEnabled: boolean
+  disabledReason?: string
   quotaBytes: number
   uploadSessionTtlSeconds: number
   downloadUrlTtlSeconds: number

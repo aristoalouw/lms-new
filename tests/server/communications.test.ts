@@ -86,12 +86,14 @@ describe('notification records and email outbox', () => {
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
     process.env.APP_FEATURE_PROFILE = 'full-campus'
+    delete process.env.EMAIL_DELIVERY_ENABLED
     resetMockState()
     resetTicketModuleState()
     resetNotificationModuleState()
   })
 
   afterEach(() => {
+    delete process.env.EMAIL_DELIVERY_ENABLED
     if (previousFeatureProfile === undefined) delete process.env.APP_FEATURE_PROFILE
     else process.env.APP_FEATURE_PROFILE = previousFeatureProfile
   })
@@ -127,6 +129,27 @@ describe('notification records and email outbox', () => {
     await expect(enqueueNotification(staff, {
       recipientUid: 'student-001', templateKey: 'ticket-created', variables: { passwordResetToken: 'secret' },
     }, 'notification-key-0003')).rejects.toMatchObject({ statusCode: 400 } satisfies Partial<CampusError>)
+  })
+
+  it('keeps notifications in-app only when email delivery is disabled', async () => {
+    process.env.EMAIL_DELIVERY_ENABLED = 'false'
+    const result = await enqueueNotification(authContext('academic-001', ['academic_staff']), {
+      recipientUid: 'student-001',
+      recipientEmail: 'nabila@example.test',
+      programStudyId: 'management-s1',
+      templateKey: 'ticket-created',
+      variables: { ticketNumber: 'LYN-1004', subject: 'Surat aktif', assignedUnit: 'Biro Akademik' },
+    }, 'notification-key-email-disabled-0001')
+
+    expect(result.channels).toEqual(['IN_APP'])
+    expect(notificationModuleState().outbox.size).toBe(0)
+    await expect(enqueuePasswordResetEmail({
+      recipientUid: 'student-001',
+      recipientEmail: 'nabila@example.test',
+      continuePath: '/login',
+    }, 'password-reset-disabled-0001')).rejects.toMatchObject({
+      statusCode: 503,
+    } satisfies Partial<CampusError>)
   })
 
   it('enforces notification ownership and supports idempotent mark-read', async () => {

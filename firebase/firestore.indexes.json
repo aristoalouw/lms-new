@@ -604,22 +604,6 @@
       "collectionGroup": "academicClasses",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "lecturerIds", "arrayConfig": "CONTAINS" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "academicClasses",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "programStudyId", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "academicClasses",
-      "queryScope": "COLLECTION",
-      "fields": [
         { "fieldPath": "programStudyId", "order": "ASCENDING" },
         { "fieldPath": "periodId", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }

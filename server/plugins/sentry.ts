@@ -1,11 +1,12 @@
 import * as Sentry from '@sentry/node'
 import { sanitizeSentryEvent, sanitizeSentryText } from '../../shared/observability/sentry'
 import { trustedRequestId } from '../utils/security'
+import { sentryEnabled } from '../utils/capabilities'
 
 export default defineNitroPlugin((nitroApp) => {
   const config = useRuntimeConfig()
   const dsn = process.env.SENTRY_DSN || config.sentryDsn
-  if (!dsn) return
+  if (!sentryEnabled() || !dsn) return
 
   Sentry.init({
     dsn,

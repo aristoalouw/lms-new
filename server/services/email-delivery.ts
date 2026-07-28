@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import type { EmailDeliveryAdapter, EmailDeliveryMessage } from '../types/communications'
 import { invalidInput, serviceUnavailable } from '../utils/errors'
 import { authAdmin } from '../utils/firebase-admin'
+import { emailDeliveryEnabled } from '../utils/capabilities'
 
 export interface PasswordResetLinkGateway {
   create(email: string, continuePath?: string): Promise<string>
@@ -108,6 +109,7 @@ export class HttpEmailDeliveryAdapter implements EmailDeliveryAdapter {
 }
 
 export function emailDeliveryAdapterFromEnvironment(): EmailDeliveryAdapter {
+  if (!emailDeliveryEnabled()) serviceUnavailable('Pengiriman email belum diaktifkan.')
   const endpoint = process.env.EMAIL_DELIVERY_ENDPOINT?.trim() || ''
   const bearerToken = process.env.EMAIL_DELIVERY_BEARER_TOKEN || ''
   const from = process.env.EMAIL_FROM?.trim() || ''
@@ -122,6 +124,7 @@ export function emailDeliveryAdapterFromEnvironment(): EmailDeliveryAdapter {
 }
 
 export function emailWorkerSecretFingerprint(): string {
+  if (!emailDeliveryEnabled()) serviceUnavailable('Pengiriman email belum diaktifkan.')
   const secret = process.env.EMAIL_WORKER_SECRET || ''
   if (secret.length < 32) serviceUnavailable('Secret worker email belum dikonfigurasi.')
   return createHash('sha256').update(secret).digest('hex')

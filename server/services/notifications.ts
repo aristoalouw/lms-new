@@ -20,6 +20,7 @@ import { opaqueId, requestHash } from '../utils/security'
 import { listActiveAccountsByIds } from './accounts'
 import { BUILT_IN_LMS_NOTIFICATION_TEMPLATES, notificationModuleState } from './notifications-state'
 import { normalizeFeatureProfile } from '../../shared/features'
+import { emailDeliveryEnabled } from '../utils/capabilities'
 
 const CATEGORY_ROLES: Record<NotificationCategory, UserRole[]> = {
   ACADEMIC: ['academic_staff'],
@@ -369,7 +370,7 @@ async function enqueueNotificationWithAuthorization(
       } satisfies InAppNotification
     : undefined
   if (notification) channels.push('IN_APP')
-  const emailEnabled = template.channels.includes('EMAIL') && preferences.emailEnabled
+  const emailEnabled = emailDeliveryEnabled() && template.channels.includes('EMAIL') && preferences.emailEnabled
     && preferences.categoryEmail[template.category] && Boolean(recipientEmail)
   const outbox = emailEnabled
     ? {
@@ -471,6 +472,7 @@ export async function enqueuePasswordResetEmail(input: {
   recipientEmail: string
   continuePath?: string
 }, idempotencyKey: string): Promise<EnqueuePasswordResetResult> {
+  if (!emailDeliveryEnabled()) serviceUnavailable('Pemulihan kata sandi melalui email belum tersedia. Hubungi administrator kampus.')
   if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) invalidInput('Idempotency key tidak valid.')
   const recipientUid = cleanText(input.recipientUid, 128)
   const recipientEmail = normalizeEmail(input.recipientEmail)!

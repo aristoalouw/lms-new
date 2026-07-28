@@ -57,6 +57,11 @@ useHead({ title: 'Manajemen Pengguna' })
 
 const { user } = useAuth()
 const { isLmsMvp } = useFeatureFlags()
+const {
+  available: passwordResetAvailable,
+  deliveryLabel: passwordResetDeliveryLabel,
+  requestPasswordReset,
+} = usePasswordReset()
 const isAdministrator = computed(() => user.value?.roles.includes('administrator') ?? false)
 const loading = ref(false)
 const saving = ref(false)
@@ -222,7 +227,15 @@ const saveAccount = async () => {
       await useNuxtApp().$api.post('/accounts', payload, {
         headers: { 'Idempotency-Key': idempotencyKey('account-create') },
       })
-      noticeMessage.value = `Akun ${payload.displayName} berhasil dibuat tanpa kata sandi awal.`
+      noticeMessage.value = `Akun ${payload.displayName} berhasil dibuat.`
+      if (passwordResetAvailable.value) {
+        try {
+          await requestPasswordReset(payload.email, idempotencyKey('account-onboarding'))
+          noticeMessage.value += ` Petunjuk pembuatan kata sandi dikirim melalui ${passwordResetDeliveryLabel.value}.`
+        } catch {
+          noticeMessage.value += ' Petunjuk pembuatan kata sandi belum terkirim; gunakan aksi amplop untuk mencoba kembali.'
+        }
+      }
     } else {
       await useNuxtApp().$api.patch(`/accounts/${encodeURIComponent(form.id || '')}`, {
         ...payload,
@@ -245,12 +258,7 @@ const sendPasswordReset = async (account: AccountRecord) => {
   errorMessage.value = ''
   noticeMessage.value = ''
   try {
-    const { data } = await useNuxtApp().$api.post<{ message: string }>('/auth/password-reset/request', {
-      email: account.email,
-    }, {
-      headers: { 'Idempotency-Key': idempotencyKey('password-reset') },
-    })
-    noticeMessage.value = data.message
+    noticeMessage.value = await requestPasswordReset(account.email, idempotencyKey('password-reset'))
   } catch (error) {
     errorMessage.value = errorText(error)
   }
@@ -329,7 +337,7 @@ onMounted(() => loadAccounts())
           <template #cell-roles="{ row }"><div class="role-stack"><span v-for="role in (row.roles as AccountRole[])" :key="role">{{ roleLabels[role] || role }}</span></div></template>
           <template #cell-scope="{ row, value }"><div class="scope-cell"><strong>{{ value }}</strong><small v-if="(row.scope as AccountRecord['scope']).unitIds.length">{{ (row.scope as AccountRecord['scope']).unitIds.join(', ') }}</small></div></template>
           <template #cell-status="{ row }"><StatusBadge :status="row.status === 'disabled' ? 'inactive' : String(row.status)" :label="statusLabels[row.status as AccountStatus]" /></template>
-          <template #cell-actions="{ row }"><div class="row-actions"><button type="button" title="Kirim tautan reset" aria-label="Kirim tautan reset kata sandi" @click="sendPasswordReset(row as unknown as AccountRecord)"><i class="uil uil-envelope-redo" aria-hidden="true" /></button><button type="button" title="Edit akun" aria-label="Edit akun" @click="openEdit(row as unknown as AccountRecord)"><i class="uil uil-pen" aria-hidden="true" /></button></div></template>
+          <template #cell-actions="{ row }"><div class="row-actions"><button v-if="passwordResetAvailable" type="button" title="Kirim tautan reset" aria-label="Kirim tautan reset kata sandi" @click="sendPasswordReset(row as unknown as AccountRecord)"><i class="uil uil-envelope-redo" aria-hidden="true" /></button><button type="button" title="Edit akun" aria-label="Edit akun" @click="openEdit(row as unknown as AccountRecord)"><i class="uil uil-pen" aria-hidden="true" /></button></div></template>
         </DataTable>
         <footer v-if="!loading && pageData.totalPages > 1" class="server-pagination">
           <p>Menampilkan hingga {{ pageData.pageSize }} dari {{ pageData.total }} akun</p>
@@ -355,7 +363,7 @@ onMounted(() => loadAccounts())
           <fieldset v-if="form.roles.includes('guardian')" class="scope-panel"><legend>Mahasiswa tertaut</legend><p>Akun wali hanya dapat membaca ringkasan mahasiswa yang tercantum. Masukkan ID akun mahasiswa, dipisahkan koma.</p><label class="form-field"><span>ID mahasiswa</span><textarea v-model="form.guardianStudentIds" class="form-control" rows="2" required placeholder="student-001, student-002" data-clarity-mask="true" /></label></fieldset>
           <fieldset v-else class="scope-panel"><legend>Lingkup akses</legend><p>Gunakan ID kanonik dan pisahkan beberapa nilai dengan koma. Scope kosong hanya sesuai untuk administrator, pimpinan, atau dosen nonwali.</p><div class="form-grid"><label class="form-field"><span>Unit</span><input v-model="form.unitIds" class="form-control" placeholder="faculty-economics"></label><label class="form-field"><span>Program studi</span><input v-model="form.programStudyIds" class="form-control" placeholder="management-s1"></label><label class="form-field"><span>Angkatan</span><input v-model="form.cohortYears" class="form-control" inputmode="numeric" placeholder="2023, 2024"></label><label class="form-field"><span>ID mahasiswa</span><input v-model="form.studentIds" class="form-control" placeholder="student-001" data-clarity-mask="true"></label></div></fieldset>
 
-          <div class="note-box"><i class="uil uil-info-circle" aria-hidden="true" /><p>Akun baru tidak menerima kata sandi awal. Gunakan aksi amplop pada tabel untuk mengirim petunjuk reset melalui jalur pengiriman yang dikonfigurasi.</p></div>
+          <div class="note-box"><i class="uil uil-info-circle" aria-hidden="true" /><p v-if="passwordResetAvailable">Akun baru tidak menerima kata sandi awal. Gunakan aksi amplop pada tabel untuk mengirim petunjuk melalui {{ passwordResetDeliveryLabel }}.</p><p v-else>Pemulihan akun belum dikonfigurasi. Aktifkan jalur pemulihan sebelum menambahkan pengguna produksi.</p></div>
         </div>
 
         <footer><button class="btn btn-outline-secondary" type="button" :disabled="saving" @click="showEditor = false">Batal</button><button class="btn btn-primary" type="submit" :disabled="saving"><span v-if="saving" class="spinner-border spinner-border-sm me-2" aria-hidden="true" /><i v-else class="uil uil-shield-check me-2" aria-hidden="true" />{{ saving ? 'Menyimpan…' : 'Simpan akun' }}</button></footer>

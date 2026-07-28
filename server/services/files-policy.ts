@@ -5,6 +5,7 @@ import type {
 } from '../types/files'
 import type { AuthContext, UserRole } from '../types/auth'
 import { forbidden, invalidInput } from '../utils/errors'
+import { fileUploadsEnabled } from '../utils/capabilities'
 
 const MEBIBYTE = 1024 * 1024
 
@@ -76,7 +77,12 @@ function configuredQuota(): number {
 }
 
 export function filePolicyDescriptor(): FilePolicyDescriptor {
+  const uploadsEnabled = fileUploadsEnabled()
   return {
+    uploadsEnabled,
+    ...(!uploadsEnabled
+      ? { disabledReason: 'Unggahan file belum tersedia pada paket awal; gunakan rich text atau tautan HTTPS.' }
+      : {}),
     quotaBytes: configuredQuota(),
     uploadSessionTtlSeconds: FILE_UPLOAD_SESSION_TTL_MS / 1000,
     downloadUrlTtlSeconds: FILE_DOWNLOAD_TTL_MS / 1000,

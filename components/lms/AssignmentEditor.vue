@@ -15,10 +15,12 @@ const emit = defineEmits<{ save: [payload: {
   status: LearningAssignment['status']
   expectedVersion?: number
 }] }>()
+const config = useRuntimeConfig()
+const uploadsEnabled = Boolean(config.public.fileUploadsEnabled)
 
 const draft = reactive({
   moduleId: '', title: '', instructions: '', opensAt: '', dueAt: '', closesAt: '',
-  maximumPoints: 100, maximumAttempts: 1, maximumFiles: 1,
+  maximumPoints: 100, maximumAttempts: 1, maximumFiles: uploadsEnabled ? 1 : 0,
   status: 'DRAFT' as LearningAssignment['status'],
 })
 
@@ -37,7 +39,7 @@ function reset() {
     closesAt: props.assignment ? localDate(new Date(props.assignment.closesAt)) : localDate(new Date(opens.getTime() + 10 * 86_400_000)),
     maximumPoints: props.assignment?.maximumPoints || 100,
     maximumAttempts: props.assignment?.maximumAttempts || 1,
-    maximumFiles: props.assignment?.maximumFiles ?? 1,
+    maximumFiles: uploadsEnabled ? (props.assignment?.maximumFiles ?? 1) : 0,
     status: props.assignment?.status || 'DRAFT',
   })
 }
@@ -63,7 +65,7 @@ function submit() {
     <label><span>Instruksi</span><textarea v-model="draft.instructions" class="form-control" rows="5" maxlength="20000" required /></label>
     <label><span>Modul</span><select v-model="draft.moduleId" class="form-select"><option value="">Tanpa modul</option><option v-for="item in modules" :key="item.id" :value="item.id">{{ item.title }}</option></select></label>
     <div class="dates"><label><span>Dibuka</span><input v-model="draft.opensAt" class="form-control" type="datetime-local" required></label><label><span>Tenggat</span><input v-model="draft.dueAt" class="form-control" type="datetime-local" required></label><label><span>Ditutup</span><input v-model="draft.closesAt" class="form-control" type="datetime-local" required></label></div>
-    <div class="limits"><label><span>Poin maksimum</span><input v-model.number="draft.maximumPoints" class="form-control" type="number" min="1" max="1000" required></label><label><span>Attempt maksimum</span><input v-model.number="draft.maximumAttempts" class="form-control" type="number" min="1" max="10" required></label><label><span>File maksimum</span><input v-model.number="draft.maximumFiles" class="form-control" type="number" min="0" max="10" required></label></div>
+    <div class="limits"><label><span>Poin maksimum</span><input v-model.number="draft.maximumPoints" class="form-control" type="number" min="1" max="1000" required></label><label><span>Attempt maksimum</span><input v-model.number="draft.maximumAttempts" class="form-control" type="number" min="1" max="10" required></label><label><span>File maksimum</span><input v-model.number="draft.maximumFiles" class="form-control" type="number" min="0" max="10" required :disabled="!uploadsEnabled"><small v-if="!uploadsEnabled" class="text-muted">Paket awal menerima jawaban teks tanpa lampiran.</small></label></div>
     <label><span>Status</span><select v-model="draft.status" class="form-select"><option value="DRAFT">Draf</option><option value="PUBLISHED">Terbit</option><option v-if="assignment" value="CLOSED">Tutup</option></select></label>
     <button class="btn btn-primary" :disabled="busy">{{ assignment ? 'Simpan perubahan' : 'Buat tugas' }}</button>
   </form>

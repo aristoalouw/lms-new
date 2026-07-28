@@ -30,6 +30,7 @@ import-report-*.json
 *.log
 logs/
 .firebase/
+.firebase-spark/
 firebase-debug.log*
 firestore-debug.log*
 ui-debug.log*

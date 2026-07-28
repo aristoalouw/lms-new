@@ -3,7 +3,7 @@ import { sanitizeSentryEvent, sanitizeSentryText, scrubSentryValue } from '~/sha
 
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig()
-  if (!config.public.sentryDsn) return
+  if (!config.public.sentryEnabled || !config.public.sentryDsn) return
 
   Sentry.init({
     app: nuxtApp.vueApp,

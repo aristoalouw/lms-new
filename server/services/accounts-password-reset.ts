@@ -1,7 +1,8 @@
 import type { H3Event } from 'h3'
 import type { AuthContext } from '../types/auth'
 import { appendAudit } from '../utils/audit'
-import { invalidInput } from '../utils/errors'
+import { invalidInput, serviceUnavailable } from '../utils/errors'
+import { emailDeliveryEnabled } from '../utils/capabilities'
 import { authAdmin, dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { firestorePurgeAfter } from '../utils/firestore-ttl'
 import { mockState } from '../utils/mock-store'
@@ -117,6 +118,9 @@ export async function requestPasswordReset(
   idempotencyKey: string,
   event?: H3Event,
 ): Promise<PasswordResetAcceptedResponse> {
+  if (!emailDeliveryEnabled()) {
+    serviceUnavailable('Pemulihan kata sandi melalui email belum tersedia. Hubungi administrator kampus.')
+  }
   const { email } = parsePasswordResetRequest(value)
   const emailHash = requestHash({ email })
   const freshRequest = await reserveRequest(idempotencyKey, emailHash)

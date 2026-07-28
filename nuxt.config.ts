@@ -1,3 +1,10 @@
+const publicCapabilityEnabled = (name: string) => {
+  const configured = process.env[name]
+  if (configured === 'true') return true
+  if (configured === 'false') return false
+  return process.env.NODE_ENV !== 'production'
+}
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-01-15',
   builder: 'webpack',
@@ -51,6 +58,9 @@ export default defineNuxtConfig({
       firebaseStorageBucket: process.env.NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET || '',
       firebaseMessagingSenderId: process.env.NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID || '',
       firebaseAppId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID || '',
+      fileUploadsEnabled: publicCapabilityEnabled('FILE_UPLOADS_ENABLED'),
+      emailDeliveryEnabled: publicCapabilityEnabled('EMAIL_DELIVERY_ENABLED'),
+      sentryEnabled: publicCapabilityEnabled('SENTRY_ENABLED'),
       sentryDsn: process.env.NUXT_PUBLIC_SENTRY_DSN || '',
       sentryRelease: process.env.NUXT_PUBLIC_SENTRY_RELEASE || process.env.SENTRY_RELEASE || process.env.APP_VERSION || '',
       analyticsEnabled: process.env.NUXT_PUBLIC_ANALYTICS_ENABLED === 'true',

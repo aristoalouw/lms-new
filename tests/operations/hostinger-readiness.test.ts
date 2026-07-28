@@ -38,6 +38,9 @@ function hostingerEnvironment(): Record<string, string> {
     ENABLE_DEMO_AUTH: 'false',
     NUXT_SESSION_SECRET: rotatedSecret(0),
     RATE_LIMIT_KEY_SECRET: rotatedSecret(1),
+    FILE_UPLOADS_ENABLED: 'true',
+    EMAIL_DELIVERY_ENABLED: 'true',
+    SENTRY_ENABLED: 'true',
     PASSWORD_RESET_CONTINUE_URL: 'https://lms.campus.ac.id/login',
     EMAIL_DELIVERY_ENDPOINT: 'https://mail.campus.ac.id/v1/send',
     EMAIL_DELIVERY_BEARER_TOKEN: rotatedSecret(2),
@@ -141,6 +144,42 @@ describe.runIf(Boolean(powerShellExecutable))('Hostinger production environment 
     expect(result.status).toBe(1)
     expect(output).toMatch(/FIREBASE_SERVICE_ACCOUNT_BASE64 must be valid\s+base64-encoded JSON\./)
     expect(output).not.toContain('not-a-service-account')
+  })
+
+  it('accepts a Firebase Spark pilot with uploads, email, and Sentry disabled', () => {
+    const values = {
+      ...hostingerEnvironment(),
+      FILE_UPLOADS_ENABLED: 'false',
+      EMAIL_DELIVERY_ENABLED: 'false',
+      SENTRY_ENABLED: 'false',
+      PASSWORD_RESET_CONTINUE_URL: '',
+      EMAIL_DELIVERY_ENDPOINT: '',
+      EMAIL_DELIVERY_BEARER_TOKEN: '',
+      EMAIL_FROM: '',
+      EMAIL_WORKER_SECRET: '',
+      FIREBASE_STORAGE_BUCKET: '',
+      NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET: '',
+      CLAMAV_HOST: '',
+      SENTRY_DSN: '',
+      NUXT_PUBLIC_SENTRY_DSN: '',
+      SENTRY_RELEASE: '',
+      NUXT_PUBLIC_SENTRY_RELEASE: '',
+    }
+    const result = validateEnvironment(values)
+    const output = `${result.stdout}\n${result.stderr}`
+    expect(result.status, output).toBe(0)
+    expect(output).toContain('Production environment contract for hostinger is valid.')
+  })
+
+  it('rejects capability casing that would be disabled by the runtime parser', () => {
+    const values = {
+      ...hostingerEnvironment(),
+      FILE_UPLOADS_ENABLED: 'True',
+    }
+    const result = validateEnvironment(values)
+    const output = `${result.stdout}\n${result.stderr}`
+    expect(result.status).toBe(1)
+    expect(output).toContain('FILE_UPLOADS_ENABLED must be true or false.')
   })
 
   it('retains the immutable image and mounted-file requirements for Docker', () => {

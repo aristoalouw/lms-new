@@ -76,6 +76,8 @@ describe('Firestore TTL safeguards', () => {
       expect(generated.fieldOverrides.some(override => override.ttl === true)).toBe(false)
       expect(generated.fieldOverrides.filter(override => override.fieldPath === 'purgeAfter'))
         .toHaveLength(6)
+      expect(readFileSync(resolve(outputDirectory, 'firestore.rules'), 'utf8'))
+        .toBe(readFileSync(resolve(process.cwd(), 'firebase/firestore.rules'), 'utf8'))
     } finally {
       rmSync(outputDirectory, { recursive: true, force: true })
     }

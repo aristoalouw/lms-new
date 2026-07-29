@@ -127,6 +127,17 @@ async function canAccessLearningSpaces(context: AuthContext, learningSpaceIds: r
   return false
 }
 
+async function requireUploadLearningSpaceAccess(
+  context: AuthContext,
+  learningSpaceIds: readonly string[],
+): Promise<void> {
+  for (const spaceId of learningSpaceIds) {
+    if (!await canAccessLearningSpaces(context, [spaceId])) {
+      forbidden('Target ruang pembelajaran berada di luar akses akun Anda.')
+    }
+  }
+}
+
 export async function canAccessPrivateFile(context: AuthContext, file: PrivateFileRecord): Promise<boolean> {
   // A class-scoped file always revalidates current membership first. Ownership
   // must not preserve access after an enrolment is withdrawn.
@@ -375,6 +386,10 @@ export async function createFileUploadSession(
   if (requestedFileId && !/^file_[a-f0-9]{24}$/.test(requestedFileId)) {
     throw new CampusError(400, 'INVALID_INPUT', 'fileId tidak valid.')
   }
+  const requestedAccess = requestedFileId ? undefined : normalizeFileAccess(context, input.access)
+  if (requestedAccess?.learningSpaceIds.length) {
+    await requireUploadLearningSpaceAccess(context, requestedAccess.learningSpaceIds)
+  }
   const idempotencySeed = explicitIdempotencyKey || randomUUID()
   const idempotencyHash = requestHash({ contextUid: context.uid, input: { ...input, name: normalizedName.name, declaredMimeType: policy.mimeType } })
   const newFileId = requestedFileId || opaqueId('file', `${context.uid}:${idempotencySeed}`)
@@ -412,7 +427,7 @@ export async function createFileUploadSession(
     }
     const version = existing?.nextVersion || 1
     const id = versionId(newFileId, version)
-    const access = existing?.access || normalizeFileAccess(context, input.access)
+    const access = existing?.access || requestedAccess!
     const ownerName = existing?.ownerName || context.displayName
     file = existing
       ? { ...existing, nextVersion: version + 1, pendingVersion: version, updatedAt: createdAt }
@@ -512,7 +527,7 @@ export async function createFileUploadSession(
       }
       const version = existing?.nextVersion || 1
       const id = versionId(newFileId, version)
-      const access = existing?.access || normalizeFileAccess(context, input.access)
+      const access = existing?.access || requestedAccess!
       const nextFile: PrivateFileRecord = existing
         ? { ...existing, nextVersion: version + 1, pendingVersion: version, updatedAt: createdAt }
         : {

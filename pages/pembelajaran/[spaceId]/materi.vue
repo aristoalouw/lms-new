@@ -30,7 +30,16 @@ async function download(item: LearningMaterial) {
           <header><span>{{ index + 1 }}</span><div><small>{{ module.status }}</small><h2>{{ module.title }}</h2><p>{{ learningPlainText(module.description) }}</p></div></header>
           <article v-for="material in materialsFor(module.id)" :key="material.id" class="material-row">
             <i class="uil" :class="material.kind === 'FILE' ? 'uil-file-download' : material.kind === 'EXTERNAL_LINK' ? 'uil-external-link-alt' : 'uil-file-alt'" />
-            <div><small>{{ material.kind.replaceAll('_', ' ') }} · {{ material.status }}</small><strong>{{ material.title }}</strong><p>{{ material.summary || learningPlainText(material.content) }}</p></div>
+            <div class="material-copy">
+              <small>{{ material.kind.replaceAll('_', ' ') }} · {{ material.status }}</small>
+              <strong>{{ material.title }}</strong>
+              <p v-if="material.summary" class="material-summary">{{ material.summary }}</p>
+              <SafeRichContent
+                v-if="material.content"
+                :content="material.content"
+                :label="`Isi materi ${material.title}`"
+              />
+            </div>
             <button v-if="material.file" class="btn btn-sm btn-outline-primary" @click="download(material)">Unduh</button>
             <a v-else-if="material.externalUrl" class="btn btn-sm btn-outline-primary" :href="material.externalUrl" target="_blank" rel="noopener noreferrer">Buka</a>
           </article>
@@ -45,5 +54,5 @@ async function download(item: LearningMaterial) {
 
 <style scoped src="~/pages/_workflow.css"></style>
 <style scoped>
-.loading-state{display:flex;gap:.5rem;justify-content:center;padding:4rem}.module-stack{display:grid;gap:.85rem}.module-card,.empty-card{overflow:hidden;border:1px solid #e0e8e3;border-radius:.9rem;background:#fff}.module-card>header{display:flex;gap:.75rem;padding:1rem}.module-card>header>span{display:grid;place-items:center;flex:0 0 auto;width:2rem;height:2rem;border-radius:.6rem;color:#31674f;background:#edf5f0;font-size:.62rem;font-weight:800}.module-card h2{margin:.1rem 0;color:#315145;font-size:.82rem}.module-card header small,.module-card header p{margin:0;color:#778a81;font-size:.57rem}.material-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.75rem;align-items:center;padding:.8rem 1rem;border-top:1px solid #edf1ee}.material-row>i{display:grid;place-items:center;width:2.2rem;height:2.2rem;border-radius:.6rem;color:#39715a;background:#edf5f0}.material-row small,.material-row strong{display:block}.material-row small{color:#668078;font-size:.49rem;font-weight:800}.material-row strong{color:#36564a;font-size:.66rem}.material-row p{overflow:hidden;margin:.15rem 0 0;color:#7a8a83;font-size:.57rem;text-overflow:ellipsis;white-space:nowrap}.empty,.empty-card{padding:1rem;color:#82918b;font-size:.6rem;text-align:center}.manage-link{justify-self:end}@media(max-width:575.98px){.material-row{grid-template-columns:auto 1fr}.material-row>.btn{grid-column:2;justify-self:start}}
+.loading-state{display:flex;gap:.5rem;justify-content:center;padding:4rem}.module-stack{display:grid;gap:.85rem}.module-card,.empty-card{overflow:hidden;border:1px solid #e0e8e3;border-radius:.9rem;background:#fff}.module-card>header{display:flex;gap:.75rem;padding:1rem}.module-card>header>span{display:grid;place-items:center;flex:0 0 auto;width:2rem;height:2rem;border-radius:.6rem;color:#31674f;background:#edf5f0;font-size:.62rem;font-weight:800}.module-card h2{margin:.1rem 0;color:#315145;font-size:.82rem}.module-card header small,.module-card header p{margin:0;color:#778a81;font-size:.57rem}.material-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.75rem;align-items:start;padding:1rem;border-top:1px solid #edf1ee}.material-row>i{display:grid;place-items:center;width:2.2rem;height:2.2rem;border-radius:.6rem;color:#39715a;background:#edf5f0}.material-row small,.material-row strong{display:block}.material-row small{color:#668078;font-size:.49rem;font-weight:800}.material-row strong{color:#36564a;font-size:.66rem}.material-copy{min-width:0}.material-copy>.material-summary{margin:.2rem 0 .45rem;color:#71847b;font-size:.58rem}.empty,.empty-card{padding:1rem;color:#82918b;font-size:.6rem;text-align:center}.manage-link{justify-self:end}@media(max-width:575.98px){.material-row{grid-template-columns:auto 1fr}.material-row>.btn{grid-column:2;justify-self:start}}
 </style>

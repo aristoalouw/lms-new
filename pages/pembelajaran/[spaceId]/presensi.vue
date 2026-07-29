@@ -6,6 +6,7 @@ useHead({ title: 'Presensi kelas' })
 const route = useRoute()
 const spaceId = computed(() => String(route.params.spaceId || ''))
 const { $api } = useNuxtApp()
+const { can } = useAuth()
 const { detail, loading, error } = useLearningSpace(spaceId)
 const meetingNumber = ref(1)
 const ttlSeconds = ref(120)
@@ -17,6 +18,8 @@ const attendanceLoading = ref(false)
 const correction = reactive({ studentId: '', status: 'PRESENT' as AttendanceStatus, reason: '' })
 const busy = ref(false)
 const actionError = ref('')
+const canManageAttendance = computed(() => can('learning:manage_attendance') && detail.value?.canManage === true)
+const canCheckIn = computed(() => can('learning:check_in') && detail.value?.canManage !== true)
 
 async function issue() {
   const classId = detail.value?.space.academicClassId
@@ -30,7 +33,7 @@ async function issue() {
 
 async function loadAttendance(reset = true) {
   const classId = detail.value?.space.academicClassId
-  if (!classId) return
+  if (!classId || (!canManageAttendance.value && !canCheckIn.value)) return
   if (reset) {
     attendanceRows.value = []
     attendanceCursor.value = undefined
@@ -42,7 +45,7 @@ async function loadAttendance(reset = true) {
     const { data } = await $api.get<{ items: AttendanceRecord[]; nextCursor?: string }>(`/academic/classes/${classId}/attendance`, {
       params: {
         limit: 50,
-        ...(detail.value?.canManage ? { meetingNumber: meetingNumber.value } : {}),
+        ...(canManageAttendance.value ? { meetingNumber: meetingNumber.value } : {}),
         ...(!reset && attendanceCursor.value ? { cursor: attendanceCursor.value } : {}),
       },
     })
@@ -69,9 +72,18 @@ async function correct() {
   } catch (cause) { actionError.value = learningErrorMessage(cause) } finally { busy.value = false }
 }
 
-watch(() => detail.value?.space.academicClassId, () => loadAttendance())
+watch(
+  [() => detail.value?.space.academicClassId, canManageAttendance, canCheckIn],
+  ([classId, mayManage, mayCheckIn]) => {
+    if (classId && (mayManage || mayCheckIn)) void loadAttendance()
+    else {
+      attendanceRows.value = []
+      attendanceCursor.value = undefined
+    }
+  },
+)
 watch(meetingNumber, () => {
-  if (detail.value?.canManage) void loadAttendance()
+  if (canManageAttendance.value) void loadAttendance()
 })
 
 const statusLabel = (status: AttendanceStatus) => ({ PRESENT: 'Hadir', LATE: 'Terlambat', EXCUSED: 'Izin', ABSENT: 'Tidak hadir' })[status]
@@ -82,20 +94,21 @@ const statusLabel = (status: AttendanceStatus) => ({ PRESENT: 'Hadir', LATE: 'Te
     <div v-if="error || actionError" class="alert alert-danger" role="alert">{{ error || actionError }}</div>
     <div v-if="loading" class="loading-state"><span class="spinner-border spinner-border-sm" />Memuat presensi…</div>
     <LearningSpaceFrame v-else-if="detail" :detail="detail">
-      <section v-if="detail.canManage" class="attendance-panel">
+      <section v-if="canManageAttendance" class="attendance-panel">
         <header><small>Challenge singkat</small><h2>Tampilkan QR presensi</h2><p>QR memakai URL fragment sehingga token tidak dikirim sebagai URL request atau referrer.</p></header>
         <form @submit.prevent="issue"><label><span>Pertemuan</span><input v-model.number="meetingNumber" class="form-control" type="number" min="1" max="40" required></label><label><span>Masa berlaku</span><select v-model.number="ttlSeconds" class="form-select"><option :value="60">1 menit</option><option :value="120">2 menit</option><option :value="300">5 menit</option></select></label><button class="btn btn-primary" :disabled="busy">Buat QR</button></form>
         <div v-if="challenge" class="challenge-result"><AttendanceQr :challenge-token="challenge.challengeToken" :label="`QR presensi pertemuan ${challenge.meetingNumber}`" /><small>Berlaku hingga {{ new Date(challenge.expiresAt).toLocaleString('id-ID') }}</small></div>
         <section class="correction-panel"><h3>Koreksi manual</h3><p>Perubahan memakai version check dan wajib memiliki alasan audit.</p><form @submit.prevent="correct"><label><span>Mahasiswa</span><select v-model="correction.studentId" class="form-select" required><option v-for="student in classDetail?.roster" :key="student.studentId" :value="student.studentId">{{ student.studentNumber }} · {{ student.studentName }}</option></select></label><label><span>Status</span><select v-model="correction.status" class="form-select"><option value="PRESENT">Hadir</option><option value="LATE">Terlambat</option><option value="EXCUSED">Izin</option><option value="ABSENT">Tidak hadir</option></select></label><label class="reason"><span>Alasan</span><input v-model="correction.reason" class="form-control" minlength="10" maxlength="500" required></label><button class="btn btn-outline-primary" :disabled="busy">Simpan koreksi</button></form></section>
       </section>
-      <section v-else class="student-attendance"><i class="uil uil-qrcode-scan" /><h2>Pindai QR dari dosen</h2><p>Gunakan kamera bawaan ponsel. Setelah membuka tautan, halaman konfirmasi akan memeriksa login dan enrolment aktif Anda.</p><NuxtLink class="btn btn-outline-primary" to="/presensi">Buka halaman konfirmasi</NuxtLink></section>
-      <section class="attendance-history">
-        <header><h2>{{ detail.canManage ? `Presensi pertemuan ${meetingNumber}` : 'Riwayat presensi Anda' }}</h2><p>Record bersifat unik untuk setiap mahasiswa dan pertemuan.</p></header>
+      <section v-else-if="canCheckIn" class="student-attendance"><i class="uil uil-qrcode-scan" /><h2>Pindai QR dari dosen</h2><p>Gunakan kamera bawaan ponsel. Setelah membuka tautan, halaman konfirmasi akan memeriksa login dan enrolment aktif Anda.</p><NuxtLink class="btn btn-outline-primary" to="/presensi">Buka halaman konfirmasi</NuxtLink></section>
+      <section v-else class="student-attendance support-readonly" aria-labelledby="attendance-support-title"><i class="uil uil-eye" /><h2 id="attendance-support-title">Tampilan dukungan baca-saja</h2><p>Administrator tidak dapat membuat challenge, mengoreksi, atau melakukan check-in presensi.</p></section>
+      <section v-if="canManageAttendance || canCheckIn" class="attendance-history">
+        <header><h2>{{ canManageAttendance ? `Presensi pertemuan ${meetingNumber}` : 'Riwayat presensi Anda' }}</h2><p>Record bersifat unik untuk setiap mahasiswa dan pertemuan.</p></header>
         <div v-if="attendanceLoading && !attendanceRows.length" class="history-state" role="status"><span class="spinner-border spinner-border-sm" /> Memuat riwayat…</div>
         <div v-else-if="attendanceRows.length" class="table-responsive">
           <table class="table align-middle mb-0">
-            <thead><tr><th>Pertemuan</th><th v-if="detail.canManage">Mahasiswa</th><th>Status</th><th>Sumber</th><th>Diperbarui</th></tr></thead>
-            <tbody><tr v-for="item in attendanceRows" :key="item.id"><td>{{ item.meetingNumber }}</td><td v-if="detail.canManage">{{ classDetail?.roster.find(student => student.studentId === item.studentId)?.studentName || item.studentId }}</td><td><span class="status-pill" :class="item.status.toLowerCase()">{{ statusLabel(item.status) }}</span></td><td>{{ item.source === 'QR' ? 'QR' : 'Koreksi manual' }}</td><td>{{ new Date(item.updatedAt).toLocaleString('id-ID') }}</td></tr></tbody>
+            <thead><tr><th>Pertemuan</th><th v-if="canManageAttendance">Mahasiswa</th><th>Status</th><th>Sumber</th><th>Diperbarui</th></tr></thead>
+            <tbody><tr v-for="item in attendanceRows" :key="item.id"><td>{{ item.meetingNumber }}</td><td v-if="canManageAttendance">{{ classDetail?.roster.find(student => student.studentId === item.studentId)?.studentName || item.studentId }}</td><td><span class="status-pill" :class="item.status.toLowerCase()">{{ statusLabel(item.status) }}</span></td><td>{{ item.source === 'QR' ? 'QR' : 'Koreksi manual' }}</td><td>{{ new Date(item.updatedAt).toLocaleString('id-ID') }}</td></tr></tbody>
           </table>
         </div>
         <p v-else class="history-state">Belum ada record presensi.</p>

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { AxiosError } from 'axios'
 
+definePageMeta({ middleware: 'auth' })
+
 type FileStatus = 'UPLOADING' | 'QUARANTINED' | 'CLEAN' | 'REJECTED' | 'DELETED'
 type FileMime = 'application/pdf' | 'image/jpeg' | 'image/png'
 

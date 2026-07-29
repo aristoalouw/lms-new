@@ -1,0 +1,27 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function safeProfileImage() {
+      return request.resource.size <= 2 * 1024 * 1024
+        && request.resource.contentType.matches('image/jpeg|image/png|image/webp');
+    }
+
+    match /profile-images/{userId}/{fileName} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create, update: if signedIn()
+        && request.auth.uid == userId
+        && safeProfileImage();
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    // Semua lampiran LMS bersifat privat dan dilayani melalui signed URL server.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

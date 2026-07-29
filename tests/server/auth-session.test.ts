@@ -78,7 +78,7 @@ describe('Firebase application sessions', () => {
       email: 'admin@example.test',
       displayName: 'Administrator',
       roles: ['administrator'],
-      scope: { unitIds: ['campus'], programStudyIds: [], cohortYears: [], studentIds: [] },
+      scope: { unitIds: [], programStudyIds: [], cohortYears: [], studentIds: [] },
       status: 'active',
       version: 7,
     }
@@ -194,5 +194,74 @@ describe('Firebase application sessions', () => {
       'pmb.write',
       'finance.write',
     ]))
+  })
+
+  it.each([
+    {
+      label: 'role LMS gabungan',
+      roles: ['administrator', 'lecturer'],
+      scope: { unitIds: [], programStudyIds: [], cohortYears: [], studentIds: [] },
+    },
+    {
+      label: 'mahasiswa tanpa tepat satu identitas dan program studi',
+      roles: ['student'],
+      scope: { unitIds: [], programStudyIds: [], cohortYears: [2026], studentIds: [] },
+    },
+    {
+      label: 'mahasiswa dengan scope unit lama',
+      roles: ['student'],
+      scope: { unitIds: ['campus'], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: ['student-001'] },
+    },
+    {
+      label: 'dosen dengan scope mahasiswa',
+      roles: ['lecturer'],
+      scope: { unitIds: [], programStudyIds: ['management-s1'], cohortYears: [], studentIds: ['student-001'] },
+    },
+    {
+      label: 'administrator dengan scope organisasi lama',
+      roles: ['administrator'],
+      scope: { unitIds: ['campus'], programStudyIds: [], cohortYears: [], studentIds: [] },
+    },
+    {
+      label: 'scope dengan ID tidak kanonis',
+      roles: ['lecturer'],
+      scope: { unitIds: [], programStudyIds: ['management s1'], cohortYears: [], studentIds: [] },
+    },
+  ])('menolak akun aktif dengan $label saat sesi dibuat', async ({ roles, scope }) => {
+    firebase.state.account = { ...firebase.state.account, roles, scope }
+
+    await expect(createFirebaseSession('invalid-authorization-id-token')).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'ACCOUNT_AUTHORIZATION_INVALID',
+    })
+  })
+
+  it('memvalidasi ulang kontrak role dan scope ketika application session digunakan', async () => {
+    const { token } = await createFirebaseSession('valid-before-account-drift')
+    firebase.state.account = {
+      ...firebase.state.account,
+      roles: ['administrator', 'lecturer'],
+    }
+
+    await expect(authenticate(requestWithCookie(token))).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'ACCOUNT_AUTHORIZATION_INVALID',
+    })
+  })
+
+  it('mempertahankan dukungan akun multi-role pada profil full-campus', async () => {
+    process.env.APP_FEATURE_PROFILE = 'full-campus'
+    firebase.state.account = {
+      ...firebase.state.account,
+      roles: ['administrator', 'lecturer'],
+      scope: { unitIds: ['campus'], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: [] },
+    }
+
+    await expect(createFirebaseSession('full-campus-multi-role')).resolves.toMatchObject({
+      context: {
+        roles: ['administrator', 'lecturer'],
+        scope: { unitIds: ['campus'], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: [] },
+      },
+    })
   })
 })

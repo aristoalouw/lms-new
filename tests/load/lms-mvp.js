@@ -4,15 +4,15 @@ import { SharedArray } from 'k6/data'
 import exec from 'k6/execution'
 
 const fixturesPath = __ENV.LMS_SESSION_FIXTURES
-if (!fixturesPath) throw new Error('Set LMS_SESSION_FIXTURES ke file JSON lokal berisi 100 sesi sintetis.')
+if (!fixturesPath) throw new Error('Set LMS_SESSION_FIXTURES ke file JSON lokal berisi 200 sesi sintetis.')
 const sessions = new SharedArray('lms-session-fixtures', () => JSON.parse(open(fixturesPath)))
 const baseUrl = (__ENV.LMS_BASE_URL || '').replace(/\/$/, '')
 if (!baseUrl.startsWith('https://')) throw new Error('LMS_BASE_URL harus HTTPS.')
 
 export const options = {
   scenarios: {
-    reads: { executor: 'constant-vus', exec: 'readFlow', vus: 90, duration: '5m' },
-    mutations: { executor: 'constant-vus', exec: 'mutationFlow', vus: 10, duration: '5m' },
+    reads: { executor: 'constant-vus', exec: 'readFlow', vus: 180, duration: '5m' },
+    mutations: { executor: 'constant-vus', exec: 'mutationFlow', vus: 20, duration: '5m' },
   },
   thresholds: {
     http_req_failed: ['rate<0.01'],
@@ -22,7 +22,7 @@ export const options = {
 }
 
 export function setup() {
-  if (sessions.length < 100) fail('Fixture harus memuat sedikitnya 100 sesi pengguna sintetis yang berbeda.')
+  if (sessions.length < 200) fail('Fixture harus memuat sedikitnya 200 sesi pengguna sintetis yang berbeda.')
 }
 
 function fixture() {

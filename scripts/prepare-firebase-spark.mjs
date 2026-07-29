@@ -6,7 +6,7 @@ const repositoryRoot = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const outputArgument = process.argv.find(argument => argument.startsWith('--out='))
 const outputDirectory = resolve(repositoryRoot, outputArgument?.slice('--out='.length) || '.firebase-spark')
 const sourcePath = resolve(repositoryRoot, 'firebase/firestore.indexes.json')
-const rulesPath = resolve(repositoryRoot, 'firebase/firestore.rules')
+const rulesPath = resolve(repositoryRoot, 'firebase/firestore.lms-mvp.rules')
 const source = JSON.parse(readFileSync(sourcePath, 'utf8'))
 
 if (!Array.isArray(source.indexes) || !Array.isArray(source.fieldOverrides)) {

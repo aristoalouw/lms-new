@@ -1,12 +1,15 @@
 <script setup lang="ts">
 const props = defineProps<{ spaceId: string; canManage?: boolean }>()
 const route = useRoute()
+const { can } = useAuth()
 const items = computed(() => [
   { label: 'Ringkasan', icon: 'uil-chart-pie', to: `/pembelajaran/${props.spaceId}` },
   { label: 'Materi', icon: 'uil-books', to: `/pembelajaran/${props.spaceId}/materi` },
   { label: 'Tugas', icon: 'uil-clipboard-notes', to: `/pembelajaran/${props.spaceId}/tugas` },
   { label: 'Diskusi', icon: 'uil-comments-alt', to: `/pembelajaran/${props.spaceId}/diskusi` },
-  { label: 'Presensi', icon: 'uil-qrcode-scan', to: `/pembelajaran/${props.spaceId}/presensi` },
+  ...(can('learning:check_in') || can('learning:manage_attendance')
+    ? [{ label: 'Presensi', icon: 'uil-qrcode-scan', to: `/pembelajaran/${props.spaceId}/presensi` }]
+    : []),
   ...(props.canManage ? [{ label: 'Kelola', icon: 'uil-setting', to: `/pembelajaran/${props.spaceId}/kelola` }] : []),
 ])
 

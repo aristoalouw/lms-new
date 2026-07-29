@@ -146,6 +146,23 @@ describe('private file management', () => {
       .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
   })
 
+  it('rejects a class-scoped upload when the uploader cannot access every target space', async () => {
+    const outsider = authContext('student-outsider', ['student'], ['informatics-s1'])
+    outsider.scope.studentIds = ['student-outsider']
+    await expect(createFileUploadSession(outsider, {
+      name: 'Tugas lintas kelas.pdf',
+      declaredMimeType: 'application/pdf',
+      sizeBytes: cleanPdf.byteLength,
+      access: {
+        visibility: 'SCOPED',
+        allowedRoles: ['student', 'lecturer'],
+        learningSpaceIds: ['class-mgt-401-a'],
+      },
+    })).rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
+    expect(fileMockStateForTests().sessions.size).toBe(0)
+    expect(fileMockStateForTests().quotas.size).toBe(0)
+  })
+
   it('rejects extension/MIME mismatch before reserving quota', async () => {
     const owner = authContext('student-owner', ['student'])
     await expect(createFileUploadSession(owner, {

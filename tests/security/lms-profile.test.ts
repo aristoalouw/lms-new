@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   featureForApiPath,
@@ -77,6 +79,13 @@ describe('LMS MVP profile and telemetry invariants', () => {
     expect(commands.every(item => isMvpPageAllowed(item.to))).toBe(true)
     expect(commands.map(item => item.to)).not.toContain('/modul/pengaturan')
     expect(commands.map(item => item.to)).not.toContain('/pmb')
+  })
+
+  it('never seeds production notification state with demonstration records', () => {
+    const source = readFileSync(resolve(process.cwd(), 'pages/notifikasi/index.vue'), 'utf8')
+    expect(source).toContain('config.public.demoMode ? demoNotifications : []')
+    expect(source).toContain('config.public.demoMode ? demoTemplates : []')
+    expect(source).toContain('config.public.demoMode ? demoOutbox : []')
   })
 
   it('scrubs credentials and student learning data from Sentry events', () => {

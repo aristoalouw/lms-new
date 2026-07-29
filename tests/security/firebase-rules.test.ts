@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest'
 
 const firestoreRules = readFileSync(resolve(process.cwd(), 'firebase/firestore.rules'), 'utf8')
 const storageRules = readFileSync(resolve(process.cwd(), 'firebase/storage.rules'), 'utf8')
+const lmsFirestoreRules = readFileSync(resolve(process.cwd(), 'firebase/firestore.lms-mvp.rules'), 'utf8')
+const lmsStorageRules = readFileSync(resolve(process.cwd(), 'firebase/storage.lms-mvp.rules'), 'utf8')
 const firestoreIndexes = JSON.parse(readFileSync(resolve(process.cwd(), 'firebase/firestore.indexes.json'), 'utf8')) as {
   indexes: Array<{ collectionGroup: string; fields: Array<{ fieldPath: string; order?: string }> }>
 }
@@ -61,6 +63,14 @@ describe('Firebase security rule invariants', () => {
     expect(storageRules).toMatch(/match \/\{allPaths=\*\*\}[\s\S]*?allow read, write: if false;/)
   })
 
+  it('keeps the LMS profile server-only except for the owner minimum profile', () => {
+    expect(lmsFirestoreRules).toMatch(/match \/users\/\{userId\}[\s\S]*?request\.auth\.uid == userId/)
+    expect(lmsFirestoreRules).toMatch(/match \/\{document=\*\*\}[\s\S]*?allow read, write: if false;/)
+    expect(lmsStorageRules).toMatch(/match \/\{allPaths=\*\*\}[\s\S]*?allow read, write: if false;/)
+    expect(lmsStorageRules).not.toContain('student-documents')
+    expect(lmsStorageRules).not.toContain('admissions/public')
+  })
+
   it('enforces MIME type and size constraints for client uploads', () => {
     expect(storageRules).toContain('request.resource.size <= 10 * 1024 * 1024')
     expect(storageRules).toContain("request.resource.contentType.matches('application/pdf|image/jpeg|image/png')")
@@ -90,5 +100,7 @@ describe('Firebase security rule invariants', () => {
     expect(hasIndex('academicLeaveRequests', ['programStudyId', 'status', 'submittedAt'])).toBe(true)
     expect(hasIndex('academicAdvisingSessions', ['advisorId', 'status', 'requestedAt'])).toBe(true)
     expect(hasIndex('academicGradeRecords', ['studentId', 'periodId', 'courseCode'])).toBe(true)
+    expect(hasIndex('academicClasses', ['lecturerIds', 'periodId', 'programStudyId', '__name__'])).toBe(true)
+    expect(hasIndex('classEnrollments', ['studentUid', 'status', 'periodId', 'programStudyId', 'classId'])).toBe(true)
   })
 })

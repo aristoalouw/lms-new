@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { AuditEntry } from '~/shared/contracts/lms'
 
-definePageMeta({ middleware: 'auth' })
+definePageMeta({ middleware: ['auth', 'audit-access'] })
 useHead({ title: 'Audit & operasi LMS' })
 
 interface HealthPayload { status: string; timestamp: string; version?: string }

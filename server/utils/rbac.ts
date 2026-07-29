@@ -1,14 +1,21 @@
 import type { AuthContext, Permission, UserRole } from '../types/auth'
 import type { InvoiceRecord, KrsRecord } from '../types/domain'
-import { ROLE_PERMISSIONS, normalizeUserRoles, permissionsForRoles } from '../../shared/auth'
+import {
+  normalizeUserRoles,
+  permissionsForLmsMvpRoles,
+  permissionsForRoles,
+} from '../../shared/auth'
 import { forbidden, invalidInput } from './errors'
+import { serverFeatureProfile } from './feature-profile'
 
 export function normalizeRoles(value: unknown): UserRole[] {
   return normalizeUserRoles(value)
 }
 
 export function permissionsFor(roles: readonly UserRole[]): Permission[] {
-  return permissionsForRoles(roles)
+  return serverFeatureProfile() === 'lms-mvp'
+    ? permissionsForLmsMvpRoles(roles)
+    : permissionsForRoles(roles)
 }
 
 export function hasRole(context: AuthContext, ...roles: UserRole[]): boolean {
@@ -16,7 +23,7 @@ export function hasRole(context: AuthContext, ...roles: UserRole[]): boolean {
 }
 
 export function can(context: AuthContext, permission: Permission): boolean {
-  return context.roles.some((role) => ROLE_PERMISSIONS[role].includes(permission))
+  return permissionsFor(context.roles).includes(permission)
 }
 
 export function requirePermission(context: AuthContext, permission: Permission): void {

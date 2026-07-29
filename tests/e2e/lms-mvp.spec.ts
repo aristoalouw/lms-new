@@ -61,6 +61,22 @@ test('anonymous API ditolak dan modul non-MVP menjadi 404', async ({ request }) 
   expect((await request.post('/api/internal/notifications/outbox/process', { data: {} })).status()).toBe(403)
 })
 
+test('halaman privat dan operasional mengikuti role', async ({ browser }) => {
+  const anonymousContext = await browser.newContext()
+  const anonymousPage = await anonymousContext.newPage()
+  await anonymousPage.goto('/berkas')
+  await expect(anonymousPage).toHaveURL(/\/login(?:\?|$)/)
+  await anonymousContext.close()
+
+  const studentContext = await browser.newContext()
+  const studentPage = await studentContext.newPage()
+  await loginAs(studentPage, 'student')
+  const auditResponse = await studentPage.goto('/modul/audit-backup')
+  expect(auditResponse?.status()).toBe(403)
+  await expect(studentPage.getByRole('heading', { name: '403' })).toBeVisible()
+  await studentContext.close()
+})
+
 test('mahasiswa hanya melihat alur belajar dan submission miliknya', async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 800 })
   await loginAs(page, 'student')

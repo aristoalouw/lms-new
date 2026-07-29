@@ -26,11 +26,12 @@ import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { firestorePurgeAfter } from '../utils/firestore-ttl'
-import { hasRole, requirePermission } from '../utils/rbac'
+import { can, hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { normalizeIsoInstant, optionalString, requireInteger, requireRecord, requireString, requireStringArray } from '../utils/validation'
 import { serverFeatureProfile } from '../utils/feature-profile'
 import { resolveLmsClassCatalogSelection } from './academic-administration'
+import { listActiveAccountsByIds } from './accounts'
 import { learningMockState } from './learning-mock'
 
 export interface AcademicClassListQuery {
@@ -794,11 +795,24 @@ function classKeyDocumentId(record: Pick<AcademicClassRecord, 'periodId' | 'cour
   return requestHash(classKey(record))
 }
 
-function parseLecturers(idsValue: unknown, namesValue: unknown): { lecturerIds: string[]; lecturerNames: string[] } {
+async function parseLecturers(idsValue: unknown, namesValue: unknown): Promise<{ lecturerIds: string[]; lecturerNames: string[] }> {
   const lecturerIds = requireStringArray(idsValue, 'lecturerIds', 20).map((value, index) => stableIdentifier(value, `lecturerIds[${index}]`))
   const lecturerNames = requireStringArray(namesValue, 'lecturerNames', 20)
     .map((value, index) => requireString(value, `lecturerNames[${index}]`, { max: 150 }))
   if (lecturerIds.length !== lecturerNames.length) invalidInput('lecturerIds dan lecturerNames harus memiliki jumlah item yang sama.')
+  if (serverFeatureProfile() === 'lms-mvp') {
+    if (!lecturerIds.length) invalidInput('Kelas LMS wajib memiliki minimal satu dosen pengampu aktif.')
+    const accounts = await listActiveAccountsByIds(lecturerIds)
+    const accountsById = new Map(accounts.map(account => [account.id, account]))
+    const missing = lecturerIds.find(id => !accountsById.has(id))
+    if (missing) invalidInput(`Dosen pengampu ${missing} tidak ditemukan atau tidak aktif.`)
+    const wrongRole = lecturerIds.find(id => !accountsById.get(id)!.roles.includes('lecturer'))
+    if (wrongRole) invalidInput(`Akun ${wrongRole} tidak memiliki role dosen.`)
+    return {
+      lecturerIds,
+      lecturerNames: lecturerIds.map(id => accountsById.get(id)!.displayName),
+    }
+  }
   return { lecturerIds, lecturerNames }
 }
 
@@ -809,7 +823,7 @@ async function parseCreateClassInput(context: AuthContext, value: unknown): Prom
     'unitId', 'lecturerIds', 'lecturerNames', 'capacity', 'firstMeetingStartsAt',
     'meetingCount', 'meetingDurationMinutes',
   ])
-  const lecturers = parseLecturers(body.lecturerIds, body.lecturerNames)
+  const lecturers = await parseLecturers(body.lecturerIds, body.lecturerNames)
   const periodId = stableIdentifier(body.periodId, 'periodId')
   const common = {
     section: requireString(body.section, 'section', { max: 20, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]*$/ }).toUpperCase(),
@@ -852,7 +866,7 @@ async function parseCreateClassInput(context: AuthContext, value: unknown): Prom
   }
 }
 
-function parseUpdateClassInput(value: unknown): UpdateAcademicClassInput {
+async function parseUpdateClassInput(value: unknown): Promise<UpdateAcademicClassInput> {
   const body = requireRecord(value)
   rejectUnknown(body, [
     'expectedVersion', 'courseCode', 'courseName', 'credits', 'section', 'periodId',
@@ -881,7 +895,7 @@ function parseUpdateClassInput(value: unknown): UpdateAcademicClassInput {
   }
   if (body.lecturerIds !== undefined || body.lecturerNames !== undefined) {
     if (body.lecturerIds === undefined || body.lecturerNames === undefined) invalidInput('lecturerIds dan lecturerNames harus diperbarui bersama-sama.')
-    Object.assign(result, parseLecturers(body.lecturerIds, body.lecturerNames))
+    Object.assign(result, await parseLecturers(body.lecturerIds, body.lecturerNames))
   }
   return result
 }
@@ -1053,7 +1067,7 @@ export async function updateAcademicClass(
 ): Promise<AcademicWriteResult<{ classRecord: AcademicClassRecord; learningSpace: LearningSpace }>> {
   requirePermission(context, 'classes:manage')
   const safeId = safeClassId(classId)
-  const input = parseUpdateClassInput(value)
+  const input = await parseUpdateClassInput(value)
   const hash = requestHash({ classId: safeId, ...input })
   const namespace = `academic:class-update:${context.uid}:${idempotencyKey}`
   const now = clock.toISOString()
@@ -1180,6 +1194,35 @@ function parseCreateEnrollmentInput(value: unknown): CreateClassEnrollmentInput 
   }
 }
 
+async function canonicalizeLmsEnrollmentInput(
+  input: CreateClassEnrollmentInput,
+  classRecord: AcademicClassRecord,
+): Promise<CreateClassEnrollmentInput> {
+  if (serverFeatureProfile() !== 'lms-mvp') return input
+  const [account] = await listActiveAccountsByIds([input.studentUid])
+  if (!account || !account.roles.includes('student')) {
+    invalidInput('Akun mahasiswa tidak ditemukan, tidak aktif, atau tidak memiliki role mahasiswa.')
+  }
+  const canonicalStudentIds = account.scope.studentIds
+  const canonicalProgramIds = account.scope.programStudyIds
+  if (
+    canonicalStudentIds.length !== 1
+    || canonicalProgramIds.length !== 1
+    || canonicalStudentIds[0] !== input.studentId
+  ) {
+    invalidInput('studentUid dan studentId tidak cocok dengan akun mahasiswa aktif.')
+  }
+  const canonicalProgramId = canonicalProgramIds[0]!
+  if (canonicalProgramId !== classRecord.programStudyId || (input.programStudyId && input.programStudyId !== canonicalProgramId)) {
+    forbidden('Mahasiswa berada di luar program studi kelas.')
+  }
+  return {
+    ...input,
+    studentName: account.displayName,
+    programStudyId: canonicalProgramId,
+  }
+}
+
 function parseUpdateEnrollmentInput(value: unknown): UpdateClassEnrollmentInput {
   const body = requireRecord(value)
   rejectUnknown(body, ['status', 'reason', 'expectedVersion'])
@@ -1240,9 +1283,11 @@ export async function listClassEnrollments(
   classId: string,
   options: { cursor?: string; limit?: number } = {},
 ): Promise<ClassEnrollmentPage> {
-  requirePermission(context, 'enrollments:manage')
   const safeId = safeClassId(classId)
-  await loadClass(safeId)
+  const classRecord = await loadClass(safeId)
+  if (!can(context, 'enrollments:manage') && !canManageClass(context, classRecord)) {
+    forbidden('Roster kelas hanya tersedia bagi administrator atau dosen pengampu.')
+  }
   return pageClassEnrollments(safeId, options)
 }
 
@@ -1265,7 +1310,8 @@ export async function createClassEnrollment(
 ): Promise<AcademicWriteResult<ClassEnrollment>> {
   requirePermission(context, 'enrollments:manage')
   const safeId = safeClassId(classId)
-  const input = parseCreateEnrollmentInput(value)
+  const classRecordForValidation = await loadClass(safeId)
+  const input = await canonicalizeLmsEnrollmentInput(parseCreateEnrollmentInput(value), classRecordForValidation)
   const hash = requestHash({ classId: safeId, ...input })
   const namespace = `academic:enrollment-create:${context.uid}:${idempotencyKey}`
   const now = clock.toISOString()
@@ -1275,7 +1321,7 @@ export async function createClassEnrollment(
   if (dataMode() === 'mock') {
     const replay = mockReplay<ClassEnrollment>(namespace, hash)
     if (replay) return replay
-    const classRecord = await loadClass(safeId)
+    const classRecord = classRecordForValidation
     if (classRecord.status !== 'ACTIVE') conflict('ACADEMIC_CLASS_CLOSED', 'Enrolment tidak dapat ditambah pada kelas yang ditutup.')
     if ((input.programStudyId ?? classRecord.programStudyId) !== classRecord.programStudyId) forbidden('Mahasiswa berada di luar program studi kelas.')
     const existing = state.enrollments.get(enrollmentId)
@@ -1477,38 +1523,56 @@ export async function listAcademicClassesPage(context: AuthContext, query: Acade
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan kelas tidak tersedia.')
     const pageQuery = (candidate: Query) => (cursor ? candidate.startAfter(cursor.id) : candidate).limit(limit + 1)
+    const filteredClassQuery = (candidate: Query) => {
+      let filtered = candidate
+      if (query.periodId) filtered = filtered.where('periodId', '==', query.periodId)
+      if (query.programStudyId) filtered = filtered.where('programStudyId', '==', query.programStudyId)
+      return filtered
+    }
+    const filteredEnrollmentQuery = (candidate: Query) => {
+      let filtered = candidate
+      if (query.periodId) filtered = filtered.where('periodId', '==', query.periodId)
+      if (query.programStudyId) filtered = filtered.where('programStudyId', '==', query.programStudyId)
+      return filtered
+    }
     if (hasRole(context, 'student')) {
       const candidates = studentCandidates(context).slice(0, 10)
       const snapshots = await Promise.all(candidates.flatMap(candidate => [
-        pageQuery(db.collection('classEnrollments').where('studentUid', '==', candidate).where('status', '==', 'ACTIVE').orderBy('classId')).get(),
-        pageQuery(db.collection('classEnrollments').where('studentId', '==', candidate).where('status', '==', 'ACTIVE').orderBy('classId')).get(),
+        pageQuery(filteredEnrollmentQuery(db.collection('classEnrollments').where('studentUid', '==', candidate).where('status', '==', 'ACTIVE')).orderBy('classId')).get(),
+        pageQuery(filteredEnrollmentQuery(db.collection('classEnrollments').where('studentId', '==', candidate).where('status', '==', 'ACTIVE')).orderBy('classId')).get(),
       ]))
       const classIds = [...new Set(snapshots.flatMap(snapshot => snapshot.docs.map(document => String(document.data().classId))))].sort().slice(0, limit + 1)
       const classSnapshots = await Promise.all(classIds.map(id => db.collection('academicClasses').doc(id).get()))
       records = classSnapshots.filter(snapshot => snapshot.exists).map(snapshot => ({ id: snapshot.id, ...snapshot.data() }) as AcademicClassRecord)
     } else if (hasRole(context, 'lecturer', 'advisor')) {
-      const snapshot = await pageQuery(db.collection('academicClasses').where('lecturerIds', 'array-contains', context.uid).orderBy('__name__')).get()
+      const snapshot = await pageQuery(filteredClassQuery(db.collection('academicClasses').where('lecturerIds', 'array-contains', context.uid)).orderBy('__name__')).get()
       records = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as AcademicClassRecord)
     } else if (hasRole(context, 'academic_staff') && context.scope.programStudyIds.length) {
-      const snapshots = await Promise.all(context.scope.programStudyIds.slice(0, 10).map(programStudyId => pageQuery(db.collection('academicClasses').where('programStudyId', '==', programStudyId).orderBy('__name__')).get()))
+      const programIds = query.programStudyId
+        ? context.scope.programStudyIds.filter(programStudyId => programStudyId === query.programStudyId)
+        : context.scope.programStudyIds.slice(0, 10)
+      const snapshots = await Promise.all(programIds.map(programStudyId => {
+        let candidate: Query = db.collection('academicClasses').where('programStudyId', '==', programStudyId)
+        if (query.periodId) candidate = candidate.where('periodId', '==', query.periodId)
+        return pageQuery(candidate.orderBy('__name__')).get()
+      }))
       records = [...new Map(snapshots.flatMap(snapshot => snapshot.docs).map(document => [document.id, ({ id: document.id, ...document.data() }) as AcademicClassRecord])).values()].slice(0, limit + 1)
     } else if (hasRole(context, 'administrator', 'leader')) {
-      const snapshot = await pageQuery(db.collection('academicClasses').orderBy('__name__')).get()
+      const snapshot = await pageQuery(filteredClassQuery(db.collection('academicClasses')).orderBy('__name__')).get()
       records = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as AcademicClassRecord)
     } else records = []
   }
   const candidates = records
     .filter(record => !cursor || record.id > cursor.id)
+    .filter(record => !query.periodId || record.periodId === query.periodId)
+    .filter(record => !query.programStudyId || record.programStudyId === query.programStudyId)
     .sort((left, right) => left.id.localeCompare(right.id))
     .slice(0, limit + 1)
   const hasMore = candidates.length > limit
   const consumed = candidates.slice(0, limit)
   const authorized = (await Promise.all(consumed.map(async record => await canReadClass(context, record) ? record : undefined)))
     .filter((record): record is AcademicClassRecord => Boolean(record))
-  const items = authorized
-    .filter((record) => !query.periodId || record.periodId === query.periodId)
-    .filter((record) => !query.programStudyId || record.programStudyId === query.programStudyId)
-    .map(clone)
+  const items = authorized.map(clone)
   return { items, ...(hasMore && consumed.length ? { nextCursor: encodeClassCursor(consumed.at(-1)!) } : {}) }
 }
 
@@ -1523,7 +1587,7 @@ export async function getAcademicClassDetail(context: AuthContext, classId: stri
   const ownEnrollment = hasRole(context, 'student') && !canManageClass(context, record)
     ? await requireActiveStudentEnrollment(context, safeId)
     : undefined
-  const boundedRosterLimit = serverFeatureProfile() === 'lms-mvp' ? 50 : 2_000
+  const boundedRosterLimit = serverFeatureProfile() === 'lms-mvp' ? 200 : 2_000
   let roster: ClassRosterEntry[]
   let journals: TeachingJournal[]
   let attendance: AttendanceRecord[]

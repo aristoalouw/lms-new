@@ -9,6 +9,7 @@ import {
   updateClassEnrollment,
 } from '../../server/services/academic-classes'
 import { resetAcademicAdministrationStateForTests } from '../../server/services/academic-administration'
+import { resetAccountStateForTests } from '../../server/services/accounts'
 import {
   createLearningAnnouncement,
   createLearningMaterial,
@@ -42,7 +43,7 @@ describe('MVP class and canonical enrollment lifecycle', () => {
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
     process.env.APP_FEATURE_PROFILE = 'lms-mvp'
-    resetMockState(); resetAcademicAdministrationStateForTests(); resetAcademicClassStateForTests(); resetLearningMockState()
+    resetMockState(); resetAccountStateForTests(); resetAcademicAdministrationStateForTests(); resetAcademicClassStateForTests(); resetLearningMockState()
   })
 
   it('creates one same-id learning space, rejects duplicate class keys, and replays idempotently', async () => {
@@ -59,21 +60,23 @@ describe('MVP class and canonical enrollment lifecycle', () => {
     const created = await createAcademicClass(administrator(), newClass, 'mvp-class-create-0003')
     const classId = created.value.classRecord.id
     const enrollment = await createClassEnrollment(administrator(), classId, {
-      studentId: 'student-900', studentUid: 'student-900', studentNumber: '23900900', studentName: 'Mira Sari',
+      studentId: 'student-001', studentUid: 'student-001', studentNumber: '23900900', studentName: 'Nama tidak dipercaya',
       programStudyId: 'management-s1', reason: 'Override admin untuk pilot staging.', sourceRef: 'pilot-uat',
     }, 'mvp-enrollment-create-0001')
-    expect(enrollment.value).toMatchObject({ status: 'ACTIVE', source: 'ADMIN', version: 1 })
-    expect((await listClassEnrollments(administrator(), classId)).items).toEqual([expect.objectContaining({ studentId: 'student-900' })])
-    expect((await getAcademicClassDetail(student('student-900'), classId)).roster).toHaveLength(1)
+    expect(enrollment.value).toMatchObject({ status: 'ACTIVE', source: 'ADMIN', version: 1, studentName: 'Nabila Putri' })
+    expect((await listClassEnrollments(administrator(), classId)).items).toEqual([expect.objectContaining({ studentId: 'student-001' })])
+    expect((await listClassEnrollments(lecturer(), classId)).items).toEqual([expect.objectContaining({ studentId: 'student-001' })])
+    await expect(listClassEnrollments(student('student-001'), classId)).rejects.toMatchObject({ statusCode: 403 })
+    expect((await getAcademicClassDetail(student('student-001'), classId)).roster).toHaveLength(1)
 
-    const withdrawn = await updateClassEnrollment(administrator(), classId, 'student-900', {
+    const withdrawn = await updateClassEnrollment(administrator(), classId, 'student-001', {
       status: 'WITHDRAWN', reason: 'Mahasiswa membatalkan enrolment pilot.', expectedVersion: 1,
     }, 'mvp-enrollment-withdraw-0001')
     expect(withdrawn.value).toMatchObject({ status: 'WITHDRAWN', version: 2 })
-    await expect(getAcademicClassDetail(student('student-900'), classId)).rejects.toMatchObject({ statusCode: 403 })
+    await expect(getAcademicClassDetail(student('student-001'), classId)).rejects.toMatchObject({ statusCode: 403 })
     expect((await listClassEnrollments(administrator(), classId)).items[0]).toMatchObject({ status: 'WITHDRAWN', version: 2 })
 
-    const reactivated = await updateClassEnrollment(administrator(), classId, 'student-900', {
+    const reactivated = await updateClassEnrollment(administrator(), classId, 'student-001', {
       status: 'ACTIVE', reason: 'Enrolment diaktifkan kembali setelah verifikasi.', expectedVersion: 2,
     }, 'mvp-enrollment-reactivate-0001')
     expect(reactivated.value).toMatchObject({ status: 'ACTIVE', version: 3 })
@@ -83,15 +86,15 @@ describe('MVP class and canonical enrollment lifecycle', () => {
     const created = await createAcademicClass(administrator(), newClass, 'mvp-class-create-0004')
     const classId = created.value.classRecord.id
     await expect(createClassEnrollment(administrator(), classId, {
-      studentId: 'student-inf', studentUid: 'student-inf', studentNumber: '24900001', studentName: 'Lintas Prodi',
+      studentId: 'student-001', studentUid: 'student-001', studentNumber: '24900001', studentName: 'Lintas Prodi',
       programStudyId: 'informatics-s1', reason: 'Percobaan override lintas program studi.',
     }, 'mvp-enrollment-create-0002')).rejects.toMatchObject({ statusCode: 403 })
     await createClassEnrollment(administrator(), classId, {
-      studentId: 'student-901', studentUid: 'student-901', studentNumber: '23900901', studentName: 'Dian Ayu',
+      studentId: 'student-001', studentUid: 'student-001', studentNumber: '23900901', studentName: 'Dian Ayu',
       reason: 'Override admin untuk kuota terakhir.',
     }, 'mvp-enrollment-create-0003')
     await expect(createClassEnrollment(administrator(), classId, {
-      studentId: 'student-902', studentUid: 'student-902', studentNumber: '23900902', studentName: 'Bima Putra',
+      studentId: 'student-002', studentUid: 'student-002', studentNumber: '23900902', studentName: 'Bima Putra',
       reason: 'Override admin saat kelas telah penuh.',
     }, 'mvp-enrollment-create-0004')).rejects.toMatchObject({ code: 'CLASS_CAPACITY_EXCEEDED' })
     await expect(updateAcademicClass(administrator(), classId, { expectedVersion: 1, section: 'C', capacity: 2 }, 'mvp-class-update-0001'))
@@ -100,6 +103,25 @@ describe('MVP class and canonical enrollment lifecycle', () => {
       .rejects.toMatchObject({ code: 'VERSION_CONFLICT' })
     const closed = await updateAcademicClass(administrator(), classId, { expectedVersion: 2, status: 'CLOSED' }, 'mvp-class-update-0003')
     expect(closed.value).toMatchObject({ classRecord: { status: 'CLOSED' }, learningSpace: { status: 'ARCHIVED' } })
+  })
+
+  it('rejects mismatched, missing, and non-student enrollment identities', async () => {
+    const created = await createAcademicClass(administrator(), newClass, 'mvp-class-create-identity-0001')
+    const classId = created.value.classRecord.id
+    const base = {
+      studentNumber: '23900999',
+      studentName: 'Tidak dipercaya',
+      reason: 'Validasi identitas enrolment oleh administrator.',
+    }
+    await expect(createClassEnrollment(administrator(), classId, {
+      ...base, studentId: 'student-002', studentUid: 'student-001',
+    }, 'mvp-enrollment-identity-0001')).rejects.toMatchObject({ statusCode: 400 })
+    await expect(createClassEnrollment(administrator(), classId, {
+      ...base, studentId: 'missing-student', studentUid: 'missing-student',
+    }, 'mvp-enrollment-identity-0002')).rejects.toMatchObject({ statusCode: 400 })
+    await expect(createClassEnrollment(administrator(), classId, {
+      ...base, studentId: 'admin-001', studentUid: 'admin-001',
+    }, 'mvp-enrollment-identity-0003')).rejects.toMatchObject({ statusCode: 400 })
   })
 })
 

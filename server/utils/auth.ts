@@ -16,6 +16,7 @@ import {
   permissionsForLmsMvpRoles,
   permissionsForRole,
 } from '../../shared/auth'
+import { CANONICAL_SCOPE_ID_PATTERN } from '../../shared/auth/scope-identifiers'
 import { serverFeatureProfile } from './feature-profile'
 import { normalizeRoles, permissionsFor } from './rbac'
 
@@ -54,6 +55,87 @@ function stringList(value: unknown, max = 100): string[] {
 function numberList(value: unknown, max = 100): number[] {
   if (!Array.isArray(value)) return []
   return [...new Set(value.filter((item): item is number => Number.isInteger(item) && item >= 1900 && item <= 2200))].slice(0, max)
+}
+
+function invalidLmsAccountAuthorization(): never {
+  throw new CampusError(
+    403,
+    'ACCOUNT_AUTHORIZATION_INVALID',
+    'Konfigurasi role atau lingkup akun tidak valid untuk profil LMS MVP. Hubungi administrator.',
+  )
+}
+
+function strictScopeStringList(value: unknown): string[] {
+  if (
+    !Array.isArray(value)
+    || value.length > 20
+    || value.some(item => typeof item !== 'string' || !CANONICAL_SCOPE_ID_PATTERN.test(item))
+  ) {
+    invalidLmsAccountAuthorization()
+  }
+  const values = value as string[]
+  if (new Set(values).size !== values.length) invalidLmsAccountAuthorization()
+  return [...values]
+}
+
+function strictScopeCohortYears(value: unknown): number[] {
+  if (
+    !Array.isArray(value)
+    || value.length > 20
+    || value.some(item => !Number.isInteger(item) || Number(item) < 1900 || Number(item) > 2200)
+  ) {
+    invalidLmsAccountAuthorization()
+  }
+  const values = value as number[]
+  if (new Set(values).size !== values.length) invalidLmsAccountAuthorization()
+  return [...values]
+}
+
+function strictLmsAccountScope(value: unknown): AccessScope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidLmsAccountAuthorization()
+  const scope = value as Record<string, unknown>
+  const allowedKeys = new Set(['unitIds', 'programStudyIds', 'cohortYears', 'studentIds'])
+  if (Object.keys(scope).some(key => !allowedKeys.has(key))) invalidLmsAccountAuthorization()
+  return {
+    unitIds: strictScopeStringList(scope.unitIds),
+    programStudyIds: strictScopeStringList(scope.programStudyIds),
+    cohortYears: strictScopeCohortYears(scope.cohortYears),
+    studentIds: strictScopeStringList(scope.studentIds),
+  }
+}
+
+function lmsMvpFirebaseAccountScope(data: Record<string, unknown>, roles: UserRole[]): AccessScope {
+  const storedRoles = data.roles
+  const allowedRoles = new Set<UserRole>(LMS_MVP_USER_ROLES)
+  if (
+    !Array.isArray(storedRoles)
+    || storedRoles.length !== 1
+    || roles.length !== 1
+    || storedRoles[0] !== roles[0]
+    || !allowedRoles.has(roles[0]!)
+  ) {
+    invalidLmsAccountAuthorization()
+  }
+
+  const scope = strictLmsAccountScope(data.scope)
+  const role = roles[0]!
+  if (role === 'student') {
+    if (scope.unitIds.length || scope.programStudyIds.length !== 1 || scope.studentIds.length !== 1) {
+      invalidLmsAccountAuthorization()
+    }
+  } else if (role === 'lecturer') {
+    if (scope.unitIds.length || scope.cohortYears.length || scope.studentIds.length) {
+      invalidLmsAccountAuthorization()
+    }
+  } else if (
+    scope.unitIds.length
+    || scope.programStudyIds.length
+    || scope.cohortYears.length
+    || scope.studentIds.length
+  ) {
+    invalidLmsAccountAuthorization()
+  }
+  return scope
 }
 
 export function normalizeScope(value: unknown): AccessScope {
@@ -217,12 +299,15 @@ async function firebaseSessionAccount(uid: string): Promise<FirebaseSessionAccou
   const roles = normalizeRoles(data.roles)
   const version = Number(data.version)
   if (!roles.length || !Number.isInteger(version) || version < 1) return null
+  const scope = serverFeatureProfile() === 'lms-mvp'
+    ? lmsMvpFirebaseAccountScope(data, roles)
+    : normalizeScope(data.scope)
   return {
     uid,
     email: typeof data.email === 'string' ? data.email.slice(0, 254) : undefined,
     displayName: typeof data.displayName === 'string' ? data.displayName.slice(0, 150) : 'Pengguna Kampus',
     roles,
-    scope: normalizeScope(data.scope),
+    scope,
     version,
     sessionValidAfter: Number.isFinite(Number(data.sessionValidAfter)) ? Number(data.sessionValidAfter) : 0,
   }

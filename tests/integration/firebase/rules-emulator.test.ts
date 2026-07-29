@@ -29,8 +29,8 @@ suite('Firebase Rules Emulator — profil LMS MVP', () => {
   beforeAll(async () => {
     environment = await initializeTestEnvironment({
       projectId: 'demo-lms-mvp',
-      firestore: { rules: readFileSync(resolve(process.cwd(), 'firebase/firestore.rules'), 'utf8') },
-      storage: { rules: readFileSync(resolve(process.cwd(), 'firebase/storage.rules'), 'utf8') },
+      firestore: { rules: readFileSync(resolve(process.cwd(), 'firebase/firestore.lms-mvp.rules'), 'utf8') },
+      storage: { rules: readFileSync(resolve(process.cwd(), 'firebase/storage.lms-mvp.rules'), 'utf8') },
     })
   })
 
@@ -66,6 +66,11 @@ suite('Firebase Rules Emulator — profil LMS MVP', () => {
       await context.firestore().doc('learningSpaces/class-b').set({ programStudyId: 'engineering-s1', status: 'ACTIVE' })
       await context.firestore().doc('learningMaterials/material-b').set({ spaceId: 'class-b', status: 'PUBLISHED' })
       await context.firestore().doc('classEnrollments/class-b_student-002').set({ classId: 'class-b', studentId: 'student-002', studentUid: 'student-002', status: 'ACTIVE' })
+      await context.firestore().doc('students/student-001').set({ studentUid: 'student-001', programStudyId: 'management-s1' })
+      await context.firestore().doc('krs/krs-001').set({ studentUid: 'student-001', programStudyId: 'management-s1' })
+      await context.firestore().doc('invoices/invoice-001').set({ studentUid: 'student-001', programStudyId: 'management-s1' })
+      await context.firestore().doc('payments/payment-001').set({ studentUid: 'student-001', programStudyId: 'management-s1' })
+      await context.firestore().doc('publicContent/news-001').set({ status: 'PUBLISHED' })
     })
   })
 
@@ -83,6 +88,15 @@ suite('Firebase Rules Emulator — profil LMS MVP', () => {
     await assertFails(db.doc('learningMaterials/material-a').get())
     await assertFails(db.doc('classEnrollments/class-a_student-001').get())
     await assertFails(db.doc('learningSubmissions/submission-a').set({ studentUid: `${role}-001` }))
+  })
+
+  it.each(['student', 'lecturer', 'administrator'] as const)('menolak seluruh koleksi non-MVP untuk role %s', async role => {
+    const db = environment.authenticatedContext(`${role}-001`, claims(role)).firestore()
+    await assertFails(db.doc('students/student-001').get())
+    await assertFails(db.doc('krs/krs-001').get())
+    await assertFails(db.doc('invoices/invoice-001').get())
+    await assertFails(db.doc('payments/payment-001').get())
+    await assertFails(db.doc('publicContent/news-001').get())
   })
 
   it('mengizinkan pemilik non-admin memperbarui empat field profil yang valid', async () => {
@@ -136,7 +150,7 @@ suite('Firebase Rules Emulator — profil LMS MVP', () => {
 
   it('menolak create, update, dan delete profil langsung oleh administrator', async () => {
     const admin = environment.authenticatedContext('admin-001', claims('administrator')).firestore()
-    await assertSucceeds(admin.doc('users/student-001').get())
+    await assertFails(admin.doc('users/student-001').get())
     await assertFails(admin.doc('users/admin-created').set({
       displayName: 'Admin Created',
       phone: '',
@@ -174,6 +188,8 @@ suite('Firebase Rules Emulator — profil LMS MVP', () => {
       const storage = environment.authenticatedContext(`${role}-001`, claims(role)).storage()
       await assertFails(asPromise(storage.ref('private/class-a/file.pdf').putString('private')))
       await assertFails(storage.ref('private/class-a/file.pdf').getDownloadURL())
+      await assertFails(asPromise(storage.ref('student-documents/student-001/file.pdf').putString('private')))
+      await assertFails(asPromise(storage.ref('admissions/public/file.pdf').putString('private')))
     }
   })
 })

@@ -117,8 +117,6 @@ export const MVP_ALLOWED_API_ROUTES = [
   'GET /api/auth/session',
   'POST /api/auth/session',
   'POST /api/auth/session/revoke',
-  'GET /api/dashboard/export',
-  'GET /api/dashboard/summary',
   'GET /api/files',
   'DELETE /api/files/:id',
   'GET /api/files/:id',
@@ -167,6 +165,8 @@ export const MVP_ALLOWED_API_ROUTES = [
 ] as const
 
 export const MVP_DENIED_API_ROUTES = [
+  'GET /api/dashboard/export',
+  'GET /api/dashboard/summary',
   'PUT /api/academic/classes/:id/grade-components',
   'PUT /api/academic/classes/:id/grades/:studentId',
   'POST /api/academic/classes/:id/grades/publish',

@@ -35,8 +35,10 @@ vi.mock('../../server/utils/firebase-admin', () => ({
 import {
   authenticate,
   createFirebaseSession,
+  publicSession,
   verifyFirebaseAppSessionToken,
 } from '../../server/utils/auth'
+import { LMS_MVP_ROLE_PERMISSIONS, type LmsMvpUserRole } from '../../shared/auth'
 
 function requestWithCookie(token: string): H3Event {
   return {
@@ -151,5 +153,46 @@ describe('Firebase application sessions', () => {
       statusCode: 503,
       code: 'AUTH_UNAVAILABLE',
     })
+  })
+
+  it('fails before the browser timeout when Firebase token verification stalls', async () => {
+    firebase.verifyIdToken.mockImplementationOnce(() => new Promise(() => {}))
+    const pending = createFirebaseSession('stalled-firebase-id-token')
+    const rejection = expect(pending).rejects.toMatchObject({
+      statusCode: 503,
+      code: 'AUTH_TIMEOUT',
+    })
+
+    await vi.advanceTimersByTimeAsync(10_001)
+    await rejection
+  })
+
+  it('publishes only the LMS permission contract for each production role', async () => {
+    for (const role of ['student', 'lecturer', 'administrator'] satisfies LmsMvpUserRole[]) {
+      firebase.state.account = {
+        ...firebase.state.account,
+        roles: [role],
+        scope: role === 'student'
+          ? { unitIds: [], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: ['student-001'] }
+          : role === 'lecturer'
+            ? { unitIds: [], programStudyIds: ['management-s1'], cohortYears: [], studentIds: [] }
+            : { unitIds: [], programStudyIds: [], cohortYears: [], studentIds: [] },
+      }
+      const created = await createFirebaseSession(`fresh-${role}-id-token`)
+      const session = publicSession(created.context)
+
+      expect(session.roles).toEqual([role])
+      expect(session.permissions).toEqual(LMS_MVP_ROLE_PERMISSIONS[role])
+      expect(session.rolePermissions[role]).toEqual(LMS_MVP_ROLE_PERMISSIONS[role])
+    }
+
+    const administrator = publicSession((await createFirebaseSession('fresh-administrator-check')).context)
+    expect(administrator.permissions).not.toEqual(expect.arrayContaining([
+      'learning:submit',
+      'learning:grade',
+      'payments:record',
+      'pmb.write',
+      'finance.write',
+    ]))
   })
 })

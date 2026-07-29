@@ -1,6 +1,6 @@
 # LMS MVP implementation baseline
 
-Last reviewed: 2026-07-27
+Last reviewed: 2026-07-29
 
 ## Baseline
 
@@ -10,6 +10,9 @@ Last reviewed: 2026-07-27
 - Firebase project `sttsp-lms-staging` is configured. Firestore and Authentication are available; Cloud Storage requires a billing upgrade and is not enabled.
 - Production deployment is a Hostinger Business managed Node.js Web App. Docker/Nginx remains a portable reference and CI smoke target, not a Hostinger runtime requirement.
 - The source tree is free of AI/ML dependencies and endpoints. `npm run check:no-ai` is the enforced guard.
+- The browser receives the profile-specific `LMS_MVP_ROLE_PERMISSIONS` contract.
+  Legacy campus permissions are not exposed in LMS sessions, and institutional
+  dashboard APIs are explicitly denied in the LMS profile.
 
 ## Coordinated backlog
 

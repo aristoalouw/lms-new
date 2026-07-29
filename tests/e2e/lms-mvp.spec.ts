@@ -46,6 +46,8 @@ async function expectPageQuality(page: Page) {
 
 test('anonymous API ditolak dan modul non-MVP menjadi 404', async ({ request }) => {
   expect((await request.get('/api/learning/spaces')).status()).toBe(401)
+  expect((await request.get('/api/dashboard/summary')).status()).toBe(404)
+  expect((await request.get('/api/dashboard/export')).status()).toBe(404)
   expect((await request.get('/api/billing/invoices')).status()).toBe(404)
   expect((await request.get('/keuangan')).status()).toBe(404)
   expect((await request.post('/api/learning/spaces', { data: {} })).status()).toBe(404)
@@ -104,6 +106,30 @@ test('administrator mengelola kelas tetapi tidak dapat membuat konten LMS', asyn
   expect(response.status()).toBe(403)
 })
 
+test('administrator menambah mahasiswa dari UI tanpa scope unit lama', async ({ page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', error => pageErrors.push(error.message))
+  const runId = Date.now().toString(36)
+  await loginAs(page, 'admin')
+  await page.goto('/admin/pengguna')
+  await page.getByRole('button', { name: 'Hanya esensial' }).click()
+  const addUser = page.getByRole('button', { name: 'Tambah pengguna' })
+  await expect(addUser).toBeVisible()
+  await page.waitForTimeout(500)
+  await addUser.click()
+  await expect(page.getByRole('heading', { name: 'Tambah pengguna' })).toBeVisible()
+  await page.getByLabel('Nama lengkap').fill(`Mahasiswa UI ${runId}`)
+  await page.getByLabel('Email institusi / pribadi').fill(`student.ui.${runId}@example.test`)
+  await page.getByLabel('Program studi (wajib)').selectOption('management-s1')
+  await page.getByLabel('NIM / ID mahasiswa unik (wajib)').fill(`UI${runId.toUpperCase()}`)
+  await page.getByLabel('Angkatan (opsional)').fill('2026')
+  await page.getByRole('button', { name: 'Simpan akun' }).click()
+
+  await expect(page.getByRole('status')).toContainText(`Akun Mahasiswa UI ${runId} berhasil dibuat.`)
+  await expect(page.getByText('scope.unitIds', { exact: false })).toHaveCount(0)
+  expect(pageErrors).toEqual([])
+})
+
 test('journey primer LMS selesai dari pembuatan akun hingga nilai terbit', async ({ page }) => {
   test.setTimeout(180_000)
   const pageErrors: string[] = []
@@ -124,7 +150,7 @@ test('journey primer LMS selesai dari pembuatan akun hingga nilai terbit', async
       displayName: `Mahasiswa E2E ${runId}`,
       roles: ['student'],
       scope: {
-        unitIds: ['faculty-economics'],
+        unitIds: [],
         programStudyIds: ['management-s1'],
         cohortYears: [2026],
         studentIds: [`student-${runId}`],
@@ -140,7 +166,7 @@ test('journey primer LMS selesai dari pembuatan akun hingga nilai terbit', async
       displayName: `Dosen E2E ${runId}`,
       roles: ['lecturer'],
       scope: {
-        unitIds: ['faculty-economics'],
+        unitIds: [],
         programStudyIds: ['management-s1'],
         cohortYears: [],
         studentIds: [],
@@ -289,11 +315,33 @@ test('journey primer LMS selesai dari pembuatan akun hingga nilai terbit', async
   }>(await page.request.get(`/api/learning/assignments/${assignmentId}/attempts`))
   expect(ownHistory.attempts).toEqual([expect.objectContaining({ attemptNumber: 1 })])
   const attemptId = ownHistory.attempts[0]!.id
+  const studentGradeAttempt = await page.request.put(`/api/learning/attempts/${attemptId}/grade`, {
+    headers: { Origin: APP_ORIGIN },
+    data: {
+      expectedVersion: 0,
+      score: 100,
+      feedback: { format: 'PLAIN_TEXT', text: 'Mahasiswa tidak boleh menilai submission.' },
+      status: 'PUBLISHED',
+    },
+  })
+  expect(studentGradeAttempt.status()).toBe(403)
 
   await page.goto(`/presensi#${challenge.value.challengeToken}`)
   await expect(page.getByRole('heading', { name: 'Presensi berhasil dicatat' })).toBeVisible()
   expect(new URL(page.url()).hash).toBe('')
   expect(await page.evaluate(() => sessionStorage.getItem('lms-attendance-challenge'))).toBeNull()
+
+  await loginAs(page, 'admin')
+  const administratorGradeAttempt = await page.request.put(`/api/learning/attempts/${attemptId}/grade`, {
+    headers: { Origin: APP_ORIGIN },
+    data: {
+      expectedVersion: 0,
+      score: 100,
+      feedback: { format: 'PLAIN_TEXT', text: 'Administrator tidak boleh menilai submission.' },
+      status: 'PUBLISHED',
+    },
+  })
+  expect(administratorGradeAttempt.status()).toBe(403)
 
   await loginAs(page, 'advisor')
   await page.setViewportSize({ width: 768, height: 1024 })

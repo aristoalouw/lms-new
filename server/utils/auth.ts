@@ -10,7 +10,12 @@ import { DEMO_PROFILES } from '../data/mock-data'
 import type { AccessScope, AuthContext, PublicSession, UserRole } from '../types/auth'
 import { CampusError, forbidden, serviceUnavailable } from './errors'
 import { authAdmin, firestoreAdmin } from './firebase-admin'
-import { LMS_MVP_USER_ROLES, permissionsForRole } from '../../shared/auth'
+import {
+  LMS_MVP_USER_ROLES,
+  permissionsForLmsMvpRole,
+  permissionsForLmsMvpRoles,
+  permissionsForRole,
+} from '../../shared/auth'
 import { serverFeatureProfile } from './feature-profile'
 import { normalizeRoles, permissionsFor } from './rbac'
 
@@ -356,6 +361,7 @@ export function clearSessionCookie(event: H3Event): void {
 
 export function publicSession(context: AuthContext): PublicSession {
   const roles = [...contextForFeatureProfile(context).roles]
+  const lmsMvp = serverFeatureProfile() === 'lms-mvp'
   return {
     uid: context.uid,
     email: context.email,
@@ -364,8 +370,11 @@ export function publicSession(context: AuthContext): PublicSession {
     scope: structuredClone(context.scope),
     provider: context.provider,
     expiresAt: new Date(context.expiresAt).toISOString(),
-    permissions: permissionsFor(roles),
-    rolePermissions: Object.fromEntries(roles.map(role => [role, permissionsForRole(role)])),
+    permissions: lmsMvp ? permissionsForLmsMvpRoles(roles) : permissionsFor(roles),
+    rolePermissions: Object.fromEntries(roles.map(role => [
+      role,
+      lmsMvp ? permissionsForLmsMvpRole(role) : permissionsForRole(role),
+    ])),
   }
 }
 

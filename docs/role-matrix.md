@@ -1,5 +1,37 @@
 # Matriks role dan akses
 
+## Kontrak khusus profil LMS MVP
+
+Saat `APP_FEATURE_PROFILE=lms-mvp`, kontrak di bawah ini menggantikan matriks
+platform kampus yang lebih luas:
+
+- Hanya role `student`, `lecturer`, dan `administrator` yang dapat membuat sesi.
+- Setiap akun memiliki tepat satu role. Permission yang dikirim ke browser berasal
+  dari `LMS_MVP_ROLE_PERMISSIONS`, bukan union permission platform penuh.
+- Mahasiswa memiliki satu `programStudyId` dan satu `studentId`; `unitIds` kosong.
+  Hak membaca kelas selalu berasal dari enrolment `ACTIVE`, bukan dari scope program.
+- Dosen dapat memiliki scope program opsional, tetapi pengelolaan materi, tugas,
+  forum, nilai, dan presensi selalu mensyaratkan assignment dosen pada kelas.
+- Administrator mengelola akun, master akademik LMS, kelas, enrolment, audit,
+  status sistem, file, dan operasi notifikasi. Administrator boleh membaca ruang
+  untuk dukungan, tetapi tidak boleh submit, menulis konten, berpartisipasi dalam
+  forum, melakukan check-in, memoderasi, atau menilai.
+- Dashboard institusi, PMB, KRS, keuangan, PDDIKTI, nilai akademik lama, dan modul
+  non-MVP ditolak 404 pada page dan API gate walaupun permission platform lama
+  masih dipertahankan untuk profil `full-campus`.
+
+| Aksi LMS MVP | Mahasiswa | Dosen pengampu | Administrator |
+|---|---:|---:|---:|
+| Membaca kelas/materi terbit | enrolment aktif | assignment kelas | dukungan baca |
+| Menyimpan draf/mengirim attempt | milik sendiri | — | — |
+| Membuat materi/tugas/pengumuman | — | kelas sendiri | — |
+| Forum | peserta/penulis sendiri | peserta + moderator kelas | — |
+| Menilai dan menerbitkan feedback | — | kelas sendiri | — |
+| Check-in QR | enrolment aktif | — | — |
+| Issue/koreksi presensi | — | kelas sendiri | — |
+| Akun, kelas, dan enrolment | — | — | kelola |
+| Audit dan status sistem | — | — | baca/operasional |
+
 ## Prinsip keputusan akses
 
 Role adalah pemberi permission awal, bukan akses global. Setiap request sensitif harus memenuhi permission dan scope (`unitIds`, `programStudyIds`, `cohortYears`, `studentIds`) atau ownership. UI boleh memakai matriks untuk navigasi, tetapi API dan Firebase Security Rules adalah enforcement point.

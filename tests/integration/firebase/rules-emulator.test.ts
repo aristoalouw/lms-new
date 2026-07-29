@@ -15,7 +15,12 @@ let environment: RulesTestEnvironment
 
 const claims = (role: 'student' | 'lecturer' | 'administrator', programStudyIds = ['management-s1']) => ({
   roles: [role],
-  scope: { unitIds: ['faculty-economics'], programStudyIds, studentIds: role === 'student' ? ['student-001'] : [] },
+  scope: {
+    unitIds: [],
+    programStudyIds,
+    cohortYears: role === 'student' ? [2026] : [],
+    studentIds: role === 'student' ? ['student-001'] : [],
+  },
 })
 
 const asPromise = <T>(thenable: PromiseLike<T>): Promise<T> => new Promise((resolve, reject) => thenable.then(resolve, reject))

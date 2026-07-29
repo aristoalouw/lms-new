@@ -80,7 +80,36 @@ export interface AccessScope {
   studentIds: string[]
 }
 
+export type LmsMvpUserRole = (typeof LMS_MVP_USER_ROLES)[number]
+
 const dashboard = ['dashboard:view', 'dashboard.read'] as const
+
+export const LMS_MVP_ROLE_PERMISSIONS: Readonly<Record<LmsMvpUserRole, readonly Permission[]>> = {
+  student: [
+    ...dashboard,
+    'learning.read', 'learning:read', 'learning:submit',
+    'learning:participate_forum', 'learning:check_in',
+    'file.read', 'files:read', 'files:write',
+    'notification.read', 'notifications:read',
+  ],
+  lecturer: [
+    ...dashboard,
+    'learning.read', 'learning.write', 'learning:read',
+    'learning:manage_content', 'learning:manage_assignments', 'learning:grade',
+    'learning:manage_announcements', 'learning:participate_forum',
+    'learning:moderate_forum', 'learning:manage_attendance',
+    'file.read', 'files:read', 'files:write',
+    'notification.read', 'notifications:read',
+  ],
+  administrator: [
+    ...dashboard,
+    'accounts:manage', 'classes:manage', 'enrollments:manage',
+    'system:view_status', 'learning:read',
+    'file.read', 'files:read', 'files:write',
+    'notification.read', 'notifications:read', 'notifications:manage',
+    'audit.read', 'audit:view',
+  ],
+}
 
 export const ROLE_PERMISSIONS: Readonly<Record<UserRole, readonly Permission[]>> = {
   applicant: [...dashboard, 'pmb.read', 'finance.read', 'file.read', 'notification.read'],
@@ -167,4 +196,14 @@ export function permissionsForRole(role: UserRole): Permission[] {
 
 export function permissionsForRoles(roles: readonly UserRole[]): Permission[] {
   return [...new Set(roles.flatMap(role => ROLE_PERMISSIONS[role]))]
+}
+
+export function permissionsForLmsMvpRole(role: UserRole): Permission[] {
+  return LMS_MVP_USER_ROLES.includes(role as LmsMvpUserRole)
+    ? [...LMS_MVP_ROLE_PERMISSIONS[role as LmsMvpUserRole]]
+    : []
+}
+
+export function permissionsForLmsMvpRoles(roles: readonly UserRole[]): Permission[] {
+  return [...new Set(roles.flatMap(permissionsForLmsMvpRole))]
 }

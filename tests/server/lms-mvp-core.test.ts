@@ -28,6 +28,7 @@ import { authContext } from './fixtures'
 
 const administrator = () => authContext('admin-001', ['administrator'], [])
 const lecturer = () => authContext('advisor-001', ['lecturer'], ['management-s1'])
+const unassignedLecturer = () => authContext('lecturer-002', ['lecturer'], ['management-s1'])
 const student = (id = 'student-001', program = 'management-s1') => {
   const context = authContext(id, ['student'], [program])
   context.scope.studentIds = [id]
@@ -132,10 +133,16 @@ describe('MVP learning authorization and archive transitions', () => {
     resetMockState(); resetAcademicClassStateForTests(); resetLearningMockState()
   })
 
-  it('prevents administrators from authoring content or grading', async () => {
+  it('prevents administrators from submitting, authoring, or grading', async () => {
     await expect(createLearningModule(administrator(), {
       spaceId: 'class-mgt-401-a', title: 'Admin module', order: 2, status: 'DRAFT',
     }, 'mvp-admin-module-0001')).rejects.toMatchObject({ statusCode: 403 })
+
+    await expect(saveLearningSubmissionDraft(administrator(), {
+      assignmentId: 'learning-assignment-case-analysis', expectedVersion: 0,
+      content: { format: 'PLAIN_TEXT', text: 'Admin tidak boleh mengirim tugas.' }, fileIds: [],
+    }, 'mvp-admin-draft-0001', undefined, Date.parse('2026-07-22T03:00:00.000Z')))
+      .rejects.toMatchObject({ statusCode: 403 })
 
     const draft = await saveLearningSubmissionDraft(student(), {
       assignmentId: 'learning-assignment-case-analysis', expectedVersion: 0,
@@ -147,6 +154,25 @@ describe('MVP learning authorization and archive transitions', () => {
     await expect(gradeLearningSubmission(administrator(), {
       attemptId: final.attempt.id, expectedVersion: 0, score: 100,
       feedback: { format: 'PLAIN_TEXT', text: 'Admin tidak boleh menilai.' }, status: 'PUBLISHED',
+    })).rejects.toMatchObject({ statusCode: 403 })
+  })
+
+  it('prevents unassigned lecturers from managing or grading another class', async () => {
+    await expect(createLearningModule(unassignedLecturer(), {
+      spaceId: 'class-mgt-401-a', title: 'Modul dosen lain', order: 2, status: 'DRAFT',
+    }, 'mvp-unassigned-module-0001')).rejects.toMatchObject({ statusCode: 403 })
+
+    const draft = await saveLearningSubmissionDraft(student(), {
+      assignmentId: 'learning-assignment-case-analysis', expectedVersion: 0,
+      content: { format: 'PLAIN_TEXT', text: 'Jawaban untuk uji dosen lintas kelas.' }, fileIds: [],
+    }, 'mvp-student-draft-0002', undefined, Date.parse('2026-07-22T03:00:00.000Z'))
+    const final = await finalizeLearningSubmission(student(), {
+      assignmentId: 'learning-assignment-case-analysis', expectedVersion: draft.submission.version,
+    }, 'mvp-student-final-0002', undefined, Date.parse('2026-07-22T03:00:00.000Z'))
+
+    await expect(gradeLearningSubmission(unassignedLecturer(), {
+      attemptId: final.attempt.id, expectedVersion: 0, score: 100,
+      feedback: { format: 'PLAIN_TEXT', text: 'Dosen lain tidak boleh menilai.' }, status: 'PUBLISHED',
     })).rejects.toMatchObject({ statusCode: 403 })
   })
 

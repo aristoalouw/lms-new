@@ -82,7 +82,8 @@ test('konten penuh, review jawaban dosen, dan mode baca-saja admin konsisten', a
   await expect(page.getByRole('status')).toContainText('Draf tersimpan')
   page.once('dialog', dialog => dialog.accept())
   await page.getByRole('button', { name: 'Kirim final' }).click()
-  await expect(page.getByRole('status')).toContainText('Attempt final berhasil dikirim')
+  await expect(page.locator('.alert.alert-success[role="status"]'))
+    .toContainText('Attempt final berhasil dikirim')
 
   await loginAs(page, 'advisor')
   await page.goto(`/pembelajaran/${SPACE_ID}/tugas/${assignment.assignment.id}`)

@@ -122,6 +122,66 @@ test('administrator mengelola kelas tetapi tidak dapat membuat konten LMS', asyn
   expect(response.status()).toBe(403)
 })
 
+test('endpoint sensitif menolak role yang tidak berwenang', async ({ page }) => {
+  const mutationHeaders = (purpose: string) => ({
+    Origin: APP_ORIGIN,
+    'Idempotency-Key': `e2e-negative-${purpose}-${Date.now()}`,
+  })
+
+  await loginAs(page, 'student')
+  expect((await page.request.get('/api/accounts')).status()).toBe(403)
+  expect((await page.request.get('/api/academic/classes/class-mgt-401-a/enrollments')).status()).toBe(403)
+  expect((await page.request.post('/api/academic/classes/class-mgt-401-a/attendance/challenges', {
+    headers: mutationHeaders('student-attendance-issue'),
+    data: { meetingNumber: 1, ttlSeconds: 120 },
+  })).status()).toBe(403)
+  expect((await page.request.post('/api/learning/spaces/class-mgt-401-a/modules', {
+    headers: mutationHeaders('student-module'),
+    data: {},
+  })).status()).toBe(403)
+  expect((await page.request.post('/api/learning/forum/posts/unknown-post/moderate', {
+    headers: mutationHeaders('student-moderate'),
+    data: {},
+  })).status()).toBe(403)
+
+  await loginAs(page, 'advisor')
+  expect((await page.request.get('/api/accounts')).status()).toBe(403)
+  expect((await page.request.post('/api/academic/classes/class-mgt-401-a/enrollments', {
+    headers: mutationHeaders('lecturer-enrollment'),
+    data: {
+      studentId: 'student-002',
+      studentUid: 'student-002',
+      studentNumber: '23011002',
+      studentName: 'Bima Pratama',
+      programStudyId: 'management-s1',
+      reason: 'Dosen tidak boleh membuat enrolment.',
+      sourceRef: 'negative-role-test',
+    },
+  })).status()).toBe(403)
+  expect((await page.request.post('/api/learning/spaces/class-mgt-401-a/modules', {
+    headers: mutationHeaders('lecturer-valid-role'),
+    data: {},
+  })).status()).toBe(400)
+
+  await loginAs(page, 'admin')
+  expect((await page.request.post('/api/learning/assignments/learning-assignment-case-analysis/submit', {
+    headers: mutationHeaders('admin-submit'),
+    data: { expectedVersion: 0 },
+  })).status()).toBe(403)
+  expect((await page.request.put('/api/learning/attempts/unknown-attempt/grade', {
+    headers: mutationHeaders('admin-grade'),
+    data: {},
+  })).status()).toBe(403)
+  expect((await page.request.post('/api/learning/spaces/class-mgt-401-a/forum/threads', {
+    headers: mutationHeaders('admin-forum'),
+    data: {},
+  })).status()).toBe(403)
+  expect((await page.request.post('/api/academic/classes/class-mgt-401-a/attendance/challenges', {
+    headers: mutationHeaders('admin-attendance-issue'),
+    data: { meetingNumber: 1, ttlSeconds: 120 },
+  })).status()).toBe(403)
+})
+
 test('administrator menambah mahasiswa dari UI tanpa scope unit lama', async ({ page }) => {
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))

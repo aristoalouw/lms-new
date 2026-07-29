@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { relative, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -13,6 +13,7 @@ interface ApiFile {
   file: string
   key: string
   path: string
+  source: string
 }
 
 const apiRoot = resolve(process.cwd(), 'server/api')
@@ -30,6 +31,7 @@ function apiFiles(directory = apiRoot): ApiFile[] {
       file,
       key: `${match[1]!.toUpperCase()} ${template}`,
       path: template.replace(/:[^/]+/g, 'inventory-id'),
+      source: readFileSync(absolute, 'utf8'),
     }]
   })
 }
@@ -57,6 +59,27 @@ describe('LMS MVP API registry inventory', () => {
       expect(feature, key).toBeDefined()
       expect(isFeatureEnabled('lms-mvp', feature!), key).toBe(true)
     }
+  })
+
+  it('maps every declared policy to a real API route handler', () => {
+    const handlers = new Set(apiFiles().map(({ key }) => key))
+    const missingHandlers = [...MVP_ALLOWED_API_ROUTES, ...MVP_DENIED_API_ROUTES]
+      .filter(key => !handlers.has(key))
+    expect(missingHandlers).toEqual([])
+  })
+
+  it('authenticates private MVP mutations before parsing their request body', () => {
+    const allowed = new Set<string>(MVP_ALLOWED_API_ROUTES)
+    const violations = apiFiles()
+      .filter(({ key, source }) => allowed.has(key) && source.includes('await readBody(event)'))
+      .filter(({ path }) => !path.startsWith('/api/auth/') && !path.startsWith('/api/internal/'))
+      .filter(({ source }) => {
+        const authIndex = source.indexOf('await requireAuth(event)')
+        const bodyIndex = source.indexOf('await readBody(event)')
+        return authIndex < 0 || authIndex > bodyIndex
+      })
+      .map(({ file, key }) => `${file} -> ${key}`)
+    expect(violations).toEqual([])
   })
 
   it('evaluates every declared allow and deny decision as written', () => {

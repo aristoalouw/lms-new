@@ -2,12 +2,16 @@ import { getRouterParam, readBody } from 'h3'
 import { createLearningForumPost } from '../../../../../modules/learning'
 import type { SafeRichContent } from '../../../../../types/learning'
 import { requireAuth } from '../../../../../utils/auth'
+import { requirePermission } from '../../../../../utils/rbac'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse, requireIdempotencyKey } from '../../../../../utils/security'
 import { optionalString, requireRecord, requireString } from '../../../../../utils/validation'
 
 export default defineCampusHandler(async event => {
-  markPrivateResponse(event); enforceCsrf(event); const body = requireRecord(await readBody(event))
-  return createLearningForumPost(await requireAuth(event), {
+  markPrivateResponse(event); enforceCsrf(event)
+  const context = await requireAuth(event)
+  requirePermission(context, 'learning:participate_forum')
+  const body = requireRecord(await readBody(event))
+  return createLearningForumPost(context, {
     threadId: requireString(getRouterParam(event, 'id'), 'id', { max: 128 }), parentPostId: optionalString(body.parentPostId, 'parentPostId', 128), body: body.body as SafeRichContent,
   }, requireIdempotencyKey(event), event)
 })

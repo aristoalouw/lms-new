@@ -56,7 +56,7 @@ Clear the clipboard after saving the value in hPanel. Never put the base64 strin
 
 The validator enforces the Hostinger-specific contract:
 
-- `DEPLOYMENT_TARGET=hostinger`, production mode, immutable release ID, LMS profile, and demo/mock disabled;
+- `DEPLOYMENT_TARGET=hostinger`, production mode, immutable release ID, approved `full-campus` profile, and demo/mock disabled;
 - `FIREBASE_USE_APPLICATION_DEFAULT=false` with exactly one `FIREBASE_SERVICE_ACCOUNT_BASE64`;
 - explicit capability switches for uploads, email delivery, and Sentry;
 - no Docker image, TLS file, ADC file, or Google credential path requirement;
@@ -64,18 +64,21 @@ The validator enforces the Hostinger-specific contract:
 
 Pada target Hostinger, Firebase Admin menggunakan transport Firestore REST
 (`preferRest`) agar read, write, dan transaction tidak bergantung pada koneksi
-gRPC/HTTP2 yang dapat tertahan oleh runtime managed hosting. Endpoint sesi juga
-memiliki timeout upstream terbatas; jangan menggantinya dengan timeout browser
-yang lebih panjang.
+gRPC/HTTP2 yang dapat tertahan oleh runtime managed hosting. Endpoint sesi
+memiliki timeout upstream terbatas; browser memberi ruang untuk cold start
+Hostinger tetapi tetap menampilkan kegagalan yang jelas bila batas itu lewat.
 
 For an initial Firebase Spark pilot, set `FILE_UPLOADS_ENABLED=false`,
 `EMAIL_DELIVERY_ENABLED=false`, and `SENTRY_ENABLED=false`. Keep the related
-bucket, ClamAV, email gateway, and Sentry values blank. The LMS then runs with
-Firebase Auth, Firestore, text/link materials, text-only submissions, in-app
-notifications, discussions, grades, and QR attendance. Uploads and password
-reset through the application email gateway remain disabled; account recovery
-uses Firebase Authentication's native reset email at no extra service cost.
-Do not use placeholder bucket names or credentials.
+bucket, ClamAV, email gateway, and Sentry values blank. The full-campus
+application remains available with Firebase Auth and Firestore; capabilities
+that require Storage, email delivery, payment gateway, or the institution's
+PDDIKTI adapter must report themselves as unconfigured and must not fabricate
+successful data. Account recovery uses Firebase Authentication's native reset
+email at no extra service cost. Do not use placeholder bucket names or
+credentials. The production validator accepts blank payment, tracer, and
+PDDIKTI integration values for this pilot, but validates the complete bundle as
+soon as any payment or PDDIKTI integration value is supplied.
 
 Spark does not include Firestore TTL deletion. Prepare and deploy the
 Spark-safe index contract, which preserves every composite index and indexing
@@ -130,7 +133,7 @@ Production deployment requires explicit approval. First deploy a staging domain 
 2. Import the staging environment variables.
 3. Review the build log. It must show a successful Nuxt build and must not contain environment values.
 4. Confirm `GET /api/health` returns `200` and `GET /api/ready` returns `200`.
-5. Confirm an anonymous private API returns `401`, a disabled non-MVP API returns `404`, and login/session flows use Secure, HttpOnly, SameSite cookies.
+5. Confirm an anonymous private API returns `401`, each role receives only its scoped modules, and login/session flows use Secure, HttpOnly, SameSite cookies.
 6. Run the HTTPS smoke suite from an operator workstation:
 
 ```powershell

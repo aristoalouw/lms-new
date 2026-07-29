@@ -98,12 +98,23 @@ export const useAuth = () => {
       if (!firebaseAuth) throw new Error('Layanan autentikasi belum dikonfigurasi.')
       const credential = await signInWithEmailAndPassword(firebaseAuth, email, password)
       const idToken = await credential.user.getIdToken()
-      const { data } = await $api.post<{ session: ServerSession }>('/auth/session', { idToken })
+      const { data } = await $api.post<{ session: ServerSession }>('/auth/session', { idToken }, {
+        timeout: 45_000,
+      })
       user.value = userFromSession(data.session)
       restored.value = true
       return user.value
     } catch (error) {
-      authError.value = error instanceof Error ? error.message : 'Login gagal. Periksa kembali akun Anda.'
+      const failure = error as {
+        code?: string
+        message?: string
+        response?: { data?: { statusMessage?: string; message?: string } }
+      }
+      authError.value = failure.response?.data?.statusMessage
+        || failure.response?.data?.message
+        || (failure.code === 'ECONNABORTED'
+          ? 'Server membutuhkan waktu terlalu lama untuk membuat sesi. Silakan coba lagi.'
+          : failure.message || 'Login gagal. Periksa kembali akun Anda.')
       throw error
     } finally {
       pending.value = false

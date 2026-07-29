@@ -105,6 +105,7 @@ const roleOptions = computed(() => isLmsMvp.value
   : allRoleOptions)
 const roleLabels = Object.fromEntries(allRoleOptions.map((option) => [option.value, option.label])) as Record<AccountRole, string>
 const statusLabels: Record<AccountStatus, string> = { active: 'Aktif', disabled: 'Dinonaktifkan', blocked: 'Diblokir' }
+const unitOptions = computed(() => [...new Set(programStudies.value.map(program => program.facultyId))].sort())
 const tableColumns = [
   { key: 'identity', label: 'Pengguna', sortable: true },
   { key: 'roles', label: 'Role & akses', sortable: false },
@@ -159,7 +160,7 @@ const loadAccounts = async (page = 1) => {
 }
 
 const loadProgramStudies = async () => {
-  if (!isAdministrator.value || !isLmsMvp.value) return
+  if (!isAdministrator.value) return
   try {
     const { data } = await useNuxtApp().$api.get<LmsAcademicCatalog>('/academic/classes/catalog')
     programStudies.value = data.programs.filter(program => program.active)
@@ -217,16 +218,17 @@ const toggleRole = (role: AccountRole) => {
 const payloadFromForm = () => {
   const guardianLinks = splitList(form.guardianStudentIds)
   const guardian = form.roles.includes('guardian')
+  const student = form.roles.includes('student')
   const lmsStudent = isLmsMvp.value && form.roles.includes('student')
   const lmsAdministrator = isLmsMvp.value && form.roles.includes('administrator')
   const programStudyIds = lmsAdministrator ? [] : canonicalIds(form.programStudyIds, 'Program studi')
   const studentIds = lmsStudent
     ? canonicalIds(form.studentIds, 'ID mahasiswa')
     : (isLmsMvp.value ? [] : canonicalIds(form.studentIds, 'ID mahasiswa'))
-  if (lmsStudent && programStudyIds.length !== 1) {
+  if (student && programStudyIds.length !== 1) {
     throw new Error('Akun mahasiswa wajib memiliki tepat satu ID program studi.')
   }
-  if (lmsStudent && studentIds.length !== 1) {
+  if (student && studentIds.length !== 1) {
     throw new Error('Akun mahasiswa wajib memiliki tepat satu ID mahasiswa.')
   }
   return {
@@ -401,7 +403,21 @@ onMounted(() => Promise.all([loadAccounts(), loadProgramStudies()]))
               </div>
             </template>
           </fieldset>
-          <fieldset v-else class="scope-panel"><legend>Lingkup akses</legend><p>Gunakan ID kanonik dan pisahkan beberapa nilai dengan koma. Scope kosong hanya sesuai untuk administrator, pimpinan, atau dosen nonwali.</p><div class="form-grid"><label class="form-field"><span>Unit</span><input v-model="form.unitIds" class="form-control" placeholder="faculty-economics"></label><label class="form-field"><span>Program studi</span><input v-model="form.programStudyIds" class="form-control" placeholder="management-s1"></label><label class="form-field"><span>Angkatan</span><input v-model="form.cohortYears" class="form-control" inputmode="numeric" placeholder="2023, 2024"></label><label class="form-field"><span>ID mahasiswa</span><input v-model="form.studentIds" class="form-control" placeholder="student-001" data-clarity-mask="true"></label></div></fieldset>
+          <fieldset v-else class="scope-panel">
+            <legend>Lingkup akses</legend>
+            <p>Pilih ID dari master akademik. Beberapa ID untuk akun staf dapat dipisahkan dengan koma; scope kosong hanya sesuai untuk administrator, pimpinan, atau dosen nonwali.</p>
+            <div v-if="form.roles.includes('student')" class="form-grid">
+              <label class="form-field"><span>Program studi (wajib)</span><select v-model="form.programStudyIds" class="form-select" required><option value="" disabled>Pilih program studi</option><option v-for="program in programStudies" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select><small v-if="!programStudies.length">Buat program studi aktif pada master akademik terlebih dahulu.</small></label>
+              <label class="form-field"><span>NIM / ID mahasiswa (wajib)</span><input v-model="form.studentIds" class="form-control" required placeholder="2026001" data-clarity-mask="true"></label>
+              <label class="form-field"><span>Angkatan</span><input v-model="form.cohortYears" class="form-control" inputmode="numeric" placeholder="2026"></label>
+            </div>
+            <div v-else class="form-grid">
+              <label class="form-field"><span>Unit</span><input v-model="form.unitIds" class="form-control" list="account-unit-options" placeholder="Pilih atau masukkan ID unit"><datalist id="account-unit-options"><option v-for="unitId in unitOptions" :key="unitId" :value="unitId" /></datalist><small>ID tanpa spasi, contoh: stt-saint-paul.</small></label>
+              <label class="form-field"><span>Program studi</span><input v-model="form.programStudyIds" class="form-control" list="account-program-options" placeholder="Pilih atau masukkan ID program"><datalist id="account-program-options"><option v-for="program in programStudies" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></datalist><small>Gunakan koma untuk beberapa program studi.</small></label>
+              <label class="form-field"><span>Angkatan</span><input v-model="form.cohortYears" class="form-control" inputmode="numeric" placeholder="2023, 2024"></label>
+              <label class="form-field"><span>ID mahasiswa</span><input v-model="form.studentIds" class="form-control" placeholder="student-001" data-clarity-mask="true"></label>
+            </div>
+          </fieldset>
 
           <div class="note-box"><i class="uil uil-info-circle" aria-hidden="true" /><p v-if="passwordResetAvailable">Akun baru tidak menerima kata sandi awal. Gunakan aksi amplop pada tabel untuk mengirim petunjuk melalui {{ passwordResetDeliveryLabel }}.</p><p v-else>Pemulihan akun belum dikonfigurasi. Aktifkan jalur pemulihan sebelum menambahkan pengguna produksi.</p></div>
         </div>

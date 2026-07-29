@@ -30,8 +30,8 @@ function hostingerEnvironment(): Record<string, string> {
     NODE_ENV: 'production',
     DEPLOYMENT_TARGET: 'hostinger',
     TRUSTED_PROXY_HOPS: '1',
-    APP_FEATURE_PROFILE: 'lms-mvp',
-    NUXT_PUBLIC_FEATURE_PROFILE: 'lms-mvp',
+    APP_FEATURE_PROFILE: 'full-campus',
+    NUXT_PUBLIC_FEATURE_PROFILE: 'full-campus',
     APP_VERSION: release,
     NUXT_PUBLIC_APP_ENVIRONMENT: 'production',
     NUXT_PUBLIC_API_BASE_URL: '/api',
@@ -76,6 +76,15 @@ function hostingerEnvironment(): Record<string, string> {
     NUXT_PUBLIC_SENTRY_RELEASE: release,
     NUXT_PUBLIC_ANALYTICS_ENABLED: 'false',
     NUXT_PUBLIC_ANALYTICS_PRIVATE_ENABLED: 'false',
+    PMB_PII_HASH_SECRET: rotatedSecret(5),
+    TRACER_STUDY_PUBLIC_URL: 'https://tracer.campus.ac.id/respond',
+    PAYMENT_GATEWAY_PROVIDER_ID: 'campus_bank',
+    PAYMENT_GATEWAY_WEBHOOK_SECRET: rotatedSecret(6),
+    PDDIKTI_CONTRACT_VERSION: 'campus-pddikti-gateway/2026-01',
+    PDDIKTI_OPERATION_MAP_JSON: '{"student":"student-v1","lecturer":"lecturer-v1","course":"course-v1","class":"class-v1","grade":"grade-v1","student_activity":"student-activity-v1","graduation":"graduation-v1"}',
+    PDDIKTI_ADAPTER_BASE_URL: 'https://pddikti-gateway.campus.ac.id/v1',
+    PDDIKTI_ADAPTER_BEARER_TOKEN: rotatedSecret(7),
+    PDDIKTI_WORKER_SECRET: rotatedSecret(8),
     APP_IMAGE: '',
     SERVER_NAME: '',
     TLS_FULLCHAIN_FILE: '',
@@ -120,12 +129,21 @@ describe('Hostinger Nitro artifact contract', () => {
     expect(packageJson.engines.node).toContain('20.19.0')
     expect(nuxtConfig).toContain("preset: 'node-server'")
     expect(template).toContain('DEPLOYMENT_TARGET=hostinger')
-    expect(template).toContain('NUXT_PUBLIC_FEATURE_PROFILE=lms-mvp')
+    expect(template).toContain('NUXT_PUBLIC_FEATURE_PROFILE=full-campus')
     expect(template).toContain('FIREBASE_SERVICE_ACCOUNT_BASE64=')
     expect(template).not.toMatch(/^(?:PORT|NITRO_PORT)=/m)
     expect(runbook).toContain('Node.js `22.x`')
     expect(runbook).toContain('Hostinger injects `PORT`')
     expect(runbook).not.toContain('Install Nginx')
+  })
+
+  it('keeps the production PMB dashboard on live API data instead of workflow fixtures', () => {
+    const dashboard = readFileSync(join(repositoryRoot, 'pages', 'pmb', 'index.vue'), 'utf8')
+
+    expect(dashboard).toContain("'/admissions/applications'")
+    expect(dashboard).toContain("'/admissions/catalog'")
+    expect(dashboard).not.toContain("~/data/workflows")
+    expect(dashboard).not.toContain('158 pendaftar')
   })
 })
 
@@ -166,6 +184,14 @@ describe.runIf(Boolean(powerShellExecutable))('Hostinger production environment 
       NUXT_PUBLIC_SENTRY_DSN: '',
       SENTRY_RELEASE: '',
       NUXT_PUBLIC_SENTRY_RELEASE: '',
+      TRACER_STUDY_PUBLIC_URL: '',
+      PAYMENT_GATEWAY_PROVIDER_ID: '',
+      PAYMENT_GATEWAY_WEBHOOK_SECRET: '',
+      PDDIKTI_CONTRACT_VERSION: '',
+      PDDIKTI_OPERATION_MAP_JSON: '',
+      PDDIKTI_ADAPTER_BASE_URL: '',
+      PDDIKTI_ADAPTER_BEARER_TOKEN: '',
+      PDDIKTI_WORKER_SECRET: '',
     }
     const result = validateEnvironment(values)
     const output = `${result.stdout}\n${result.stderr}`

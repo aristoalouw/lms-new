@@ -12,13 +12,13 @@ afterEach(() => {
 })
 
 describe('server feature profile resolution', () => {
-  it('fails closed to LMS MVP in production when the value is missing or invalid', () => {
+  it('defaults to the approved full-campus profile in production when the value is missing or invalid', () => {
     process.env.NODE_ENV = 'production'
     delete process.env.APP_FEATURE_PROFILE
-    expect(serverFeatureProfile()).toBe('lms-mvp')
+    expect(serverFeatureProfile()).toBe('full-campus')
 
     process.env.APP_FEATURE_PROFILE = 'typo'
-    expect(serverFeatureProfile()).toBe('lms-mvp')
+    expect(serverFeatureProfile()).toBe('full-campus')
   })
 
   it('allows full campus only when explicitly configured in production', () => {

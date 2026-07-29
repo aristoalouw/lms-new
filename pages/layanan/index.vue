@@ -14,11 +14,12 @@ const categoryFilter = ref('ALL')
 const showCreate = ref(false)
 const form = reactive({ category: 'ACADEMIC' as TicketCategory, priority: 'NORMAL' as TicketPriority, subject: '', message: '' })
 
-const tickets = ref<ServiceTicket[]>([
+const demoTickets: ServiceTicket[] = [
   { id: 'ticket-demo-001', ticketNumber: 'LYN-202607-1042', requesterId: 'student-001', requesterName: 'Nabila Putri', programStudyId: 'management-s1', category: 'ACADEMIC', priority: 'NORMAL', subject: 'Permohonan koreksi data KHS semester ganjil', status: 'IN_REVIEW', assignedUnit: 'Biro Akademik', slaHours: 24, dueAt: '2026-07-22T03:15:00.000Z', createdAt: '2026-07-21T03:15:00.000Z', updatedAt: '2026-07-21T04:10:00.000Z', version: 2, messageCount: 2 },
   { id: 'ticket-demo-002', ticketNumber: 'LYN-202607-0988', requesterId: 'student-001', requesterName: 'Nabila Putri', programStudyId: 'management-s1', category: 'FINANCE', priority: 'HIGH', subject: 'Pembayaran virtual account belum terverifikasi', status: 'RESOLVED', assignedUnit: 'Biro Keuangan', slaHours: 8, dueAt: '2026-07-19T10:20:00.000Z', createdAt: '2026-07-19T02:20:00.000Z', updatedAt: '2026-07-19T06:45:00.000Z', resolvedAt: '2026-07-19T06:45:00.000Z', version: 3, messageCount: 2 },
   { id: 'ticket-demo-003', ticketNumber: 'LYN-202607-0914', requesterId: 'student-001', requesterName: 'Nabila Putri', programStudyId: 'management-s1', category: 'STUDENT_AFFAIRS', priority: 'LOW', subject: 'Surat keterangan mahasiswa aktif', status: 'CLOSED', assignedUnit: 'Biro Kemahasiswaan', slaHours: 48, dueAt: '2026-07-18T09:00:00.000Z', createdAt: '2026-07-16T09:00:00.000Z', updatedAt: '2026-07-17T07:30:00.000Z', closedAt: '2026-07-17T07:30:00.000Z', version: 4, messageCount: 3 },
-])
+]
+const tickets = ref<ServiceTicket[]>(config.public.demoMode ? demoTickets : [])
 
 const categories: Array<{ value: TicketCategory; label: string; icon: string }> = [
   { value: 'ACADEMIC', label: 'Akademik', icon: 'uil-graduation-cap' },

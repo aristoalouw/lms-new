@@ -5,7 +5,7 @@ const publicCapabilityEnabled = (name: string) => {
   return process.env.NODE_ENV !== 'production'
 }
 
-const featureProfileFallback = process.env.NODE_ENV === 'development' ? 'full-campus' : 'lms-mvp'
+const featureProfileFallback = 'full-campus'
 const resolveFeatureProfile = (value: string | undefined) => value === 'full-campus' || value === 'lms-mvp'
   ? value
   : featureProfileFallback

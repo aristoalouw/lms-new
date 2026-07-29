@@ -24,14 +24,14 @@ export const navigation: NavigationGroup[] = [
     items: [
       { label: 'Ikhtisar', to: '/', icon: 'uil-grid', permission: 'dashboard.read', feature: 'dashboard' },
       { label: 'Kelas & enrolment', to: '/admin/kelas', icon: 'uil-presentation-check', permission: 'classes:manage', feature: 'classes' },
-      { label: 'Penerimaan', to: '/pmb', icon: 'uil-user-plus', permission: 'pmb.read', badge: '128', feature: 'admissions' },
+      { label: 'Penerimaan', to: '/pmb', icon: 'uil-user-plus', permission: 'pmb.read', feature: 'admissions' },
       { label: 'Administrasi akademik', to: '/akademik/administrasi', icon: 'uil-book-open', permission: 'academic.read', feature: 'academic-admin' },
       { label: 'KRS', to: '/akademik/krs', icon: 'uil-clipboard-alt', permission: 'academic.read', feature: 'krs' },
       { label: 'Pelaksanaan kelas', to: '/akademik/kelas', icon: 'uil-presentation-check', permission: 'academic.read', feature: 'academic-admin' },
       { label: 'Pembelajaran', to: '/pembelajaran', icon: 'uil-presentation-play', permission: 'learning.read', feature: 'learning' },
       { label: 'Keuangan', to: '/keuangan', icon: 'uil-receipt', permission: 'finance.read', feature: 'finance' },
       { label: 'Rekonsiliasi', to: '/keuangan/rekonsiliasi', icon: 'uil-exchange', permission: 'finance.write', feature: 'finance' },
-      { label: 'PDDIKTI', to: '/pddikti', icon: 'uil-sync', permission: 'pddikti.read', badge: '12', feature: 'pddikti' },
+      { label: 'PDDIKTI', to: '/pddikti', icon: 'uil-sync', permission: 'pddikti.read', feature: 'pddikti' },
     ],
   },
   {
@@ -41,7 +41,7 @@ export const navigation: NavigationGroup[] = [
       { label: 'Evaluasi dosen', to: '/evaluasi', icon: 'uil-favorite', permission: 'evaluation.read', feature: 'evaluation' },
       { label: 'Kelulusan', to: '/kelulusan', icon: 'uil-graduation-cap', permission: 'graduation.read', feature: 'graduation' },
       { label: 'Tracer study', to: '/tracer-study', icon: 'uil-chart-growth', permission: 'tracer.read', feature: 'tracer-study' },
-      { label: 'Tata usaha', to: '/layanan', icon: 'uil-file-check-alt', permission: 'service.read', badge: '8', feature: 'services' },
+      { label: 'Tata usaha', to: '/layanan', icon: 'uil-file-check-alt', permission: 'service.read', feature: 'services' },
     ],
   },
   {

@@ -45,6 +45,18 @@ $isHostinger = $deploymentTarget -eq "hostinger"
 $fileUploadsEnabled = $envValues["FILE_UPLOADS_ENABLED"] -ceq "true"
 $emailDeliveryEnabled = $envValues["EMAIL_DELIVERY_ENABLED"] -ceq "true"
 $sentryEnabled = $envValues["SENTRY_ENABLED"] -ceq "true"
+$paymentGatewayConfigured = -not [string]::IsNullOrWhiteSpace([string]$envValues["PAYMENT_GATEWAY_PROVIDER_ID"]) -or
+    -not [string]::IsNullOrWhiteSpace([string]$envValues["PAYMENT_GATEWAY_WEBHOOK_SECRET"])
+$pddiktiConfigurationNames = @(
+    "PDDIKTI_CONTRACT_VERSION",
+    "PDDIKTI_OPERATION_MAP_JSON",
+    "PDDIKTI_ADAPTER_BASE_URL",
+    "PDDIKTI_ADAPTER_BEARER_TOKEN",
+    "PDDIKTI_WORKER_SECRET"
+)
+$pddiktiConfigured = @($pddiktiConfigurationNames | Where-Object {
+    -not [string]::IsNullOrWhiteSpace([string]$envValues[$_])
+}).Count -gt 0
 
 $required = @(
     "DEPLOYMENT_TARGET",
@@ -93,17 +105,13 @@ else {
 }
 
 if (-not $isLmsMvp) {
-    $required += @(
-        "PMB_PII_HASH_SECRET",
-        "TRACER_STUDY_PUBLIC_URL",
-        "PAYMENT_GATEWAY_PROVIDER_ID",
-        "PAYMENT_GATEWAY_WEBHOOK_SECRET",
-        "PDDIKTI_CONTRACT_VERSION",
-        "PDDIKTI_OPERATION_MAP_JSON",
-        "PDDIKTI_ADAPTER_BASE_URL",
-        "PDDIKTI_ADAPTER_BEARER_TOKEN",
-        "PDDIKTI_WORKER_SECRET"
-    )
+    $required += "PMB_PII_HASH_SECRET"
+    if ($paymentGatewayConfigured) {
+        $required += @("PAYMENT_GATEWAY_PROVIDER_ID", "PAYMENT_GATEWAY_WEBHOOK_SECRET")
+    }
+    if ($pddiktiConfigured) {
+        $required += $pddiktiConfigurationNames
+    }
 }
 
 foreach ($name in $required) {
@@ -175,7 +183,7 @@ if ($rateLimitSecret.Length -lt 43) {
 if ($rateLimitSecret -and @($rateLimitSecret.ToCharArray() | Select-Object -Unique).Count -lt 16) {
     Add-Failure "RATE_LIMIT_KEY_SECRET does not appear sufficiently random."
 }
-if (-not $isLmsMvp) {
+if (-not $isLmsMvp -and $paymentGatewayConfigured) {
     $gatewaySecret = if ($envValues.ContainsKey("PAYMENT_GATEWAY_WEBHOOK_SECRET")) { $envValues["PAYMENT_GATEWAY_WEBHOOK_SECRET"] } else { "" }
     if ($gatewaySecret.Length -lt 43) { Add-Failure "PAYMENT_GATEWAY_WEBHOOK_SECRET must contain at least 32 random bytes (43 base64url characters)." }
     if ($gatewaySecret -and @($gatewaySecret.ToCharArray() | Select-Object -Unique).Count -lt 16) { Add-Failure "PAYMENT_GATEWAY_WEBHOOK_SECRET does not appear sufficiently random." }
@@ -353,7 +361,7 @@ else {
         }
     }
 }
-if (-not $isLmsMvp) {
+if (-not $isLmsMvp -and $pddiktiConfigured) {
     $pddiktiBaseUrl = [string]$envValues["PDDIKTI_ADAPTER_BASE_URL"]
     if ($pddiktiBaseUrl -and $pddiktiBaseUrl -notmatch '^https://[^/?#@]+(?::\d+)?(?:/[^?#]*)?$') {
         Add-Failure "PDDIKTI_ADAPTER_BASE_URL must be an HTTPS URL without credentials, query parameters, or fragments."

@@ -4,7 +4,7 @@ FROM node:24.18.0-bookworm-slim AS build
 
 WORKDIR /app
 
-ARG APP_FEATURE_PROFILE=lms-mvp
+ARG APP_FEATURE_PROFILE=full-campus
 
 # Keeping dependency installation in its own layer makes production builds
 # reproducible as long as package-lock.json is committed.
@@ -35,7 +35,7 @@ RUN npm run build
 FROM node:24.18.0-bookworm-slim AS runtime
 
 ARG APP_VERSION=development
-ARG APP_FEATURE_PROFILE=lms-mvp
+ARG APP_FEATURE_PROFILE=full-campus
 ARG SOURCE_URL
 
 ENV NODE_ENV=production \

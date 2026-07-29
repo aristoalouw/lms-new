@@ -1,4 +1,4 @@
-name: LMS MVP CI
+name: Full Campus CI
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      APP_FEATURE_PROFILE: lms-mvp
+      APP_FEATURE_PROFILE: full-campus
       CAMPUS_DATA_MODE: mock
       ENABLE_DEMO_AUTH: "true"
       NUXT_PUBLIC_DEMO_MODE: "true"
@@ -55,14 +55,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      APP_IMAGE: lms-mvp-ci:${{ github.sha }}
+      APP_IMAGE: full-campus-ci:${{ github.sha }}
     steps:
       - uses: actions/checkout@v6
       - name: Build immutable LMS image
         run: |
           docker build \
             --build-arg APP_VERSION="${GITHUB_SHA}" \
-            --build-arg APP_FEATURE_PROFILE=lms-mvp \
+            --build-arg APP_FEATURE_PROFILE=full-campus \
             --build-arg SOURCE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
             --file infra/Dockerfile \
             --tag "${APP_IMAGE}" \
@@ -83,7 +83,7 @@ jobs:
           docker run --detach --name app --network lms-ci \
             --env NODE_ENV=production \
             --env APP_VERSION="${GITHUB_SHA}" \
-            --env APP_FEATURE_PROFILE=lms-mvp \
+            --env APP_FEATURE_PROFILE=full-campus \
             --env CAMPUS_DATA_MODE=mock \
             --env ALLOW_PRODUCTION_MOCK=true \
             --env ENABLE_DEMO_AUTH=false \

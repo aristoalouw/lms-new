@@ -27,10 +27,10 @@
         <div v-if="notificationsOpen" class="notification-popover shadow-lg">
           <div class="notification-popover__head">
             <div><p class="eyebrow mb-1">Pusat aktivitas</p><h2>Notifikasi</h2></div>
-            <button class="btn btn-link btn-sm">Tandai dibaca</button>
+            <button class="btn btn-link btn-sm" type="button" :disabled="markingNotices" @click="markVisibleNoticesRead">Tandai dibaca</button>
           </div>
           <div class="notification-list">
-            <NuxtLink v-for="notice in visibleNotices" :key="notice.title" :to="notice.to" class="notification-item" @click="notificationsOpen = false">
+            <NuxtLink v-for="notice in visibleNotices" :key="notice.id" :to="notice.to" class="notification-item" @click="openNotice(notice.id)">
               <span class="notification-item__icon" :class="`notification-item__icon--${notice.tone}`"><i class="uil" :class="notice.icon" /></span>
               <span><strong>{{ notice.title }}</strong><small>{{ notice.detail }}</small><time>{{ notice.time }}</time></span>
             </NuxtLink>
@@ -89,27 +89,82 @@
 
 <script setup lang="ts">
 import { navigationCommandsForAccess, roleLabels } from '~/config/navigation'
-import type { Feature } from '~/shared/features'
+import { featureForPagePath } from '~/shared/features'
+import type { InAppNotification, NotificationCategory } from '~/server/types/communications'
 
 const { toggleSidebar, commandOpen, notificationsOpen } = useAppShell()
 const { user, can, logout, switchRole } = useAuth()
 const { enabled, pageEnabled, isLmsMvp } = useFeatureFlags()
+const { $api } = useNuxtApp()
 const searchInput = ref<HTMLInputElement>()
 const query = ref('')
+const notices = ref<InAppNotification[]>([])
+const markingNotices = ref(false)
 
-const notices = [
-  { title: '12 data perlu validasi', detail: 'Pelaporan PDDIKTI periode Genap', time: '8 menit lalu', icon: 'uil-sync', tone: 'amber', to: '/pddikti' },
-  { title: 'Pembayaran berhasil direkonsiliasi', detail: 'Batch VA Bank Mandiri · 84 transaksi', time: '24 menit lalu', icon: 'uil-receipt', tone: 'green', to: '/keuangan' },
-  { title: 'Batas persetujuan KRS besok', detail: '36 mahasiswa menunggu persetujuan', time: '1 jam lalu', icon: 'uil-clock', tone: 'blue', to: '/akademik/krs' },
-]
-const noticeFeatures: Record<string, Feature> = {
-  '/pddikti': 'pddikti',
-  '/keuangan': 'finance',
-  '/akademik/krs': 'krs',
+const noticeMeta: Record<NotificationCategory, { icon: string; tone: string }> = {
+  ACADEMIC: { icon: 'uil-graduation-cap', tone: 'blue' },
+  FINANCE: { icon: 'uil-receipt', tone: 'amber' },
+  LEARNING: { icon: 'uil-book-open', tone: 'green' },
+  SERVICE: { icon: 'uil-comment-alt-check', tone: 'blue' },
+  SYSTEM: { icon: 'uil-shield-check', tone: 'green' },
 }
-const visibleNotices = computed(() => isLmsMvp.value
-  ? []
-  : notices.filter(notice => enabled(noticeFeatures[notice.to] || 'notifications') && pageEnabled(notice.to)))
+const noticeTime = (value: string) => new Intl.DateTimeFormat('id-ID', {
+  dateStyle: 'medium',
+  timeStyle: 'short',
+  timeZone: 'Asia/Jakarta',
+}).format(new Date(value))
+const visibleNotices = computed(() => notices.value
+  .filter(notice => !notice.readAt)
+  .filter((notice) => {
+    const path = notice.actionPath || '/notifikasi'
+    const feature = featureForPagePath(path)
+    return pageEnabled(path) && (!feature || enabled(feature))
+  })
+  .slice(0, 5)
+  .map(notice => ({
+    id: notice.id,
+    title: notice.title,
+    detail: notice.body,
+    time: noticeTime(notice.createdAt),
+    icon: noticeMeta[notice.category].icon,
+    tone: noticeMeta[notice.category].tone,
+    to: notice.actionPath || '/notifikasi',
+  })))
+
+const loadNotices = async () => {
+  try {
+    const { data } = await $api.get<{ notifications: InAppNotification[] }>('/notifications', {
+      params: { unreadOnly: true, limit: 5 },
+    })
+    notices.value = data.notifications
+  } catch {
+    notices.value = []
+  }
+}
+
+const openNotice = async (id: string) => {
+  notificationsOpen.value = false
+  notices.value = notices.value.map(item => item.id === id ? { ...item, readAt: new Date().toISOString() } : item)
+  try {
+    await $api.post(`/notifications/${encodeURIComponent(id)}/read`)
+  } catch {
+    await loadNotices()
+  }
+}
+
+const markVisibleNoticesRead = async () => {
+  if (!visibleNotices.value.length || markingNotices.value) return
+  markingNotices.value = true
+  const ids = visibleNotices.value.map(notice => notice.id)
+  notices.value = notices.value.map(item => ids.includes(item.id) ? { ...item, readAt: new Date().toISOString() } : item)
+  try {
+    await Promise.all(ids.map(id => $api.post(`/notifications/${encodeURIComponent(id)}/read`)))
+  } catch {
+    await loadNotices()
+  } finally {
+    markingNotices.value = false
+  }
+}
 
 const commands = computed(() => navigationCommandsForAccess(enabled, can, pageEnabled))
 const filteredCommands = computed(() => commands.value.filter(item => `${item.label} ${item.context}`.toLowerCase().includes(query.value.toLowerCase())).slice(0, 7))
@@ -130,6 +185,9 @@ const onKeydown = (event: KeyboardEvent) => {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  void loadNotices()
+})
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 </script>

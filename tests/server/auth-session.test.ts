@@ -264,4 +264,30 @@ describe('Firebase application sessions', () => {
       },
     })
   })
+
+  it('menerima akun mahasiswa lama dengan unit scope pada profil full-campus', async () => {
+    process.env.APP_FEATURE_PROFILE = 'full-campus'
+    firebase.state.account = {
+      ...firebase.state.account,
+      roles: ['student'],
+      scope: {
+        unitIds: ['campus'],
+        programStudyIds: ['management-s1'],
+        cohortYears: [2026],
+        studentIds: ['student-001'],
+      },
+    }
+
+    await expect(createFirebaseSession('full-campus-legacy-student')).resolves.toMatchObject({
+      context: {
+        roles: ['student'],
+        scope: {
+          unitIds: ['campus'],
+          programStudyIds: ['management-s1'],
+          cohortYears: [2026],
+          studentIds: ['student-001'],
+        },
+      },
+    })
+  })
 })

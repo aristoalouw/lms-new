@@ -728,6 +728,14 @@
       "collectionGroup": "learningSpaces",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "updatedAt", "order": "DESCENDING" },
+        { "fieldPath": "__name__", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "learningSpaces",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "lecturerIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "updatedAt", "order": "DESCENDING" }

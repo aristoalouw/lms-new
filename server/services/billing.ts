@@ -186,21 +186,6 @@ async function loadBillingProfile(studentId: string): Promise<BillingStudentProf
   return { studentId: snapshot.id, ...snapshot.data() } as BillingStudentProfile
 }
 
-async function ownBillingProfile(context: AuthContext): Promise<BillingStudentProfile> {
-  if (!hasRole(context, 'student')) forbidden('Tindakan ini hanya tersedia untuk mahasiswa.')
-  const profiles: BillingStudentProfile[] = []
-  for (const candidate of studentCandidates(context)) {
-    try {
-      profiles.push(await loadBillingProfile(candidate))
-    } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'NOT_FOUND')) throw error
-    }
-  }
-  const unique = [...new Map(profiles.map(profile => [profile.studentId, profile])).values()]
-  if (unique.length !== 1) forbidden('Identitas mahasiswa tidak dapat ditentukan secara unik.')
-  return unique[0]!
-}
-
 function invoiceCore(invoice: BillingInvoice): InvoiceRecord {
   return {
     id: invoice.id,
@@ -722,7 +707,14 @@ async function scopedInvoiceViews(context: AuthContext, query: BillingListQuery,
 
 async function depositBalanceForContext(context: AuthContext, query: BillingListQuery): Promise<number> {
   let studentId = query.studentId
-  if (hasRole(context, 'student')) studentId = (await ownBillingProfile(context)).studentId
+  if (hasRole(context, 'student')) {
+    // An account can be activated before the academic/billing import creates
+    // its denormalized billing profile. The dashboard must still open with an
+    // empty ledger instead of treating incomplete onboarding as an
+    // authorization failure. Mutations continue to require a billing profile
+    // through loadBillingProfile.
+    studentId = context.scope.studentIds[0] || context.uid
+  }
   if (!studentId) return 0
   if (dataMode() === 'mock') return billingModuleState().depositAccounts.get(studentId)?.balanceIdr ?? 0
   const db = firestoreAdmin()

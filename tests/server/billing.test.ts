@@ -20,6 +20,7 @@ import { krsModuleState, resetKrsModuleState } from '../../server/services/krs-s
 import { CampusError } from '../../server/utils/errors'
 import { resetMockState } from '../../server/utils/mock-store'
 import { recordPayment, reversePayment } from '../../server/services/payments'
+import { billingModuleState } from '../../server/services/billing-state'
 import { authContext } from './fixtures'
 
 const finance = () => authContext('finance-001', ['finance_staff'], ['management-s1'])
@@ -42,6 +43,20 @@ describe('student billing and account receivable', () => {
     expect(own.summary).toMatchObject({ billedAmountIdr: 7_500_000, paidAmountIdr: 5_000_000, overdueInvoiceCount: 1, depositBalanceIdr: 250_000 })
     const staff = await getBillingDashboard(finance(), { page: 1, pageSize: 20 }, clock)
     expect(staff.invoices.total).toBe(2)
+  })
+
+  it('returns an empty student dashboard while billing onboarding is incomplete', async () => {
+    billingModuleState().profiles.delete('student-new')
+    const dashboard = await getBillingDashboard(student('student-new'), { page: 1, pageSize: 20 }, clock)
+    expect(dashboard.invoices).toMatchObject({ items: [], total: 0 })
+    expect(dashboard.summary).toMatchObject({
+      invoiceCount: 0,
+      billedAmountIdr: 0,
+      paidAmountIdr: 0,
+      outstandingAmountIdr: 0,
+      overdueAmountIdr: 0,
+      depositBalanceIdr: 0,
+    })
   })
 
   it('creates immutable tariff versions with optimistic concurrency and idempotency', async () => {

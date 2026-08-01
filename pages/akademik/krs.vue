@@ -3,15 +3,16 @@ import { krsCourses as demoKrsCourses, krsStats, krsTimeline } from '~/data/work
 import type { Tone } from '~/data/dashboard'
 import type { KrsRecord } from '~/server/types/domain'
 import type { KrsCatalogEntry, KrsPeriodPolicy, KrsStudentAcademicState, KrsWriteResult } from '~/server/types/krs-enrollment'
+import type { AcademicAdministrationWorkspace, AcademicPeriodDefinition } from '~/server/types/academic-administration'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Kartu Rencana Studi' })
 
-const selectedSemester = ref('2026/2027 Gasal')
-const selectedPeriodId = ref('2026-2027-1')
+const selectedPeriodId = ref(configuredDemoPeriodId())
 const courseFilter = ref('Semua mata kuliah')
 const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
+const { user } = useAuth()
 const courseCatalog = ref(config.public.demoMode
   ? demoKrsCourses.map(course => ({ ...course, id: course.code }))
   : [])
@@ -25,6 +26,14 @@ const errorMessage = ref('')
 const noticeMessage = ref('')
 const currentPlanId = ref('')
 const currentVersion = ref(0)
+const studentState = ref<KrsStudentAcademicState | null>(null)
+const periodPolicy = ref<KrsPeriodPolicy | null>(null)
+const periods = ref<AcademicPeriodDefinition[]>([])
+const setupMessage = ref('')
+
+function configuredDemoPeriodId() {
+  return '2026-2027-1'
+}
 
 const courseColumns = [
   { key: 'selection', label: 'Pilih', sortable: false, align: 'center' as const, width: '72px' },
@@ -47,7 +56,47 @@ const selectedCredits = computed(() => courseCatalog.value
   .reduce((total, course) => total + course.credits, 0))
 
 const selectedCount = computed(() => selectedCourseCodes.value.length)
-const remainingCredits = computed(() => Math.max(0, 24 - selectedCredits.value))
+const maximumCredits = computed(() => studentState.value?.maximumCredits ?? 24)
+const remainingCredits = computed(() => Math.max(0, maximumCredits.value - selectedCredits.value))
+const activeHolds = computed(() => studentState.value?.holds.filter(item => item.active) ?? [])
+const krsReady = computed(() => config.public.demoMode || Boolean(studentState.value && periodPolicy.value))
+const canSubmit = computed(() => krsReady.value
+  && krsStatus.value === 'draft'
+  && selectedCount.value > 0
+  && (config.public.demoMode || (periodPolicy.value?.status === 'KRS_OPEN' && activeHolds.value.length === 0)))
+
+const termLabel = (term: AcademicPeriodDefinition['term']) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term]
+const selectedPeriodLabel = computed(() => {
+  const period = periods.value.find(item => item.id === selectedPeriodId.value)
+  return period ? `${period.academicYear} ${termLabel(period.term)}` : selectedPeriodId.value
+})
+const deadlineLabel = computed(() => periodPolicy.value
+  ? new Intl.DateTimeFormat('id-ID', { dateStyle: 'long', timeStyle: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(periodPolicy.value.krsClosesAt))
+  : 'Belum dikonfigurasi')
+const daysToDeadline = computed(() => periodPolicy.value
+  ? Math.max(0, Math.ceil((Date.parse(periodPolicy.value.krsClosesAt) - Date.now()) / 86_400_000))
+  : 0)
+const studentIdentity = computed(() => studentState.value || (config.public.demoMode ? {
+  id: 'student-demo', studentUid: 'student-demo', studentNumber: '23011010', studentName: 'Mahasiswa Demo',
+  programStudyId: 'management-s1', advisorId: 'advisor-demo', active: true, maximumCredits: 24,
+  completedCourseCodes: [], holds: [], version: 1, updatedAt: '2026-07-20T00:00:00.000Z',
+} satisfies KrsStudentAcademicState : null))
+const timelineRows = computed(() => {
+  if (config.public.demoMode) return krsTimeline
+  if (!periodPolicy.value) return []
+  const date = (value: string) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeZone: 'Asia/Jakarta' }).format(new Date(value))
+  return [
+    { label: 'Pembukaan KRS', date: date(periodPolicy.value.krsOpensAt), state: 'Terjadwal', detail: 'Katalog kelas dapat dipilih setelah periode dibuka.' },
+    { label: 'Batas pengajuan', date: date(periodPolicy.value.krsClosesAt), state: periodPolicy.value.status, detail: 'Draf harus diajukan sebelum batas waktu ini.' },
+    { label: 'Batas revisi', date: date(periodPolicy.value.revisionClosesAt), state: 'Terjadwal', detail: 'Revisi mengikuti keputusan dosen wali dan kebijakan periode.' },
+  ]
+})
+const statRows = computed(() => config.public.demoMode ? krsStats : [
+  { label: 'SKS dipilih', value: `${selectedCredits.value} / ${maximumCredits.value}`, detail: `${selectedCount.value} mata kuliah`, trend: selectedPeriodLabel.value, tone: 'primary' as Tone },
+  { label: 'Batas SKS', value: String(maximumCredits.value), detail: 'Sesuai status akademik', trend: studentState.value?.active ? 'Mahasiswa aktif' : 'Tidak aktif', tone: studentState.value?.active ? 'success' as Tone : 'danger' as Tone },
+  { label: 'Status KRS', value: krsStatus.value === 'draft' ? 'Draf' : 'Diajukan', detail: periodPolicy.value?.status || '-', trend: `Versi ${currentVersion.value}`, tone: krsStatus.value === 'draft' ? 'warning' as Tone : 'info' as Tone },
+  { label: 'Pencekalan', value: String(activeHolds.value.length), detail: activeHolds.value.length ? 'Perlu diselesaikan' : 'Tidak ada', trend: 'Validasi server', tone: activeHolds.value.length ? 'danger' as Tone : 'success' as Tone },
+])
 
 const statTone = (tone: Tone): 'forest' | 'amber' | 'blue' | 'coral' | 'slate' => ({
   primary: 'forest', success: 'forest', warning: 'amber', danger: 'coral', info: 'blue', neutral: 'slate',
@@ -70,12 +119,18 @@ const openConfirmation = () => {
   showConfirmation.value = true
 }
 
+const printDraft = () => {
+  if (import.meta.client) window.print()
+}
+
 const requestKey = (prefix: string) => `${prefix}:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 
 const apiError = (error: unknown) => {
   const value = error as { response?: { data?: { statusMessage?: string; message?: string } }; message?: string }
   return value.response?.data?.statusMessage || value.response?.data?.message || value.message || 'Permintaan KRS tidak dapat diproses.'
 }
+
+const apiStatus = (error: unknown) => Number((error as { response?: { status?: number } }).response?.status || 0)
 
 const selectedClassIds = () => courseCatalog.value
   .filter(course => selectedCourseCodes.value.includes(course.code))
@@ -145,16 +200,17 @@ const formatSchedule = (entry: KrsCatalogEntry) => {
   return `${day}, ${time(start)}-${time(end)}`
 }
 
-onMounted(async () => {
-  if (config.public.demoMode) {
-    loading.value = false
-    return
-  }
+async function loadPeriod(periodId: string) {
+  loading.value = true
+  errorMessage.value = ''
+  setupMessage.value = ''
   try {
     const [catalogResponse, planResponse] = await Promise.all([
-      $api.get<{ period: KrsPeriodPolicy; student: KrsStudentAcademicState; classes: KrsCatalogEntry[] }>('/krs/catalog', { params: { periodId: selectedPeriodId.value } }),
-      $api.get<{ record: KrsRecord | null }>('/krs/me', { params: { periodId: selectedPeriodId.value } }),
+      $api.get<{ period: KrsPeriodPolicy; student: KrsStudentAcademicState; classes: KrsCatalogEntry[] }>('/krs/catalog', { params: { periodId } }),
+      $api.get<{ record: KrsRecord | null }>('/krs/me', { params: { periodId } }),
     ])
+    studentState.value = catalogResponse.data.student
+    periodPolicy.value = catalogResponse.data.period
     courseCatalog.value = catalogResponse.data.classes.map(entry => ({
       id: entry.classRecord.id,
       code: entry.classRecord.courseCode,
@@ -173,10 +229,46 @@ onMounted(async () => {
       selectedCourseCodes.value = [...record.courseCodes]
       krsStatus.value = record.status === 'DRAFT' || record.status === 'REJECTED' ? 'draft' : 'pending'
     } else {
+      currentPlanId.value = ''
+      currentVersion.value = 0
       selectedCourseCodes.value = []
+      krsStatus.value = 'draft'
     }
   } catch (error) {
-    errorMessage.value = apiError(error)
+    studentState.value = null
+    periodPolicy.value = null
+    courseCatalog.value = []
+    if ([403, 404, 409].includes(apiStatus(error))) {
+      setupMessage.value = 'Profil akademik mahasiswa dan kebijakan KRS untuk periode aktif belum lengkap. Administrator perlu menyelesaikan data master sebelum KRS dapat digunakan.'
+    } else errorMessage.value = apiError(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(async () => {
+  if (config.public.demoMode) {
+    loading.value = false
+    return
+  }
+  if (!user.value?.roles.includes('student')) {
+    setupMessage.value = 'Halaman ini adalah ruang pengisian KRS mahasiswa. Gunakan Administrasi Akademik untuk pengelolaan data dan persetujuan staf.'
+    loading.value = false
+    return
+  }
+  try {
+    const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
+    if (!data.profile) throw new Error('Profil akademik mahasiswa belum tersedia.')
+    periods.value = data.periods.filter(item => item.active)
+    const periodId = data.profile.currentPeriodId || periods.value[0]?.id
+    if (!periodId) throw new Error('Periode akademik aktif belum tersedia.')
+    selectedPeriodId.value = periodId
+    await loadPeriod(periodId)
+  } catch (error) {
+    const localSetupError = error instanceof Error && !(error as { response?: unknown }).response
+    if ([403, 404, 409].includes(apiStatus(error)) || localSetupError) {
+      setupMessage.value = 'Profil akademik mahasiswa dan periode aktif belum lengkap. Administrator perlu menyelesaikan onboarding akademik sebelum KRS dapat digunakan.'
+    } else errorMessage.value = apiError(error)
   } finally {
     loading.value = false
   }
@@ -193,8 +285,8 @@ onMounted(async () => {
       :status-label="krsStatus === 'draft' ? 'Draf KRS' : 'Menunggu dosen wali'"
     >
       <template #actions>
-        <button class="btn btn-outline-secondary" type="button"><i class="uil uil-print me-2" aria-hidden="true" />Cetak draf</button>
-        <button class="btn btn-primary" type="button" :disabled="krsStatus !== 'draft' || !selectedCount" @click="openConfirmation">
+        <button class="btn btn-outline-secondary" type="button" :disabled="!krsReady" @click="printDraft"><i class="uil uil-print me-2" aria-hidden="true" />Cetak draf</button>
+        <button class="btn btn-primary" type="button" :disabled="!canSubmit" @click="openConfirmation">
           <i class="uil uil-message me-2" aria-hidden="true" />Ajukan KRS
         </button>
       </template>
@@ -203,15 +295,25 @@ onMounted(async () => {
     <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
     <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div>
     <div v-if="loading" class="alert alert-info" role="status">Memuat katalog dan KRS terbaru...</div>
+    <EmptyState
+      v-else-if="setupMessage"
+      icon="uil-setting"
+      title="KRS belum siap digunakan"
+      :description="setupMessage"
+    />
 
+    <template v-if="!loading && krsReady">
     <section class="workflow-toolbar" aria-label="Konteks akademik">
       <div class="workflow-toolbar__meta">
         <i class="uil uil-user-square" aria-hidden="true" />
-        <div><strong>Raka Aditya Pratama · 231031017</strong><small>S1 Informatika · Semester 7 · Dosen wali Dr. Rina Wulandari</small></div>
+        <div><strong>{{ studentIdentity?.studentName }} · {{ studentIdentity?.studentNumber }}</strong><small>{{ studentIdentity?.programStudyId }} · Dosen wali {{ studentIdentity?.advisorId }}</small></div>
       </div>
       <div class="workflow-toolbar__filters">
         <label><span>Semester</span>
-          <select v-model="selectedSemester" class="form-select form-select-sm"><option>2026/2027 Gasal</option><option>2025/2026 Genap</option></select>
+          <select v-model="selectedPeriodId" class="form-select form-select-sm" :disabled="config.public.demoMode || periods.length < 2" @change="loadPeriod(selectedPeriodId)">
+            <option v-if="config.public.demoMode" :value="configuredDemoPeriodId()">2026/2027 Gasal</option>
+            <option v-for="period in periods" :key="period.id" :value="period.id">{{ period.academicYear }} {{ termLabel(period.term) }}</option>
+          </select>
         </label>
         <label><span>Tampilan</span>
           <select v-model="courseFilter" class="form-select form-select-sm"><option>Semua mata kuliah</option><option>Terpilih</option><option>Belum dipilih</option></select>
@@ -224,22 +326,22 @@ onMounted(async () => {
         <span class="context-banner__icon"><i class="uil uil-check-circle" aria-hidden="true" /></span>
         <div><span class="section-kicker">Pengajuan berhasil</span><h2>KRS sudah dikirim kepada dosen wali</h2><p>Anda akan menerima notifikasi setelah pengajuan disetujui atau dikembalikan untuk perbaikan.</p></div>
       </div>
-      <div class="context-banner__aside"><strong>21 SKS</strong><small>7 mata kuliah diajukan</small></div>
+      <div class="context-banner__aside"><strong>{{ selectedCredits }} SKS</strong><small>{{ selectedCount }} mata kuliah diajukan</small></div>
     </section>
 
     <section v-else class="context-banner">
       <div class="context-banner__copy">
         <span class="context-banner__icon"><i class="uil uil-clipboard-notes" aria-hidden="true" /></span>
-        <div><span class="section-kicker">Periode pengisian</span><h2>Pengisian KRS dibuka sampai 25 Juli 2026</h2><p>Pastikan mata kuliah, kelas, dan jadwal sudah sesuai. Perubahan masih dapat dilakukan sebelum KRS diajukan.</p></div>
+        <div><span class="section-kicker">Periode pengisian</span><h2>Pengisian KRS sampai {{ deadlineLabel }}</h2><p>Pastikan mata kuliah, kelas, dan jadwal sudah sesuai. Perubahan masih dapat dilakukan sebelum KRS diajukan.</p></div>
       </div>
-      <div class="context-banner__aside"><strong>4 hari</strong><small>menuju batas pengajuan</small></div>
+      <div class="context-banner__aside"><strong>{{ daysToDeadline }} hari</strong><small>menuju batas pengajuan</small></div>
     </section>
 
     <section class="row g-3" aria-label="Ringkasan KRS">
-      <div v-for="stat in krsStats" :key="stat.label" class="col-sm-6 col-xl-3">
+      <div v-for="stat in statRows" :key="stat.label" class="col-sm-6 col-xl-3">
         <StatCard
           :label="stat.label"
-          :value="stat.label === 'SKS dipilih' ? `${selectedCredits} / 24` : stat.value"
+          :value="stat.label === 'SKS dipilih' ? `${selectedCredits} / ${maximumCredits}` : stat.value"
           :detail="stat.detail"
           :trend="stat.label === 'SKS dipilih' ? `${selectedCount} mata kuliah` : stat.trend"
           :tone="statTone(stat.tone)"
@@ -252,18 +354,18 @@ onMounted(async () => {
         <article class="workflow-surface h-100">
           <header class="workflow-surface__header workflow-surface__header--plain">
             <div><span class="section-kicker">Kesiapan pengajuan</span><h2>Beban studi semester</h2><p>Batas SKS dihitung dari IPS semester sebelumnya.</p></div>
-            <StatusBadge status="verified" label="Tidak ada bentrok" />
+            <StatusBadge status="verified" label="Validasi server aktif" />
           </header>
           <div class="workflow-surface__body">
             <div class="credit-meter">
-              <div class="credit-meter__number"><strong>{{ selectedCredits }}</strong><span>/ 24 SKS</span></div>
-              <div class="credit-meter__track" role="progressbar" aria-label="SKS terpilih" :aria-valuenow="selectedCredits" aria-valuemin="0" aria-valuemax="24"><span :style="{ width: `${selectedCredits / 24 * 100}%` }" /></div>
+              <div class="credit-meter__number"><strong>{{ selectedCredits }}</strong><span>/ {{ maximumCredits }} SKS</span></div>
+              <div class="credit-meter__track" role="progressbar" aria-label="SKS terpilih" :aria-valuenow="selectedCredits" aria-valuemin="0" :aria-valuemax="maximumCredits"><span :style="{ width: `${maximumCredits ? selectedCredits / maximumCredits * 100 : 0}%` }" /></div>
               <small>{{ remainingCredits }} SKS masih dapat ditambahkan</small>
             </div>
             <div class="eligibility-grid mt-4">
-              <div><i class="uil uil-check-circle" aria-hidden="true" /><span><strong>Akademik</strong><small>IPS 3,62 · Maks. 24 SKS</small></span></div>
-              <div><i class="uil uil-check-circle" aria-hidden="true" /><span><strong>Keuangan</strong><small>Tidak ada pencekalan</small></span></div>
-              <div><i class="uil uil-check-circle" aria-hidden="true" /><span><strong>Prasyarat</strong><small>Seluruh mata kuliah terpenuhi</small></span></div>
+              <div><i class="uil uil-check-circle" aria-hidden="true" /><span><strong>Akademik</strong><small>Maksimum {{ maximumCredits }} SKS</small></span></div>
+              <div><i class="uil" :class="activeHolds.length ? 'uil-exclamation-triangle' : 'uil-check-circle'" aria-hidden="true" /><span><strong>Keuangan</strong><small>{{ activeHolds.length ? `${activeHolds.length} pencekalan aktif` : 'Tidak ada pencekalan' }}</small></span></div>
+              <div><i class="uil uil-check-circle" aria-hidden="true" /><span><strong>Prasyarat</strong><small>Diperiksa per kelas oleh server</small></span></div>
             </div>
           </div>
         </article>
@@ -273,7 +375,7 @@ onMounted(async () => {
           <header class="workflow-surface__header workflow-surface__header--plain"><div><span class="section-kicker">Jadwal penting</span><h2>Tahapan KRS</h2></div></header>
           <div class="workflow-surface__body pt-2">
             <ol class="timeline-list">
-              <li v-for="(step, index) in krsTimeline" :key="step.label"><span class="timeline-list__dot" :class="{ 'timeline-list__dot--active': index < 2 }" /><div><strong>{{ step.label }}</strong><small>{{ step.date }} · {{ step.state }}</small><p>{{ step.detail }}</p></div></li>
+              <li v-for="(step, index) in timelineRows" :key="step.label"><span class="timeline-list__dot" :class="{ 'timeline-list__dot--active': index < 2 }" /><div><strong>{{ step.label }}</strong><small>{{ step.date }} · {{ step.state }}</small><p>{{ step.detail }}</p></div></li>
             </ol>
           </div>
         </article>
@@ -303,12 +405,12 @@ onMounted(async () => {
             @change="toggleCourse(String(row.code))"
           >
         </template>
-        <template #cell-name="{ row, value }"><div class="course-name"><strong>{{ value }}</strong><small>{{ row.code }} · Kurikulum 2023</small></div></template>
+        <template #cell-name="{ row, value }"><div class="course-name"><strong>{{ value }}</strong><small>{{ row.code }} · {{ row.class }}</small></div></template>
         <template #cell-status="{ value }"><StatusBadge :status="String(value) === 'Terpilih' ? 'active' : 'blocked'" :label="String(value)" /></template>
       </DataTable>
       <div class="action-dock">
-        <div class="action-dock__summary"><strong>{{ selectedCount }} mata kuliah · {{ selectedCredits }} SKS dipilih</strong><small>Draf tersimpan otomatis pada 10.26 WIB.</small></div>
-        <div class="action-dock__buttons"><button class="btn btn-outline-secondary" type="button" :disabled="mutating || krsStatus !== 'draft' || !selectedCount" @click="saveDraft">Simpan draf</button><button class="btn btn-primary" type="button" :disabled="mutating || krsStatus !== 'draft' || !selectedCount" @click="openConfirmation">Ajukan ke dosen wali</button></div>
+        <div class="action-dock__summary"><strong>{{ selectedCount }} mata kuliah · {{ selectedCredits }} SKS dipilih</strong><small>{{ currentVersion ? `Draf versi ${currentVersion}` : 'Draf belum disimpan' }}</small></div>
+        <div class="action-dock__buttons"><button class="btn btn-outline-secondary" type="button" :disabled="mutating || !canSubmit" @click="saveDraft">Simpan draf</button><button class="btn btn-primary" type="button" :disabled="mutating || !canSubmit" @click="openConfirmation">Ajukan ke dosen wali</button></div>
       </div>
     </section>
 
@@ -319,11 +421,12 @@ onMounted(async () => {
         <span class="section-kicker">Konfirmasi pengajuan</span>
         <h2 id="submission-title">Ajukan {{ selectedCredits }} SKS kepada dosen wali?</h2>
         <p>Setelah diajukan, pilihan mata kuliah tidak dapat diubah sampai dosen wali memberikan keputusan atau mengembalikan KRS.</p>
-        <dl class="detail-list my-3"><div><dt>Mahasiswa</dt><dd>Raka Aditya Pratama</dd></div><div><dt>Mata kuliah</dt><dd>{{ selectedCount }} mata kuliah</dd></div><div><dt>Total beban</dt><dd>{{ selectedCredits }} SKS</dd></div></dl>
+        <dl class="detail-list my-3"><div><dt>Mahasiswa</dt><dd>{{ studentIdentity?.studentName }}</dd></div><div><dt>Mata kuliah</dt><dd>{{ selectedCount }} mata kuliah</dd></div><div><dt>Total beban</dt><dd>{{ selectedCredits }} SKS</dd></div></dl>
         <label class="declaration-check"><input v-model="acceptedDeclaration" class="form-check-input" type="checkbox"><span>Saya telah memeriksa pilihan kelas dan tidak menemukan bentrok jadwal.</span></label>
         <div class="d-grid grid-template-columns gap-2 mt-4"><button class="btn btn-outline-secondary" type="button" :disabled="mutating" @click="showConfirmation = false">Kembali periksa</button><button class="btn btn-primary" type="button" :disabled="!acceptedDeclaration || mutating" @click="submitKrs">{{ mutating ? 'Memproses...' : 'Ya, ajukan KRS' }}</button></div>
       </div>
     </section>
+    </template>
   </div>
 </template>
 

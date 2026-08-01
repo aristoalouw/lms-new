@@ -34,7 +34,7 @@ export interface AcademicAdministrationMockState {
 }
 
 const program: AcademicProgramStudy = { id: 'management-s1', facultyId: 'faculty-economics', code: 'MNJ', name: 'S1 Manajemen', level: 'S1', active: true, accreditationStatus: 'Baik Sekali', accreditationExpiresAt: '2027-03-31', version: 1 }
-const period: AcademicPeriodDefinition = { id: '2025-2026-2', academicYear: '2025/2026', term: 'EVEN', startsAt: '2026-02-02T00:00:00.000Z', endsAt: '2026-08-31T16:59:59.000Z', krsOpensAt: '2026-01-12T00:00:00.000Z', krsClosesAt: '2026-01-23T16:59:59.000Z', active: true, version: 1 }
+const period: AcademicPeriodDefinition = { id: '2025-2026-2', academicYear: '2025/2026', term: 'EVEN', startsAt: '2026-02-02T00:00:00.000Z', endsAt: '2026-08-31T16:59:59.000Z', krsOpensAt: '2026-01-12T00:00:00.000Z', krsClosesAt: '2026-01-23T16:59:59.000Z', krsRevisionClosesAt: '2026-01-30T16:59:59.000Z', krsStatus: 'KRS_CLOSED', active: true, version: 1 }
 const course: AcademicCourseVersion = { id: 'course-mgt401_v1', courseId: 'course-mgt401', code: 'MGT401', name: 'Manajemen Strategik', programStudyId: program.id, version: 1, credits: 3, semesterRecommendation: 6, prerequisiteCourseCodes: ['MGT301'], equivalentCourseCodes: [], status: 'ACTIVE', createdAt: '2025-11-01T00:00:00.000Z', createdBy: 'academic-001', immutable: true }
 const curriculum: CurriculumVersion = { id: 'curriculum-mgt-2023_v1', curriculumId: 'curriculum-mgt-2023', programStudyId: program.id, name: 'Kurikulum Manajemen 2023', version: 1, effectiveCohortFrom: 2023, effectiveCohortTo: 2026, courseVersionIds: [course.id], totalCredits: 144, status: 'ACTIVE', createdAt: '2025-11-01T00:00:00.000Z', createdBy: 'academic-001', immutable: true }
 const profile: StudentAcademicProfileRecord = {

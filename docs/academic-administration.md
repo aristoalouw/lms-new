@@ -6,6 +6,8 @@ Modul administrasi akademik melengkapi alur KRS dan pelaksanaan kelas dengan dat
 
 - Versi mata kuliah, kurikulum, RPS, nilai terbit, catatan bimbingan, dan entri logbook yang telah dibuat bersifat imutabel.
 - Profil mahasiswa menyimpan status terkini sekaligus histori status append-only. Persetujuan cuti memperbarui permohonan dan profil dalam satu transaksi Firestore.
+- Onboarding mahasiswa memvalidasi akun `student`, dosen wali, prodi, periode, dan kurikulum aktif sebelum menulis `academicStudentProfiles`, `studentAcademicStates`, dan `billingStudentProfiles` dalam satu transaksi. NIM dan UID dijaga unik dengan key document deterministik.
+- Penyimpanan periode memperbarui `academicPeriodDefinitions` dan kebijakan `academicPeriods` secara atomik; status serta batas revisi KRS wajib eksplisit dan tidak ditebak dari tanggal server.
 - KHS dan transkrip provisional hanya dihitung dari `academicGradeRecords` yang menunjuk publikasi nilai. Draf gradebook tidak menjadi sumber hasil belajar.
 - Catatan privat dosen wali dihapus dari respons mahasiswa dan wali pada service layer; koleksi akademik tetap ditolak untuk akses langsung oleh klien melalui Firestore Rules.
 - Mutasi yang dapat dikirim ulang memakai `Idempotency-Key`. Perubahan state memakai `expectedVersion` untuk mencegah lost update.
@@ -39,12 +41,14 @@ Daftar lengkap permission dan scope ada di [matriks role](./role-matrix.md). Men
 - `POST /api/academic/master/programs` dan `/periods`: master mutable dengan optimistic version.
 - `POST /api/academic/master/courses` dan `/curricula`: pembuatan snapshot versi imutabel melalui head atomik.
 - `POST /api/academic/master/calendar`: agenda/deadline berversi dan scoped.
+- `POST /api/academic/students/onboard`: membuat atau memperbarui tiga proyeksi operasional mahasiswa dengan idempotency dan optimistic version.
+- `GET /api/academic/students/:studentId/onboarding`: membaca hasil onboarding lengkap dalam scope staf untuk koreksi berikutnya.
 
-Halaman `/akademik/administrasi` menggunakan endpoint tersebut dan menyesuaikan aksi dengan peran aktif. Staf mengelola program, status akreditasi, periode, mata kuliah, prasyarat, ekuivalensi, kurikulum, serta kalender melalui `/akademik/master`. `/akademik/krs` dan `/akademik/kelas` tetap menjadi ruang kerja terpisah untuk enrollment dan delivery kelas.
+Halaman `/akademik/administrasi` menggunakan endpoint tersebut dan menyesuaikan aksi dengan peran aktif. Staf mengelola program, status akreditasi, periode/kebijakan KRS, mata kuliah, prasyarat, ekuivalensi, kurikulum, serta kalender melalui `/akademik/master`. Akun mahasiswa yang telah dibuat administrator dihubungkan ke state akademik, KRS, dan billing melalui `/akademik/mahasiswa`. `/akademik/krs` dan `/akademik/kelas` tetap menjadi ruang kerja terpisah untuk enrollment dan delivery kelas.
 
 ## Firestore dan operasi
 
-Koleksi `academicProgramStudies`, `academicPeriodDefinitions`, `academicCourseHeads`, `academicCourseVersions`, `academicCurriculumHeads`, `academicCurriculumVersions`, `academicStudentProfiles`, `academicCalendarEvents`, `academicLeaveRequests`, `academicAdvisingSessions`, `academicRpsHeads`, `academicRpsVersions`, `academicTheses`, `academicMbkmActivities`, dan `academicGradeRecords` hanya dapat diakses Firebase Admin. Composite index untuk antrean tinjauan, pembimbing, mahasiswa/periode, status, dan nilai didefinisikan pada `firebase/firestore.indexes.json`.
+Koleksi `academicProgramStudies`, `academicPeriodDefinitions`, `academicPeriods`, `academicCourseHeads`, `academicCourseVersions`, `academicCurriculumHeads`, `academicCurriculumVersions`, `academicStudentProfiles`, `studentAcademicStates`, `billingStudentProfiles`, `academicStudentUidKeys`, `academicStudentNumberKeys`, `academicCalendarEvents`, `academicLeaveRequests`, `academicAdvisingSessions`, `academicRpsHeads`, `academicRpsVersions`, `academicTheses`, `academicMbkmActivities`, dan `academicGradeRecords` hanya dapat diakses Firebase Admin. Composite index untuk antrean tinjauan, pembimbing, mahasiswa/periode, status, dan nilai didefinisikan pada `firebase/firestore.indexes.json`.
 
 Sebelum deploy perubahan schema, jalankan:
 

@@ -15,6 +15,8 @@ Neo Feeder tidak boleh dijadikan alasan untuk menimpa data internal otomatis. La
 
 Endpoint privat `/api/imports` mengimplementasikan staging CSV/TSV untuk master mahasiswa, mata kuliah, dan nilai. XLSX harus dikonversi menjadi CSV UTF-8 atau TSV sebelum diproses; parser XLSX langsung belum dianggap selesai. UI operator tersedia di `/impor`.
 
+Dataset `students` pada workflow ini adalah registry migrasi beserta provenance dan kompensasinya; commit tidak membuat akun Firebase atau menebak dosen wali, kurikulum, batas SKS, IPK, dan state billing. Setelah akun student serta master nyata tersedia, staf memakai `/akademik/mahasiswa` untuk materialisasi atomik ke profil akademik, state KRS, dan profil billing. Pemisahan ini mencegah CSV enam kolom menghasilkan data operasional palsu. Bulk onboarding baru boleh dilakukan dengan template operasional lengkap dan mekanisme kompensasi untuk seluruh proyeksi.
+
 Alur yang tersedia adalah:
 
 1. `POST /api/imports/preview` memvalidasi maksimal 5 MB/5.000 baris, menghitung SHA-256, menormalisasi header dan nilai, memeriksa scope program studi, serta mengklasifikasikan `CREATE`, `UPDATE`, `SKIP`, dan `INVALID`.

@@ -23,6 +23,7 @@
     "test:rules": "firebase emulators:exec --config firebase/firebase.json --project demo-lms-mvp --only firestore,storage \"vitest run tests/integration/firebase\"",
     "firebase:prepare:spark": "node scripts/prepare-firebase-spark.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:full-campus": "playwright test --config playwright.full-campus.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "seed:lms-mvp": "node scripts/seed-lms-mvp.mjs",

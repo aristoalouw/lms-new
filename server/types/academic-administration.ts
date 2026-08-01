@@ -20,6 +20,8 @@ export interface AcademicPeriodDefinition {
   endsAt: string
   krsOpensAt: string
   krsClosesAt: string
+  krsRevisionClosesAt: string
+  krsStatus: 'DRAFT' | 'KRS_OPEN' | 'KRS_CLOSED' | 'CLOSED'
   active: boolean
   version: number
 }

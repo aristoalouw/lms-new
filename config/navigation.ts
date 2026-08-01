@@ -26,6 +26,7 @@ export const navigation: NavigationGroup[] = [
       { label: 'Kelas & enrolment', to: '/admin/kelas', icon: 'uil-presentation-check', permission: 'classes:manage', feature: 'classes' },
       { label: 'Penerimaan', to: '/pmb', icon: 'uil-user-plus', permission: 'pmb.read', feature: 'admissions' },
       { label: 'Administrasi akademik', to: '/akademik/administrasi', icon: 'uil-book-open', permission: 'academic.read', feature: 'academic-admin' },
+      { label: 'Onboarding mahasiswa', to: '/akademik/mahasiswa', icon: 'uil-user-check', permission: 'academic.write', feature: 'academic-admin' },
       { label: 'KRS', to: '/akademik/krs', icon: 'uil-clipboard-alt', permission: 'academic.read', feature: 'krs' },
       { label: 'Pelaksanaan kelas', to: '/akademik/kelas', icon: 'uil-presentation-check', permission: 'academic.read', feature: 'academic-admin' },
       { label: 'Pembelajaran', to: '/pembelajaran', icon: 'uil-presentation-play', permission: 'learning.read', feature: 'learning' },

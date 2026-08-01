@@ -8,12 +8,13 @@ import {
   upsertAcademicProgram,
 } from '../../server/services/academic-administration'
 import { academicAdministrationState } from '../../server/services/academic-administration-state'
+import { krsModuleState, resetKrsModuleState } from '../../server/services/krs-state'
 import { authContext } from './fixtures'
 
 const staff = (programs = ['management-s1']) => authContext('academic-001', ['academic_staff'], programs)
 
 describe('academic master data management', () => {
-  beforeEach(() => { process.env.CAMPUS_DATA_MODE = 'mock'; resetAcademicAdministrationStateForTests() })
+  beforeEach(() => { process.env.CAMPUS_DATA_MODE = 'mock'; resetAcademicAdministrationStateForTests(); resetKrsModuleState() })
 
   it('updates a scoped program optimistically and idempotently', async () => {
     const input = { id: 'management-s1', facultyId: 'faculty-economics', code: 'MNJ', name: 'S1 Manajemen', level: 'S1', active: true, accreditationStatus: 'Unggul', accreditationExpiresAt: '2030-12-31', expectedVersion: 1 }
@@ -26,9 +27,10 @@ describe('academic master data management', () => {
   })
 
   it('creates a validated academic period with explicit KRS dates', async () => {
-    const result = await upsertAcademicPeriod(staff(), { id: '2026-2027-1', academicYear: '2026/2027', term: 'ODD', startsAt: '2026-09-01T00:00:00.000Z', endsAt: '2027-01-31T16:59:59.000Z', krsOpensAt: '2026-08-10T00:00:00.000Z', krsClosesAt: '2026-08-21T16:59:59.000Z', active: true, expectedVersion: 0 }, 'academic-period-0001')
-    expect(result.value).toMatchObject({ id: '2026-2027-1', version: 1, term: 'ODD' })
-    await expect(upsertAcademicPeriod(staff(), { id: 'bad-period', academicYear: '2026/2027', term: 'ODD', startsAt: '2027-01-01T00:00:00.000Z', endsAt: '2026-01-01T00:00:00.000Z', krsOpensAt: '2026-08-10T00:00:00.000Z', krsClosesAt: '2026-08-21T00:00:00.000Z', active: true, expectedVersion: 0 }, 'academic-period-0002')).rejects.toMatchObject({ statusCode: 400 })
+    const result = await upsertAcademicPeriod(staff(), { id: '2026-2027-1', academicYear: '2026/2027', term: 'ODD', startsAt: '2026-09-01T00:00:00.000Z', endsAt: '2027-01-31T16:59:59.000Z', krsOpensAt: '2026-08-10T00:00:00.000Z', krsClosesAt: '2026-08-21T16:59:59.000Z', krsRevisionClosesAt: '2026-09-04T16:59:59.000Z', krsStatus: 'KRS_OPEN', active: true, expectedVersion: 0 }, 'academic-period-0001')
+    expect(result.value).toMatchObject({ id: '2026-2027-1', version: 1, term: 'ODD', krsStatus: 'KRS_OPEN' })
+    expect(krsModuleState().periods.get('2026-2027-1')).toMatchObject({ status: 'KRS_OPEN', revisionClosesAt: '2026-09-04T16:59:59.000Z', version: 1 })
+    await expect(upsertAcademicPeriod(staff(), { id: 'bad-period', academicYear: '2026/2027', term: 'ODD', startsAt: '2027-01-01T00:00:00.000Z', endsAt: '2026-01-01T00:00:00.000Z', krsOpensAt: '2026-08-10T00:00:00.000Z', krsClosesAt: '2026-08-21T00:00:00.000Z', krsRevisionClosesAt: '2026-09-04T00:00:00.000Z', krsStatus: 'DRAFT', active: true, expectedVersion: 0 }, 'academic-period-0002')).rejects.toMatchObject({ statusCode: 400 })
   })
 
   it('creates immutable course versions with prerequisites and equivalences', async () => {

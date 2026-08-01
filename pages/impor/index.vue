@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ImportDataset, ImportIssue, ImportPreviewResult, ImportRun, ImportStagedRow } from '~/server/types/imports'
+import type { AcademicAdministrationWorkspace, AcademicProgramStudy } from '~/server/types/academic-administration'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Impor Data Bertahap' })
@@ -9,7 +10,8 @@ const config = useRuntimeConfig()
 const dataset = ref<ImportDataset>('students')
 const format = ref<'csv' | 'tsv'>('csv')
 const sourceName = ref('mahasiswa-2026.csv')
-const programStudyId = ref('management-s1')
+const programStudyId = ref('')
+const programs = ref<AcademicProgramStudy[]>([])
 const content = ref('')
 const current = ref<ImportPreviewResult | null>(null)
 const history = ref<ImportRun[]>([])
@@ -41,6 +43,7 @@ const samples: Record<ImportDataset, string> = {
 }
 
 content.value = samples.students
+const sampleFor = (value: ImportDataset) => samples[value].replaceAll('management-s1', programStudyId.value || 'program-studi-id')
 
 const randomKey = (prefix: string) => `${prefix}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const keyFor = (operation: string) => operationKeys[operation] ||= randomKey(operation)
@@ -64,8 +67,14 @@ const ensureSession = async () => {
 const loadHistory = async () => {
   try {
     await ensureSession()
-    const { data } = await $api.get<{ items: ImportRun[] }>('/imports', { params: { limit: 12 } })
-    history.value = data.items
+    const [historyResponse, academicResponse] = await Promise.all([
+      $api.get<{ items: ImportRun[] }>('/imports', { params: { limit: 12 } }),
+      $api.get<AcademicAdministrationWorkspace>('/academic/administration'),
+    ])
+    history.value = historyResponse.data.items
+    programs.value = academicResponse.data.programs.filter(item => item.active)
+    if (!programs.value.some(item => item.id === programStudyId.value)) programStudyId.value = programs.value[0]?.id || ''
+    if (content.value === samples.students) content.value = sampleFor('students')
   } catch (error) {
     errorMessage.value = readableError(error)
   }
@@ -126,7 +135,7 @@ const commit = async () => {
       expectedVersion: run.version,
     }, { headers: { 'Idempotency-Key': keyFor(`commit-${run.id}`) } })
     current.value.run = data.run
-    message.value = data.replayed ? 'Hasil commit idempoten dimuat kembali.' : `${data.run.counts.committed} perubahan berhasil diterapkan.`
+    message.value = data.replayed ? 'Hasil commit idempoten dimuat kembali.' : `${data.run.counts.committed} perubahan berhasil diterapkan.${data.run.dataset === 'students' ? ' Lanjutkan data mahasiswa ke Onboarding Mahasiswa agar profil akademik, KRS, dan billing aktif.' : ''}`
     await loadHistory()
   } catch (error) {
     errorMessage.value = readableError(error)
@@ -237,7 +246,7 @@ const historyColumns = [
 ]
 
 watch(dataset, (value) => {
-  content.value = samples[value]
+  content.value = sampleFor(value)
   sourceName.value = `${value}-2026.${format.value}`
   current.value = null
   delete operationKeys.preview
@@ -283,11 +292,12 @@ onMounted(loadHistory)
       <div class="workflow-surface__body">
         <div class="row g-3">
           <label class="col-sm-6 col-lg-3 form-label"><span>Dataset</span><select v-model="dataset" class="form-select"><option value="students">Mahasiswa</option><option value="courses">Mata kuliah</option><option value="grades">Nilai</option></select></label>
-          <label class="col-sm-6 col-lg-3 form-label"><span>Program studi</span><select v-model="programStudyId" class="form-select"><option value="management-s1">S1 Manajemen</option><option value="informatics-s1">S1 Informatika</option></select></label>
+          <label class="col-sm-6 col-lg-3 form-label"><span>Program studi</span><select v-model="programStudyId" class="form-select" required><option value="" disabled>Pilih program nyata</option><option v-for="program in programs" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label>
           <label class="col-sm-6 col-lg-3 form-label"><span>Format</span><select v-model="format" class="form-select"><option value="csv">CSV</option><option value="tsv">TSV</option></select></label>
           <label class="col-sm-6 col-lg-3 form-label"><span>Nama sumber</span><input v-model="sourceName" class="form-control" maxlength="120"></label>
           <label class="col-12 form-label"><span>Isi sumber</span><textarea v-model="content" class="form-control import-source" rows="9" spellcheck="false" aria-describedby="source-help" /></label>
           <p id="source-help" class="source-help mb-0"><i class="uil uil-shield-check" aria-hidden="true" /> Formula spreadsheet ditolak, identifier dideduplikasi, dan program studi diverifikasi terhadap scope akun.</p>
+          <p v-if="dataset === 'students'" class="source-help mb-0"><i class="uil uil-link" aria-hidden="true" /> Commit impor membentuk registry dan provenance migrasi. Aktivasi profil akademik/KRS/billing dilakukan melalui <NuxtLink to="/akademik/mahasiswa">Onboarding Mahasiswa</NuxtLink> setelah akun student, dosen wali, periode, dan kurikulum nyata tersedia.</p>
         </div>
       </div>
     </section>

@@ -1,6 +1,5 @@
 import type { CampusUser, UserRole } from '~/types/domain'
 import type { Permission } from '~/shared/auth'
-import { permissionsForRole } from '~/shared/auth'
 import { signInWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth'
 
 type ServerSession = {
@@ -43,31 +42,12 @@ const userFromSession = (session: ServerSession, preferredRole?: UserRole): Camp
   }
 }
 
-const demoUser: CampusUser = {
-  id: 'usr-demo-admin',
-  name: 'Alya Prameswari',
-  email: 'alya.prameswari@kampus.ac.id',
-  initials: 'AP',
-  roles: ['administrator', 'leader', 'academic_staff'],
-  activeRole: 'administrator',
-  unitId: 'universitas',
-  permissions: permissionsForRole('administrator'),
-  rolePermissions: {
-    administrator: permissionsForRole('administrator'),
-    leader: permissionsForRole('leader'),
-    academic_staff: permissionsForRole('academic_staff'),
-  },
-}
-
 export const useAuth = () => {
   const config = useRuntimeConfig()
-  const user = useState<CampusUser | null>('auth.user', () => {
-    if (!config.public.demoMode || config.public.featureProfile === 'lms-mvp') return null
-    return demoUser
-  })
+  const user = useState<CampusUser | null>('auth.user', () => null)
   const pending = useState<boolean>('auth.pending', () => false)
   const authError = useState<string | null>('auth.error', () => null)
-  const restored = useState<boolean>('auth.restored', () => Boolean(config.public.demoMode && config.public.featureProfile !== 'lms-mvp'))
+  const restored = useState<boolean>('auth.restored', () => false)
   const requestFetch = useRequestFetch()
 
   const isAuthenticated = computed(() => Boolean(user.value))
@@ -133,7 +113,7 @@ export const useAuth = () => {
   }
 
   const restoreSession = async () => {
-    if (restored.value || (config.public.demoMode && config.public.featureProfile !== 'lms-mvp')) return user.value
+    if (restored.value) return user.value
     pending.value = true
     try {
       const response = await requestFetch<{ session: ServerSession }>('/api/auth/session')

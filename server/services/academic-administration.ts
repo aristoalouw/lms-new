@@ -404,12 +404,33 @@ export async function upsertAcademicProgram(context: AuthContext, value: unknown
 }
 
 export async function upsertAcademicPeriod(context: AuthContext, value: unknown, key: string, event?: H3Event, _clock = new Date()): Promise<{ value: AcademicPeriodDefinition; replayed: boolean; auditId?: string }> {
-  idempotencyKey(key); requireMasterStaff(context); const body = requireRecord(value); rejectUnknown(body, ['id', 'academicYear', 'term', 'startsAt', 'endsAt', 'krsOpensAt', 'krsClosesAt', 'active', 'expectedVersion'])
+  idempotencyKey(key); requireMasterStaff(context); const body = requireRecord(value); rejectUnknown(body, ['id', 'academicYear', 'term', 'startsAt', 'endsAt', 'krsOpensAt', 'krsClosesAt', 'krsRevisionClosesAt', 'krsStatus', 'active', 'expectedVersion'])
   const id = safeId(body.id, 'id'), academicYear = requireString(body.academicYear, 'academicYear', { max: 20, pattern: /^\d{4}[/-]\d{4}$/ }), term = requireString(body.term, 'term', { max: 10 }) as AcademicPeriodDefinition['term']; if (!['ODD', 'EVEN', 'SHORT'].includes(term)) invalidInput('Term akademik tidak valid.')
-  const futureWindow = { maxFutureMs: 10 * 365 * 86_400_000 }, startsAt = normalizeIsoInstant(body.startsAt, 'startsAt', futureWindow), endsAt = normalizeIsoInstant(body.endsAt, 'endsAt', futureWindow), krsOpensAt = normalizeIsoInstant(body.krsOpensAt, 'krsOpensAt', futureWindow), krsClosesAt = normalizeIsoInstant(body.krsClosesAt, 'krsClosesAt', futureWindow); if (startsAt >= endsAt || krsOpensAt >= krsClosesAt || krsClosesAt > endsAt) invalidInput('Urutan waktu periode akademik tidak valid.')
-  const expectedVersion = requireInteger(body.expectedVersion, 'expectedVersion', 0), active = body.active === true, normalized = { id, academicYear, term, startsAt, endsAt, krsOpensAt, krsClosesAt, active, expectedVersion }, namespace = `academic:master:period:${context.uid}:${key}`
-  const result = await persistStableMaster({ collection: 'academicPeriodDefinitions', map: academicAdministrationState().periods, id, expectedVersion, namespace, hash: requestHash(normalized), build: current => { optimistic(current, expectedVersion, 'Periode akademik'); return { id, academicYear, term, startsAt, endsAt, krsOpensAt, krsClosesAt, active, version: expectedVersion + 1 } } })
-  if (result.replayed) return result; const audit = await appendAudit({ actor: context, action: 'ACADEMIC_PERIOD_UPSERTED', resourceType: 'academic_period', resourceId: id, before: { version: expectedVersion }, after: { version: result.value.version, academicYear, term, active }, event }); return { ...result, auditId: audit.id }
+  const futureWindow = { maxFutureMs: 10 * 365 * 86_400_000 }, startsAt = normalizeIsoInstant(body.startsAt, 'startsAt', futureWindow), endsAt = normalizeIsoInstant(body.endsAt, 'endsAt', futureWindow), krsOpensAt = normalizeIsoInstant(body.krsOpensAt, 'krsOpensAt', futureWindow), krsClosesAt = normalizeIsoInstant(body.krsClosesAt, 'krsClosesAt', futureWindow), krsRevisionClosesAt = normalizeIsoInstant(body.krsRevisionClosesAt ?? body.endsAt, 'krsRevisionClosesAt', futureWindow)
+  if (startsAt >= endsAt || krsOpensAt >= krsClosesAt || krsClosesAt > krsRevisionClosesAt || krsRevisionClosesAt > endsAt) invalidInput('Urutan waktu periode akademik dan jendela revisi KRS tidak valid.')
+  const krsStatus = requireString(body.krsStatus ?? 'DRAFT', 'krsStatus', { max: 20 }) as AcademicPeriodDefinition['krsStatus']; if (!['DRAFT', 'KRS_OPEN', 'KRS_CLOSED', 'CLOSED'].includes(krsStatus)) invalidInput('Status kebijakan KRS tidak valid.')
+  const expectedVersion = requireInteger(body.expectedVersion, 'expectedVersion', 0), active = body.active === true; if (!active && krsStatus === 'KRS_OPEN') invalidInput('KRS tidak dapat dibuka pada periode yang tidak aktif.')
+  const normalized = { id, academicYear, term, startsAt, endsAt, krsOpensAt, krsClosesAt, krsRevisionClosesAt, krsStatus, active, expectedVersion }, namespace = `academic:master:period:${context.uid}:${key}`, hash = requestHash(normalized)
+  const build = (current?: AcademicPeriodDefinition): AcademicPeriodDefinition => { optimistic(current, expectedVersion, 'Periode akademik'); return { id, academicYear, term, startsAt, endsAt, krsOpensAt, krsClosesAt, krsRevisionClosesAt, krsStatus, active, version: expectedVersion + 1 } }
+  let result: { value: AcademicPeriodDefinition; replayed: boolean }
+  if (dataMode() === 'mock') {
+    const state = academicAdministrationState(), prior = state.idempotency.get(namespace)
+    if (prior) { if (prior.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk master data berbeda.'); return { value: clone(prior.response as AcademicPeriodDefinition), replayed: true } }
+    const period = build(state.periods.get(id)); state.periods.set(id, clone(period)); krsModuleState().periods.set(id, { id, status: krsStatus, krsOpensAt, krsClosesAt, revisionClosesAt: krsRevisionClosesAt, version: period.version }); state.idempotency.set(namespace, { requestHash: hash, response: period, createdAt: new Date().toISOString() }); result = { value: period, replayed: false }
+  } else {
+    const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+    const definitionRef = db.collection('academicPeriodDefinitions').doc(id), policyRef = db.collection('academicPeriods').doc(id), idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace))
+    result = await db.runTransaction(async transaction => {
+      const [snapshot, prior] = await Promise.all([transaction.get(definitionRef), transaction.get(idemRef)])
+      if (prior.exists) { const stored = prior.data() as { requestHash: string; response: AcademicPeriodDefinition }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk master data berbeda.'); return { value: stored.response, replayed: true } }
+      const period = build(snapshot.exists ? ({ id: snapshot.id, ...snapshot.data() } as AcademicPeriodDefinition) : undefined), createdAt = new Date().toISOString()
+      transaction.set(definitionRef, period)
+      transaction.set(policyRef, { id, status: krsStatus, krsOpensAt, krsClosesAt, revisionClosesAt: krsRevisionClosesAt, version: period.version })
+      transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: hash, response: period, createdAt }, createdAt, IDEM_TTL_MS))
+      return { value: period, replayed: false }
+    })
+  }
+  if (result.replayed) return result; const audit = await appendAudit({ actor: context, action: 'ACADEMIC_PERIOD_UPSERTED', resourceType: 'academic_period', resourceId: id, before: { version: expectedVersion }, after: { version: result.value.version, academicYear, term, active, krsStatus }, event }); return { ...result, auditId: audit.id }
 }
 
 export async function createAcademicCourseVersion(context: AuthContext, value: unknown, key: string, event?: H3Event, clock = new Date()): Promise<{ value: AcademicCourseVersion; replayed: boolean; auditId?: string }> {

@@ -105,7 +105,18 @@ const roleOptions = computed(() => isLmsMvp.value
   : allRoleOptions)
 const roleLabels = Object.fromEntries(allRoleOptions.map((option) => [option.value, option.label])) as Record<AccountRole, string>
 const statusLabels: Record<AccountStatus, string> = { active: 'Aktif', disabled: 'Dinonaktifkan', blocked: 'Diblokir' }
+const splitList = (value: string) => [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))]
 const unitOptions = computed(() => [...new Set(programStudies.value.map(program => program.facultyId))].sort())
+const unitChoiceOptions = computed(() => unitOptions.value.map(value => ({ value, label: value })))
+const programChoiceOptions = computed(() => programStudies.value.map(program => ({ value: program.id, label: `${program.code} · ${program.name}` })))
+const selectedUnitIds = computed<string[]>({
+  get: () => splitList(form.unitIds),
+  set: value => { form.unitIds = value.join(', ') },
+})
+const selectedProgramStudyIds = computed<string[]>({
+  get: () => splitList(form.programStudyIds),
+  set: value => { form.programStudyIds = value.join(', ') },
+})
 const tableColumns = [
   { key: 'identity', label: 'Pengguna', sortable: true },
   { key: 'roles', label: 'Role & akses', sortable: false },
@@ -127,7 +138,6 @@ const activeOnPage = computed(() => pageData.value.items.filter((account) => acc
 const restrictedOnPage = computed(() => pageData.value.items.filter((account) => account.status !== 'active').length)
 const guardianOnPage = computed(() => pageData.value.items.filter((account) => account.roles.includes('guardian')).length)
 
-const splitList = (value: string) => [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))]
 const canonicalIds = (value: string, label: string) => parseCanonicalScopeInput(value, label)
 const errorText = (error: unknown) => {
   if (!error || typeof error !== 'object') return 'Permintaan tidak dapat diproses.'
@@ -341,7 +351,7 @@ onMounted(() => Promise.all([loadAccounts(), loadProgramStudies()]))
           <label><span>Pencarian</span><input v-model="filters.search" class="form-control form-control-sm" type="search" placeholder="Nama, email, atau ID"></label>
           <label><span>Status</span><select v-model="filters.status" class="form-select form-select-sm"><option value="">Semua status</option><option value="active">Aktif</option><option value="disabled">Dinonaktifkan</option><option value="blocked">Diblokir</option></select></label>
           <label><span>Role</span><select v-model="filters.role" class="form-select form-select-sm"><option value="">Semua role</option><option v-for="role in roleOptions" :key="role.value" :value="role.value">{{ role.label }}</option></select></label>
-          <label><span>Program studi</span><input v-model="filters.programStudyId" class="form-control form-control-sm" placeholder="management-s1"></label>
+          <label><span>Program studi</span><select v-model="filters.programStudyId" class="form-select form-select-sm"><option value="">Semua lingkup</option><option v-for="program in programStudies" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label>
           <button class="btn btn-sm btn-outline-secondary align-self-end" type="submit" :disabled="loading"><i class="uil uil-filter me-1" aria-hidden="true" />Terapkan</button>
         </form>
       </section>
@@ -412,8 +422,8 @@ onMounted(() => Promise.all([loadAccounts(), loadProgramStudies()]))
               <label class="form-field"><span>Angkatan</span><input v-model="form.cohortYears" class="form-control" inputmode="numeric" placeholder="2026"></label>
             </div>
             <div v-else class="form-grid">
-              <label class="form-field"><span>Unit</span><input v-model="form.unitIds" class="form-control" list="account-unit-options" placeholder="Pilih atau masukkan ID unit"><datalist id="account-unit-options"><option v-for="unitId in unitOptions" :key="unitId" :value="unitId" /></datalist><small>ID tanpa spasi, contoh: stt-saint-paul.</small></label>
-              <label class="form-field"><span>Program studi</span><input v-model="form.programStudyIds" class="form-control" list="account-program-options" placeholder="Pilih atau masukkan ID program"><datalist id="account-program-options"><option v-for="program in programStudies" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></datalist><small>Gunakan koma untuk beberapa program studi.</small></label>
+              <label class="form-field"><span>Unit</span><ChoiceSelect v-model="selectedUnitIds" :options="unitChoiceOptions" multiple aria-label="Pilih unit akses" /><small>Pilihan berasal dari fakultas/unit pada master program studi.</small></label>
+              <label class="form-field"><span>Program studi</span><ChoiceSelect v-model="selectedProgramStudyIds" :options="programChoiceOptions" multiple aria-label="Pilih program studi akses" /><small>Pilih satu atau beberapa program studi resmi.</small></label>
               <label class="form-field"><span>Angkatan</span><input v-model="form.cohortYears" class="form-control" inputmode="numeric" placeholder="2023, 2024"></label>
               <label class="form-field"><span>ID mahasiswa</span><input v-model="form.studentIds" class="form-control" placeholder="student-001" data-clarity-mask="true"></label>
             </div>

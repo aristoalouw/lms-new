@@ -24,26 +24,41 @@ export function scrubSentryValue(value: unknown, depth = 0): unknown {
 export function sanitizeSentryEvent<T extends Record<string, any>>(event: T): T {
   const candidate = event as Record<string, any>
   if (candidate.request) {
-    delete candidate.request.cookies
-    delete candidate.request.data
-    delete candidate.request.env
-    delete candidate.request.fragment
-    delete candidate.request.headers
-    delete candidate.request.query_string
-    candidate.request.url = typeof candidate.request.url === 'string' ? sanitizeSentryUrl(candidate.request.url) : candidate.request.url
+    candidate.request = {
+      ...(typeof candidate.request.method === 'string' ? { method: candidate.request.method.slice(0, 12).toUpperCase() } : {}),
+      ...(typeof candidate.request.url === 'string' ? { url: sanitizeSentryUrl(candidate.request.url) } : {}),
+    }
   }
   delete candidate.user
-  candidate.message = typeof candidate.message === 'string' ? sanitizeSentryText(candidate.message) : candidate.message
-  candidate.logentry = scrubSentryValue(candidate.logentry)
+  delete candidate.message
+  delete candidate.logentry
+  delete candidate.extra
+  delete candidate.contexts
+  delete candidate.fingerprint
   candidate.breadcrumbs = Array.isArray(candidate.breadcrumbs)
-    ? candidate.breadcrumbs.slice(-50).map((breadcrumb: Record<string, unknown>) => scrubSentryValue(breadcrumb))
+    ? candidate.breadcrumbs.slice(-50).map((breadcrumb: Record<string, unknown>) => ({
+        ...(typeof breadcrumb.category === 'string' ? { category: sanitizeSentryText(breadcrumb.category).slice(0, 80) } : {}),
+        ...(typeof breadcrumb.type === 'string' ? { type: breadcrumb.type.slice(0, 40) } : {}),
+        ...(typeof breadcrumb.level === 'string' ? { level: breadcrumb.level.slice(0, 20) } : {}),
+        ...(typeof breadcrumb.timestamp === 'number' ? { timestamp: breadcrumb.timestamp } : {}),
+      }))
     : candidate.breadcrumbs
-  candidate.extra = scrubSentryValue(candidate.extra)
-  candidate.contexts = scrubSentryValue(candidate.contexts)
-  candidate.tags = scrubSentryValue(candidate.tags)
+  const allowedTags = new Set(['request_id', 'request_method', 'error_code', 'feature_profile'])
+  candidate.tags = candidate.tags && typeof candidate.tags === 'object'
+    ? Object.fromEntries(Object.entries(candidate.tags).filter(([key]) => allowedTags.has(key)).map(([key, value]) => [key, sanitizeSentryText(String(value)).slice(0, 120)]))
+    : candidate.tags
   candidate.transaction = typeof candidate.transaction === 'string' ? sanitizeSentryText(candidate.transaction) : candidate.transaction
-  candidate.exception?.values?.forEach((exception: { value?: string }) => {
-    if (exception.value) exception.value = sanitizeSentryText(exception.value)
+  candidate.exception?.values?.forEach((exception: { value?: string; stacktrace?: { frames?: Array<Record<string, unknown>> } }) => {
+    if (exception.value) exception.value = '[Pesan teknis disaring]'
+    if (Array.isArray(exception.stacktrace?.frames)) {
+      exception.stacktrace.frames = exception.stacktrace.frames.map(frame => ({
+        ...('filename' in frame ? { filename: frame.filename } : {}),
+        ...('function' in frame ? { function: frame.function } : {}),
+        ...('lineno' in frame ? { lineno: frame.lineno } : {}),
+        ...('colno' in frame ? { colno: frame.colno } : {}),
+        ...('in_app' in frame ? { in_app: frame.in_app } : {}),
+      }))
+    }
   })
   return candidate as T
 }

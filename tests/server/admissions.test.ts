@@ -12,6 +12,7 @@ import {
   submitAdmissionApplication,
 } from '../../server/services/admissions'
 import { admissionModuleState, resetAdmissionModuleState } from '../../server/services/admissions-state'
+import { createAdmissionWave, updateAdmissionWave } from '../../server/services/admissions-catalog'
 import { accountRuntimeForTests, createAccount, resetAccountStateForTests } from '../../server/services/accounts'
 import type { AuthContext } from '../../server/types/auth'
 import { CampusError } from '../../server/utils/errors'
@@ -99,10 +100,34 @@ describe('admission workflow', () => {
     resetAdmissionModuleState()
   })
 
-  it('publishes stable catalog identifiers without exposing server configuration', () => {
-    const catalog = admissionCatalog()
+  it('publishes stable catalog identifiers without exposing server configuration', async () => {
+    const catalog = await admissionCatalog()
     expect(catalog.programs.map(item => item.id)).toContain('management-s1')
     expect(catalog.waves[0]).toMatchObject({ id: '2026-wave-3', currency: 'IDR', registrationFee: 500_000 })
+  })
+
+  it('mengelola gelombang Firebase-ready secara scoped, idempotent, dan versioned', async () => {
+    const input = {
+      id: '2027-wave-1', academicYear: '2027/2028', label: 'Gelombang 1',
+      opensAt: '2027-01-01T00:00:00+07:00', closesAt: '2027-03-31T23:59:00+07:00',
+      registrationFee: 500_000, active: false, programStudyIds: ['management-s1'], capacity: 150,
+    }
+    const created = await createAdmissionWave(admissions(), input, 'admission-wave-key-0001')
+    const replay = await createAdmissionWave(admissions(), input, 'admission-wave-key-0001')
+    expect(created).toMatchObject({ replayed: false, wave: { id: input.id, version: 1, capacity: 150 } })
+    expect(replay).toMatchObject({ replayed: true, wave: { id: input.id, version: 1 } })
+
+    const updated = await updateAdmissionWave(admissions(), input.id, {
+      ...input, label: 'Gelombang Reguler 1', active: true, expectedVersion: 1,
+    })
+    expect(updated.wave).toMatchObject({ label: 'Gelombang Reguler 1', active: true, version: 2 })
+    await expect(updateAdmissionWave(admissions(), input.id, {
+      ...input, expectedVersion: 1,
+    })).rejects.toMatchObject({ statusCode: 409, code: 'VERSION_CONFLICT' })
+
+    await expect(createAdmissionWave(admissions(), {
+      ...input, id: '2027-wave-other', programStudyIds: ['accounting-s1'],
+    }, 'admission-wave-key-0002')).rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' })
   })
 
   it('submits once, stores only a fingerprint for identity, and never returns it', async () => {
@@ -148,7 +173,9 @@ describe('admission workflow', () => {
     expect(scoped.items.every(item => item.programStudyId === 'management-s1')).toBe(true)
     await expect(getAdmissionApplication(admissions(), submitted.application.id))
       .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
-    expect((await listAdmissionApplications(admin(), { programStudyId: 'informatics-s1' })).items).toHaveLength(1)
+    expect((await listAdmissionApplications(admissions(['informatics-s1']), { programStudyId: 'informatics-s1' })).items).toHaveLength(1)
+    await expect(listAdmissionApplications(admin(), { programStudyId: 'informatics-s1' }))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
   })
 
   it('lets only the matching applicant claim and view an unlinked application', async () => {

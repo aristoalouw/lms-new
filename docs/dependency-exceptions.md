@@ -1,6 +1,6 @@
 # Dependency security exceptions
 
-Last reviewed: 2026-08-01
+Last reviewed: 2026-08-12
 
 ## Production dependency chain
 
@@ -26,3 +26,7 @@ Installing `firebase-tools@15.24.0` membuat total audit penuh menjadi sembilan
 moderate, termasuk jalur local/CI-only `firebase-tools`,
 `@google-cloud/pubsub`, dan `@opentelemetry/core`. Paket tersebut tidak masuk
 production image dan hanya dipakai untuk Firebase emulator/deploy tooling.
+
+Nuxt 3.21.11 dan override patch-level yang dipin menutup seluruh advisory
+high/critical yang diketahui pada release ini (`brace-expansion`, `fast-uri`,
+`ip-address`, `js-yaml`, dan `undici`) tanpa memakai `npm audit fix --force`.

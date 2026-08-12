@@ -20,12 +20,13 @@
     "typecheck": "nuxt typecheck",
     "test": "vitest run",
     "test:api": "vitest run tests/server tests/security",
-    "test:rules": "firebase emulators:exec --config firebase/firebase.json --project demo-lms-mvp --only firestore,storage \"vitest run tests/integration/firebase\"",
+    "test:rules": "firebase emulators:exec --config firebase/firebase.json --project demo-lms-mvp --only firestore,storage \"vitest run tests/integration/firebase --no-file-parallelism\"",
     "firebase:prepare:spark": "node scripts/prepare-firebase-spark.mjs",
     "test:e2e": "playwright test",
     "test:e2e:full-campus": "playwright test --config playwright.full-campus.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "verify:hostinger": "node scripts/verify-hostinger-release.mjs",
     "seed:lms-mvp": "node scripts/seed-lms-mvp.mjs",
     "bootstrap:lms-admin": "node scripts/bootstrap-lms-admin.mjs"
   },
@@ -42,7 +43,7 @@
     "jquery": "3.7.1",
     "lodash": "4.18.1",
     "moment": "2.30.1",
-    "nuxt": "3.21.9",
+    "nuxt": "3.21.11",
     "qrcode": "1.5.4",
     "quill": "2.0.2",
     "select2": "4.1.0",
@@ -51,7 +52,7 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@firebase/rules-unit-testing": "5.0.1",
-    "@nuxt/webpack-builder": "3.21.9",
+    "@nuxt/webpack-builder": "3.21.11",
     "@playwright/test": "1.61.1",
     "@types/jquery": "4.0.1",
     "@types/lodash": "4.17.24",
@@ -68,5 +69,14 @@
     "typescript-eslint": "8.65.0",
     "vitest": "4.1.10",
     "vue-tsc": "3.3.7"
+  },
+  "overrides": {
+    "brace-expansion@4.0.0 - 5.0.8": "5.0.9",
+    "fast-uri@3.0.0 - 3.1.4": "3.1.5",
+    "hono@<=4.12.33": "4.13.1",
+    "ip-address@<=10.3.0": "10.5.0",
+    "js-yaml@4.0.0 - 4.3.0": "4.3.1",
+    "undici@<=6.27.0": "6.28.0",
+    "undici@>=8.0.0 <=8.8.0": "8.10.0"
   }
 }

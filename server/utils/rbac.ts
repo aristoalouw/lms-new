@@ -31,13 +31,22 @@ export function requirePermission(context: AuthContext, permission: Permission):
 }
 
 function hasProgramScope(context: AuthContext, programStudyId: string): boolean {
-  if (hasRole(context, 'administrator')) return true
   return context.scope.programStudyIds.length > 0 && context.scope.programStudyIds.includes(programStudyId)
+}
+
+function isPaymentGatewayActor(context: AuthContext): boolean {
+  const match = /^system:payment-gateway:([a-z][a-z0-9_-]{2,39})$/.exec(context.uid)
+  return Boolean(
+    match
+    && context.provider === 'firebase'
+    && context.roles.length === 1
+    && hasRole(context, 'finance_staff')
+    && context.scope.unitIds.includes(`integration:payment-gateway:${match[1]}`),
+  )
 }
 
 export function requireKrsApprovalScope(context: AuthContext, record: KrsRecord): void {
   requirePermission(context, 'krs:approve')
-  if (hasRole(context, 'administrator')) return
   if (hasRole(context, 'advisor') && record.advisorId === context.uid) return
   if (hasRole(context, 'academic_staff') && hasProgramScope(context, record.programStudyId)) return
   forbidden('KRS berada di luar lingkup perwalian atau program studi Anda.')
@@ -45,7 +54,7 @@ export function requireKrsApprovalScope(context: AuthContext, record: KrsRecord)
 
 export function requirePaymentScope(context: AuthContext, invoice: InvoiceRecord): void {
   requirePermission(context, 'payments:record')
-  if (hasRole(context, 'administrator')) return
+  if (isPaymentGatewayActor(context)) return
   if (hasRole(context, 'finance_staff') && hasProgramScope(context, invoice.programStudyId)) return
   forbidden('Tagihan berada di luar lingkup program studi Anda.')
 }

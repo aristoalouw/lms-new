@@ -38,8 +38,8 @@ const evaluationForm = reactive({ score: 80, note: '', courseCode: '', credits: 
 
 const roles = computed(() => user.value?.roles || [])
 const isStudent = computed(() => roles.value.includes('student'))
-const isStaff = computed(() => roles.value.some(role => ['administrator', 'academic_staff'].includes(role)))
-const canGuide = computed(() => roles.value.some(role => ['administrator', 'academic_staff', 'advisor', 'lecturer'].includes(role)))
+const isStaff = computed(() => roles.value.includes('academic_staff'))
+const canGuide = computed(() => roles.value.some(role => ['academic_staff', 'advisor', 'lecturer'].includes(role)))
 const profile = computed(() => workspace.value?.profile)
 const activePeriod = computed(() => workspace.value?.periods.find(item => item.id === profile.value?.currentPeriodId) || workspace.value?.periods[0])
 const thesis = computed(() => workspace.value?.theses[0])

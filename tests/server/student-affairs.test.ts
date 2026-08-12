@@ -54,16 +54,16 @@ beforeEach(() => {
 })
 
 describe('student affairs scope and portfolio points', () => {
-  it('fails closed across student ownership and staff program scope while leaders can read all programs', async () => {
+  it('fails closed across student ownership and staff program scope without leader drill-down', async () => {
     const own = await listPortfolio(student('student-001'), query)
     const management = await listPortfolio(staff(), query)
     const outside = await listPortfolio(staff('accounting-s1'), query)
-    const all = await listPortfolio(leader(), query)
 
     expect(new Set(own.items.map((item) => item.studentId))).toEqual(new Set(['student-001']))
     expect(new Set(management.items.map((item) => item.programStudyId))).toEqual(new Set(['management-s1']))
     expect(outside.items).toEqual([])
-    expect(new Set(all.items.map((item) => item.programStudyId))).toEqual(new Set(['management-s1', 'informatics-s1']))
+    await expect(listPortfolio(leader(), query))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
     await expect(listPortfolio(student('student-001'), { ...query, studentId: 'student-002' }))
       .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
   })
@@ -239,14 +239,16 @@ describe('active-student letter issuance', () => {
   it('issues concurrent requests with unique sequential numbers and verifiable immutable hashes', async () => {
     const firstRequest = await requestActiveStudentLetter(student('student-001'), { purpose: 'Persyaratan administrasi program magang.' }, 'letter-request-student-001', undefined, clock)
     const secondRequest = await requestActiveStudentLetter(student('student-003', 'informatics-s1'), { purpose: 'Persyaratan administrasi program pertukaran.' }, 'letter-request-student-003', undefined, clock)
-    await transitionLetterRequest(administrator(), firstRequest.value.id, { targetStatus: 'VERIFIED', expectedVersion: 1 }, 'letter-verify-student-001', undefined, clock)
-    await transitionLetterRequest(administrator(), secondRequest.value.id, { targetStatus: 'VERIFIED', expectedVersion: 1 }, 'letter-verify-student-003', undefined, clock)
-    await expect(transitionLetterRequest(administrator(), firstRequest.value.id, { targetStatus: 'REJECTED', rejectionReason: 'Stale.', expectedVersion: 1 }, 'letter-transition-stale', undefined, clock))
+    await expect(transitionLetterRequest(administrator(), firstRequest.value.id, { targetStatus: 'VERIFIED', expectedVersion: 1 }, 'letter-admin-denied', undefined, clock))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
+    await transitionLetterRequest(staff(), firstRequest.value.id, { targetStatus: 'VERIFIED', expectedVersion: 1 }, 'letter-verify-student-001', undefined, clock)
+    await transitionLetterRequest(staff('informatics-s1'), secondRequest.value.id, { targetStatus: 'VERIFIED', expectedVersion: 1 }, 'letter-verify-student-003', undefined, clock)
+    await expect(transitionLetterRequest(staff(), firstRequest.value.id, { targetStatus: 'REJECTED', rejectionReason: 'Stale.', expectedVersion: 1 }, 'letter-transition-stale', undefined, clock))
       .rejects.toMatchObject({ statusCode: 409, code: 'VERSION_CONFLICT' } satisfies Partial<CampusError>)
 
     const [first, second] = await Promise.all([
-      issueActiveStudentLetter(administrator(), firstRequest.value.id, { expectedVersion: 2, file: file('letter-student-001', 'a'.repeat(64)) }, 'letter-issue-student-001', undefined, clock),
-      issueActiveStudentLetter(administrator(), secondRequest.value.id, { expectedVersion: 2, file: file('letter-student-003', 'b'.repeat(64)) }, 'letter-issue-student-003', undefined, clock),
+      issueActiveStudentLetter(staff(), firstRequest.value.id, { expectedVersion: 2, file: file('letter-student-001', 'a'.repeat(64)) }, 'letter-issue-student-001', undefined, clock),
+      issueActiveStudentLetter(staff('informatics-s1'), secondRequest.value.id, { expectedVersion: 2, file: file('letter-student-003', 'b'.repeat(64)) }, 'letter-issue-student-003', undefined, clock),
     ])
     expect([first.value.verificationNumber, second.value.verificationNumber].sort()).toEqual(['SKA/2026/000001', 'SKA/2026/000002'])
     for (const issuance of [first.value, second.value]) {
@@ -257,9 +259,10 @@ describe('active-student letter issuance', () => {
     }
     expect(studentAffairsStateForTests().letterCounters.get(2026)).toBe(2)
 
-    const replay = await issueActiveStudentLetter(administrator(), firstRequest.value.id, { expectedVersion: 2, file: file('letter-student-001', 'a'.repeat(64)) }, 'letter-issue-student-001', undefined, new Date('2026-07-22T08:00:00.000Z'))
+    const replay = await issueActiveStudentLetter(staff(), firstRequest.value.id, { expectedVersion: 2, file: file('letter-student-001', 'a'.repeat(64)) }, 'letter-issue-student-001', undefined, new Date('2026-07-22T08:00:00.000Z'))
     expect(replay).toMatchObject({ replayed: true, value: { verificationNumber: first.value.verificationNumber, recordHash: first.value.recordHash } })
-    expect((await listLetterRequests(leader(), query)).items).toHaveLength(2)
+    const allProgramsStaff = authContext('student-affairs-all', ['student_affairs_staff'], ['management-s1', 'informatics-s1'])
+    expect((await listLetterRequests(allProgramsStaff, query)).items).toHaveLength(2)
     expect((await getLetterDownloadReference(student('student-001'), firstRequest.value.id)).file.fileId).toBe('letter-student-001')
     await expect(getLetterDownloadReference(student('student-002'), firstRequest.value.id))
       .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)

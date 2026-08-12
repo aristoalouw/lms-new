@@ -36,7 +36,7 @@ const ruleDrafts = reactive<Record<string, string>>({})
 const issuanceDrafts = reactive<Record<string, EvidenceRef>>({})
 
 const isStudent = computed(() => user.value?.roles.includes('student') ?? false)
-const canManage = computed(() => user.value?.roles.some(role => role === 'student_affairs_staff' || role === 'administrator') ?? false)
+const canManage = computed(() => user.value?.roles.includes('student_affairs_staff') ?? false)
 const ownStudentId = computed(() => user.value?.studentId || user.value?.id || '')
 const tabs = [
   { id: 'portfolio', label: 'Portofolio', icon: 'uil-award' },

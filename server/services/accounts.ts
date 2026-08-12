@@ -620,7 +620,6 @@ function studentIdentityId(account: AccountRecord): string | undefined {
 }
 
 async function validateAccountReferences(account: AccountRecord, requireActivePrograms: boolean): Promise<void> {
-  if (serverFeatureProfile() !== 'lms-mvp') return
   const studentId = studentIdentityId(account)
 
   if (dataMode() === 'mock') {

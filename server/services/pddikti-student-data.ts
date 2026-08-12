@@ -28,7 +28,8 @@ const TRANSITIONS: Record<PddiktiStudentDataChangeRequest['status'], PddiktiStud
 function clone<T>(value: T): T { return structuredClone(value) }
 function safeId(value: unknown, label: string): string { return requireString(value, label, { max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]*$/ }) }
 function idempotencyKey(value: string): string { if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/.test(value)) invalidInput('Idempotency key PDM tidak valid.'); return value }
-function requirePdmWriter(context: AuthContext): void { requirePermission(context, 'pddikti:queue'); if (!hasRole(context, 'administrator', 'academic_staff')) forbidden('Perubahan Data Mahasiswa hanya dapat dikelola staf akademik.') }
+function requirePdmWriter(context: AuthContext): void { requirePermission(context, 'pddikti:queue'); if (!hasRole(context, 'academic_staff')) forbidden('Perubahan Data Mahasiswa hanya dapat dikelola staf akademik.') }
+function requirePdmReader(context: AuthContext): void { requirePermission(context, 'pddikti.read'); if (!hasRole(context, 'academic_staff')) forbidden('Data PDM hanya dapat dibaca staf akademik scoped.') }
 function scopedProgram(context: AuthContext, requested: unknown): string {
   const value = safeId(requested, 'programStudyId'), scoped = filterProgramScope(context, value)
   if (!scoped) invalidInput('programStudyId wajib.'); return scoped
@@ -58,7 +59,7 @@ function parseEvidence(value: unknown): string[] {
 }
 
 export async function listStudentDataChanges(context: AuthContext, input: { programStudyId: string; status?: string; studentId?: string }): Promise<PddiktiStudentDataChangeRequest[]> {
-  requirePermission(context, 'pddikti:view')
+  requirePdmReader(context)
   const programStudyId = scopedProgram(context, input.programStudyId)
   const status = input.status as PddiktiStudentDataChangeRequest['status'] | undefined
   if (status && !Object.keys(TRANSITIONS).includes(status)) invalidInput('Status PDM tidak valid.')
@@ -138,7 +139,7 @@ async function openReconciliations(programStudyId: string, periodId: string): Pr
 }
 
 export async function getDiplomaNumberEligibility(context: AuthContext, input: { studentId: string; programStudyId: string; periodId: string }, clock = new Date()): Promise<PddiktiDiplomaEligibility> {
-  requirePermission(context, 'pddikti:view')
+  requirePdmReader(context)
   const studentId = safeId(input.studentId, 'studentId'), programStudyId = scopedProgram(context, input.programStudyId), periodId = safeId(input.periodId, 'periodId')
   const [sources, mappings, pdm, reconciliations] = await Promise.all([listPddiktiSourceRecordsForScope(programStudyId, periodId), activeMappings(programStudyId), listStudentDataChanges(context, { programStudyId, studentId }), openReconciliations(programStudyId, periodId)])
   const student = sources.find(item => item.entityType === 'student' && item.id === studentId), studentNumber = String(student?.data.studentNumber || '')

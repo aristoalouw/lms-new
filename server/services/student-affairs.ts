@@ -240,7 +240,7 @@ function isScopedStaff(context: AuthContext, programStudyId: string): boolean {
 }
 
 function canReadProfile(context: AuthContext, profile: StudentAffairsProfile): boolean {
-  return hasRole(context, 'administrator', 'leader') || isScopedStaff(context, profile.programStudyId) || (hasRole(context, 'student') && studentCandidates(context).includes(profile.studentId))
+  return isScopedStaff(context, profile.programStudyId) || (hasRole(context, 'student') && studentCandidates(context).includes(profile.studentId))
 }
 
 function requireProfileRead(context: AuthContext, profile: StudentAffairsProfile): void {
@@ -248,11 +248,11 @@ function requireProfileRead(context: AuthContext, profile: StudentAffairsProfile
 }
 
 function requireStaffManage(context: AuthContext, programStudyId: string): void {
-  if (!hasRole(context, 'administrator') && !isScopedStaff(context, programStudyId)) forbidden('Anda tidak berwenang mengelola data kemahasiswaan ini.')
+  if (!isScopedStaff(context, programStudyId)) forbidden('Anda tidak berwenang mengelola data kemahasiswaan ini.')
 }
 
 function canReadStaffOnly(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'administrator', 'leader') || isScopedStaff(context, programStudyId)
+  return isScopedStaff(context, programStudyId)
 }
 
 async function loadCollection<T>(collection: string): Promise<T[]> {
@@ -301,8 +301,9 @@ function matchesSearch(record: unknown, search?: string): boolean {
 }
 
 async function authorizeListQuery(context: AuthContext, query: StudentAffairsListQuery): Promise<void> {
+  if (!hasRole(context, 'student', 'student_affairs_staff')) forbidden('Anda tidak memiliki akses ke data kemahasiswaan.')
   if (query.studentId) requireProfileRead(context, await loadProfile(query.studentId))
-  if (query.programStudyId && !hasRole(context, 'administrator', 'leader') && !isScopedStaff(context, query.programStudyId)) {
+  if (query.programStudyId && !isScopedStaff(context, query.programStudyId)) {
     if (!hasRole(context, 'student')) forbidden('Program studi berada di luar lingkup akses Anda.')
     const profile = await ownProfile(context)
     if (profile.programStudyId !== query.programStudyId) forbidden('Program studi berada di luar lingkup akses Anda.')
@@ -334,8 +335,7 @@ export function parseStudentAffairsListQuery(value: Record<string, unknown>): St
 function filterOwned<T extends { studentId: string; programStudyId: string }>(context: AuthContext, rows: T[], query: StudentAffairsListQuery): T[] {
   return rows.filter((row) => {
     const profile = state.profiles.get(row.studentId)
-    const readable = hasRole(context, 'administrator', 'leader')
-      || isScopedStaff(context, row.programStudyId)
+    const readable = isScopedStaff(context, row.programStudyId)
       || (hasRole(context, 'student') && studentCandidates(context).includes(row.studentId))
     return readable
       && (!query.studentId || row.studentId === query.studentId)
@@ -980,11 +980,10 @@ export async function transitionViolationCase(context: AuthContext, caseId: stri
 export async function listScholarshipPrograms(context: AuthContext, query: StudentAffairsListQuery): Promise<PaginatedResult<ScholarshipProgram>> {
   let profile: StudentAffairsProfile | undefined
   if (hasRole(context, 'student')) profile = await ownProfile(context)
-  else if (!hasRole(context, 'administrator', 'leader', 'student_affairs_staff')) forbidden('Anda tidak memiliki akses ke program beasiswa.')
+  else if (!hasRole(context, 'student_affairs_staff')) forbidden('Anda tidak memiliki akses ke program beasiswa.')
   const rows = dataMode() === 'mock' ? [...state.scholarshipPrograms.values()].map(clone) : await loadCollection<ScholarshipProgram>('scholarshipPrograms')
   const filtered = rows.filter((program) => {
-    const inScope = hasRole(context, 'administrator', 'leader')
-      || (hasRole(context, 'student_affairs_staff') && (program.programStudyIds.length === 0 || program.programStudyIds.some((id) => context.scope.programStudyIds.includes(id))))
+    const inScope = (hasRole(context, 'student_affairs_staff') && (program.programStudyIds.length === 0 || program.programStudyIds.some((id) => context.scope.programStudyIds.includes(id))))
       || (profile && (program.programStudyIds.length === 0 || program.programStudyIds.includes(profile.programStudyId)))
     return inScope && (!query.status || program.status === query.status) && matchesSearch(program, query.search)
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -1032,9 +1031,8 @@ function parseScholarshipProgram(value: unknown, clock: Date): Omit<ScholarshipP
 
 export async function saveScholarshipProgram(context: AuthContext, value: unknown, idempotencyKey: string, event?: H3Event, clock = new Date()): Promise<StudentAffairsWriteResult<ScholarshipProgram>> {
   const input = parseScholarshipProgram(value, clock)
-  if (input.programStudyIds.length === 0) {
-    if (!hasRole(context, 'administrator')) forbidden('Hanya administrator yang dapat membuat program lintas kampus.')
-  } else if (!hasRole(context, 'administrator') && (!hasRole(context, 'student_affairs_staff') || input.programStudyIds.some((id) => !context.scope.programStudyIds.includes(id)))) {
+  if (!hasRole(context, 'student_affairs_staff')) forbidden('Program beasiswa hanya dapat dikelola staf kemahasiswaan.')
+  if (input.programStudyIds.length > 0 && input.programStudyIds.some((id) => !context.scope.programStudyIds.includes(id))) {
     forbidden('Program studi beasiswa berada di luar lingkup akses Anda.')
   }
   const id = input.id ?? opaqueId('scholarship', `${context.uid}:${idempotencyKey}`)

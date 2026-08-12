@@ -83,6 +83,22 @@ describe('Firestore TTL safeguards', () => {
     }
   })
 
+  it('selects the full-campus ruleset explicitly for a full-campus Spark release', () => {
+    const outputDirectory = mkdtempSync(resolve(tmpdir(), 'campus-firebase-spark-'))
+    try {
+      execFileSync(process.execPath, [
+        resolve(process.cwd(), 'scripts/prepare-firebase-spark.mjs'),
+        `--out=${outputDirectory}`,
+        '--profile=full-campus',
+      ], { stdio: 'pipe' })
+
+      expect(readFileSync(resolve(outputDirectory, 'firestore.rules'), 'utf8'))
+        .toBe(readFileSync(resolve(process.cwd(), 'firebase/firestore.rules'), 'utf8'))
+    } finally {
+      rmSync(outputDirectory, { recursive: true, force: true })
+    }
+  })
+
   it('writes rate-limit bucket expiry with a TTL-safe Timestamp and cleanup grace', async () => {
     let written: Record<string, unknown> | undefined
     const reference = { id: 'hashed-rate-limit-key' }

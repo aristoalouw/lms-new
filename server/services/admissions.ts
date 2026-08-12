@@ -27,26 +27,12 @@ import { promoteApplicantAccount } from './accounts'
 import { requiredAdmissionDocumentsVerified } from './admissions-documents'
 import { admissionSelectionModuleState } from './admissions-selection-state'
 import { admissionModuleState } from './admissions-state'
+import { admissionProgramById, admissionWaveById } from './admissions-catalog'
+export { admissionCatalog, ADMISSION_PROGRAMS, ADMISSION_WAVES } from './admissions-catalog'
 
 const EMAIL_PATTERN = /^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{1,79}$/
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
-
-export const ADMISSION_PROGRAMS: readonly AdmissionProgram[] = [
-  { id: 'management-s1', code: 'MGT', name: 'S1 Manajemen', unitId: 'faculty-economics', active: true },
-  { id: 'accounting-s1', code: 'ACC', name: 'S1 Akuntansi', unitId: 'faculty-economics', active: true },
-  { id: 'informatics-s1', code: 'INF', name: 'S1 Informatika', unitId: 'faculty-engineering', active: true },
-  { id: 'information-systems-s1', code: 'INS', name: 'S1 Sistem Informasi', unitId: 'faculty-engineering', active: true },
-  { id: 'communication-science-s1', code: 'COM', name: 'S1 Ilmu Komunikasi', unitId: 'faculty-social-sciences', active: true },
-] as const
-
-export const ADMISSION_WAVES: readonly AdmissionWave[] = [
-  {
-    id: '2026-wave-3', academicYear: '2026/2027', label: 'Gelombang 3',
-    opensAt: '2026-07-01T00:00:00.000Z', closesAt: '2026-08-31T16:59:59.999Z',
-    registrationFee: 500_000, currency: 'IDR', active: true,
-  },
-] as const
 
 const REVIEW_TRANSITIONS: Record<AdmissionStatus, AdmissionStatus[]> = {
   SUBMITTED: ['UNDER_REVIEW'],
@@ -100,26 +86,11 @@ function anonymousActor(now: number): AuthContext {
   }
 }
 
-function programById(id: string): AdmissionProgram {
-  const program = ADMISSION_PROGRAMS.find(item => item.id === id && item.active)
-  if (!program) invalidInput('Program studi PMB tidak valid atau tidak aktif.')
-  return program
-}
-
-function waveById(id: string, now?: number): AdmissionWave {
-  const wave = ADMISSION_WAVES.find(item => item.id === id && item.active)
-  if (!wave) invalidInput('Gelombang PMB tidak valid atau tidak aktif.')
-  if (now !== undefined && (now < Date.parse(wave.opensAt) || now > Date.parse(wave.closesAt))) {
-    conflict('ADMISSION_WAVE_CLOSED', 'Gelombang pendaftaran belum dibuka atau telah ditutup.')
-  }
-  return wave
-}
-
-function normalizeSubmission(value: unknown, now: number): AdmissionSubmissionInput & {
+async function normalizeSubmission(value: unknown, now: number): Promise<AdmissionSubmissionInput & {
   identityNumber: string
   program: AdmissionProgram
   wave: AdmissionWave
-} {
+}> {
   const body = requireRecord(value)
   const allowed = new Set([
     'fullName', 'email', 'phone', 'identityNumber', 'programStudyId', 'admissionPathId',
@@ -137,6 +108,13 @@ function normalizeSubmission(value: unknown, now: number): AdmissionSubmissionIn
   if (!ADMISSION_PATH_IDS.includes(admissionPathId)) invalidInput('Jalur pendaftaran tidak valid.')
   if (!STUDY_MODE_IDS.includes(studyModeId)) invalidInput('Sistem perkuliahan tidak valid.')
   const graduationYear = requireInteger(body.graduationYear, 'graduationYear', 1950, new Date(now).getUTCFullYear())
+  const [program, wave] = await Promise.all([
+    admissionProgramById(programStudyId),
+    admissionWaveById(waveId, now),
+  ])
+  if (wave.programStudyIds.length && !wave.programStudyIds.includes(programStudyId)) {
+    invalidInput('Program studi tidak tersedia pada gelombang PMB yang dipilih.')
+  }
   return {
     fullName: cleanText(body.fullName, 'fullName', 150),
     email: normalizeEmail(body.email),
@@ -152,13 +130,13 @@ function normalizeSubmission(value: unknown, now: number): AdmissionSubmissionIn
       ? { sourceInformation: cleanText(body.sourceInformation, 'sourceInformation', 80) }
       : {}),
     consent: true,
-    program: programById(programStudyId),
-    wave: waveById(waveId, now),
+    program,
+    wave,
   }
 }
 
 function buildApplication(
-  normalized: ReturnType<typeof normalizeSubmission>,
+  normalized: Awaited<ReturnType<typeof normalizeSubmission>>,
   idempotencyKey: string,
   applicant: AuthContext | null,
   now: Date,
@@ -196,20 +174,6 @@ function buildApplication(
   }
 }
 
-export function admissionCatalog(): {
-  programs: AdmissionProgram[]
-  waves: AdmissionWave[]
-  paths: typeof ADMISSION_PATH_IDS
-  studyModes: typeof STUDY_MODE_IDS
-} {
-  return {
-    programs: structuredClone([...ADMISSION_PROGRAMS]),
-    waves: structuredClone([...ADMISSION_WAVES]),
-    paths: [...ADMISSION_PATH_IDS],
-    studyModes: [...STUDY_MODE_IDS],
-  }
-}
-
 export async function submitAdmissionApplication(
   value: unknown,
   idempotencyKey: string,
@@ -218,7 +182,7 @@ export async function submitAdmissionApplication(
   now = new Date(),
 ): Promise<{ application: AdmissionApplicationView; replayed: boolean; auditId?: string }> {
   if (applicant && !applicant.roles.includes('applicant')) forbidden('Hanya akun applicant yang dapat menautkan pendaftaran mandiri.')
-  const normalized = normalizeSubmission(value, now.getTime())
+  const normalized = await normalizeSubmission(value, now.getTime())
   const candidate = buildApplication(normalized, idempotencyKey, applicant, now)
   const payloadHash = requestHash({
     ...normalized,
@@ -303,7 +267,7 @@ export async function submitAdmissionApplication(
 }
 
 function staffCanRead(context: AuthContext): boolean {
-  return hasRole(context, 'admissions_staff', 'leader', 'administrator')
+  return hasRole(context, 'admissions_staff')
 }
 
 function requireStaffRead(context: AuthContext): void {
@@ -311,26 +275,26 @@ function requireStaffRead(context: AuthContext): void {
 }
 
 function requireProgramScope(context: AuthContext, programStudyId: string): void {
-  if (hasRole(context, 'administrator', 'leader')) return
-  if (!context.scope.programStudyIds.includes(programStudyId)) forbidden('Pendaftaran berada di luar lingkup program studi Anda.')
+  if (!hasRole(context, 'admissions_staff', 'finance_staff') || !context.scope.programStudyIds.includes(programStudyId)) {
+    forbidden('Pendaftaran berada di luar lingkup program studi Anda.')
+  }
 }
 
-function normalizeStaffProgram(context: AuthContext, requested?: string): string | undefined {
+async function normalizeStaffProgram(context: AuthContext, requested?: string): Promise<string | undefined> {
   if (requested) {
-    programById(requested)
+    await admissionProgramById(requested)
     requireProgramScope(context, requested)
     return requested
   }
-  if (hasRole(context, 'administrator', 'leader')) return undefined
   if (context.scope.programStudyIds.length === 1) return context.scope.programStudyIds[0]
   if (context.scope.programStudyIds.length > 1) invalidInput('programStudyId wajib dipilih untuk akun dengan beberapa lingkup.')
   forbidden('Akun tidak memiliki lingkup program studi PMB.')
 }
 
-function normalizeListOptions(context: AuthContext, options: AdmissionListOptions): Required<Pick<AdmissionListOptions, 'limit'>> & AdmissionListOptions {
-  const programStudyId = normalizeStaffProgram(context, options.programStudyId)
+async function normalizeListOptions(context: AuthContext, options: AdmissionListOptions): Promise<Required<Pick<AdmissionListOptions, 'limit'>> & AdmissionListOptions> {
+  const programStudyId = await normalizeStaffProgram(context, options.programStudyId)
   if (options.status && !ADMISSION_STATUSES.includes(options.status)) invalidInput('Status pendaftaran tidak valid.')
-  if (options.waveId) waveById(options.waveId)
+  if (options.waveId) await admissionWaveById(options.waveId)
   if (options.cursor && !SAFE_ID.test(options.cursor)) invalidInput('Cursor pendaftaran tidak valid.')
   return {
     ...options,
@@ -350,7 +314,7 @@ export async function listAdmissionApplications(
   rawOptions: AdmissionListOptions = {},
 ): Promise<AdmissionListResult> {
   requireStaffRead(context)
-  const options = normalizeListOptions(context, rawOptions)
+  const options = await normalizeListOptions(context, rawOptions)
   if (dataMode() === 'mock') {
     const records = [...admissionModuleState().applications.values()]
       .filter(record => recordMatchesList(record, options))
@@ -403,8 +367,7 @@ async function loadApplication(id: string): Promise<AdmissionApplicationRecord> 
 function canViewApplication(context: AuthContext, record: AdmissionApplicationRecord): boolean {
   if (record.applicantUid === context.uid || (context.roles.includes('applicant') && context.email?.toLowerCase() === record.email)) return true
   if (!staffCanRead(context)) return false
-  if (hasRole(context, 'administrator', 'leader')) return true
-  return context.scope.programStudyIds.includes(record.programStudyId)
+  return hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(record.programStudyId)
 }
 
 export async function getAdmissionApplication(context: AuthContext, id: string): Promise<AdmissionApplicationView> {
@@ -506,7 +469,7 @@ export async function reviewAdmissionApplication(
   idempotencyKey: string,
   event?: H3Event,
 ): Promise<{ application: AdmissionApplicationView; replayed: boolean; auditId?: string }> {
-  if (!hasRole(context, 'admissions_staff', 'administrator')) forbidden('Hanya petugas PMB yang dapat meninjau pendaftaran.')
+  if (!hasRole(context, 'admissions_staff')) forbidden('Hanya petugas PMB yang dapat meninjau pendaftaran.')
   if (!ADMISSION_STATUSES.includes(input.status)) invalidInput('Status tinjauan tidak valid.')
   const expectedVersion = requireInteger(input.expectedVersion, 'expectedVersion', 1)
   const notes = input.notes === undefined ? undefined : cleanText(input.notes, 'notes', 1_000)
@@ -606,7 +569,7 @@ export async function recordAdmissionFeeStatus(
   idempotencyKey: string,
   event?: H3Event,
 ): Promise<{ application: AdmissionApplicationView; replayed: boolean; auditId?: string }> {
-  if (!hasRole(context, 'finance_staff', 'administrator')) forbidden('Hanya petugas keuangan yang dapat memvalidasi biaya pendaftaran.')
+  if (!hasRole(context, 'finance_staff')) forbidden('Hanya petugas keuangan yang dapat memvalidasi biaya pendaftaran.')
   if (input.status !== 'PAID' && input.status !== 'WAIVED') invalidInput('Status biaya pendaftaran tidak valid.')
   const expectedVersion = requireInteger(input.expectedVersion, 'expectedVersion', 1)
   const externalReference = requireString(input.externalReference, 'externalReference', { max: 120, pattern: /^[A-Za-z0-9][A-Za-z0-9._:/-]+$/ })
@@ -687,9 +650,8 @@ function cohortYear(application: AdmissionApplicationRecord): number {
   return year
 }
 
-function studentNumberFor(application: AdmissionApplicationRecord, sequence: number): string {
-  const program = programById(application.programStudyId)
-  return `${String(cohortYear(application)).slice(-2)}${program.code}${String(sequence).padStart(5, '0')}`
+function studentNumberFor(application: AdmissionApplicationRecord, sequence: number, programCode: string): string {
+  return `${String(cohortYear(application)).slice(-2)}${programCode}${String(sequence).padStart(5, '0')}`
 }
 
 async function loadStudent(id: string): Promise<AdmissionStudentRecord> {
@@ -712,7 +674,7 @@ export async function convertAcceptedApplicant(
   idempotencyKey: string,
   event?: H3Event,
 ): Promise<AdmissionConversionResult> {
-  if (!hasRole(context, 'admissions_staff', 'administrator')) forbidden('Hanya petugas PMB yang dapat mengonversi pendaftar.')
+  if (!hasRole(context, 'admissions_staff')) forbidden('Hanya petugas PMB yang dapat mengonversi pendaftar.')
   const applicationId = requireString(id, 'applicationId', { max: 128, pattern: SAFE_ID })
   const expectedVersion = requireInteger(input.expectedVersion, 'expectedVersion', 1)
   const namespace = `admission-convert:${idempotencyKey}`
@@ -720,6 +682,9 @@ export async function convertAcceptedApplicant(
   let application: AdmissionApplicationRecord
   let student: AdmissionStudentRecord
   let replayed = false
+  const conversionSource = await loadApplication(applicationId)
+  requireProgramScope(context, conversionSource.programStudyId)
+  const conversionProgram = await admissionProgramById(conversionSource.programStudyId)
 
   const validateFresh = (current: AdmissionApplicationRecord): void => {
     requireProgramScope(context, current.programStudyId)
@@ -749,7 +714,7 @@ export async function convertAcceptedApplicant(
       student = {
         id: studentId,
         userUid: current.applicantUid!,
-        studentNumber: studentNumberFor(current, sequence),
+        studentNumber: studentNumberFor(current, sequence, conversionProgram.code),
         fullName: current.fullName,
         email: current.email,
         programStudyId: current.programStudyId,
@@ -800,7 +765,7 @@ export async function convertAcceptedApplicant(
       const studentRecord: AdmissionStudentRecord = {
         id: studentId,
         userUid: current.applicantUid!,
-        studentNumber: studentNumberFor(current, sequence),
+        studentNumber: studentNumberFor(current, sequence, conversionProgram.code),
         fullName: current.fullName,
         email: current.email,
         programStudyId: current.programStudyId,

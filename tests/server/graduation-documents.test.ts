@@ -167,7 +167,8 @@ describe('controlled graduation document issuance', () => {
     expect(await verifyGraduationDocument(authContext('student-999', ['student'], []), issued.document.verificationCode))
       .toEqual({ valid: false, verificationCode: issued.document.verificationCode })
     expect((await listGraduationDocuments(authContext('student-001', ['student'], []))).map(item => item.id)).toEqual([issued.document.id])
-    expect((await getGraduationDocument(authContext('leader-001', ['leader'], []), issued.document.id)).id).toBe(issued.document.id)
+    await expect(getGraduationDocument(authContext('leader-001', ['leader'], []), issued.document.id))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
   })
 
   it('returns a deterministic print payload and explicitly does not claim to generate a credential PDF', async () => {

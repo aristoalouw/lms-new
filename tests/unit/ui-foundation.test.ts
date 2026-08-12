@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { permissionsForRole, type Permission } from '../../shared/auth'
+import { permissionsForLmsMvpRole, type Permission } from '../../shared/auth'
 import { navigationCommandsForAccess } from '../../config/navigation'
 import { isFeatureEnabled, normalizeFeatureProfile } from '../../shared/features'
 import { usePrivateUpload } from '../../composables/usePrivateUpload'
@@ -67,7 +67,7 @@ describe('private LMS uploads', () => {
 describe('command palette authorization', () => {
   it('requires both an enabled feature and permission from the active role', () => {
     const profile = normalizeFeatureProfile('lms-mvp')
-    const studentPermissions = new Set<Permission>(permissionsForRole('student'))
+    const studentPermissions = new Set<Permission>(permissionsForLmsMvpRole('student'))
     const studentCommands = navigationCommandsForAccess(
       feature => isFeatureEnabled(profile, feature),
       permission => !permission || studentPermissions.has(permission as Permission),
@@ -85,7 +85,7 @@ describe('command palette authorization', () => {
       '/keuangan',
     ]))
 
-    const administratorPermissions = new Set<Permission>(permissionsForRole('administrator'))
+    const administratorPermissions = new Set<Permission>(permissionsForLmsMvpRole('administrator'))
     const administratorCommands = navigationCommandsForAccess(
       feature => isFeatureEnabled(profile, feature),
       permission => !permission || administratorPermissions.has(permission as Permission),

@@ -55,6 +55,8 @@ export interface EvaluationPeriodRecord {
 
 export interface EvaluationEnrollment {
   id: string
+  /** Canonical classEnrollments document ID; id may identify one lecturer target. */
+  sourceEnrollmentId?: string
   studentUid: string
   studentId: string
   lecturerId: string

@@ -18,7 +18,7 @@ import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireString } from '../utils/validation'
-import { ADMISSION_PROGRAMS, ADMISSION_WAVES } from './admissions'
+import { admissionProgramById, admissionWaveById } from './admissions-catalog'
 import { admissionModuleState } from './admissions-state'
 import { admissionSelectionModuleState } from './admissions-selection-state'
 
@@ -58,8 +58,7 @@ function cleanText(value: string, label: string, max: number): string {
 }
 
 function staffProgramScope(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'administrator')
-    || (hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(programStudyId))
+  return hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(programStudyId)
 }
 
 function requireStaffProgramScope(context: AuthContext, programStudyId: string): void {
@@ -67,22 +66,20 @@ function requireStaffProgramScope(context: AuthContext, programStudyId: string):
 }
 
 function canReadProgram(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'administrator', 'leader')
-    || (hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(programStudyId))
+  return hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(programStudyId)
 }
 
 function overlap(left: { startsAt: string; endsAt: string }, right: { startsAt: string; endsAt: string }): boolean {
   return Date.parse(left.startsAt) < Date.parse(right.endsAt) && Date.parse(right.startsAt) < Date.parse(left.endsAt)
 }
 
-function normalizedSessionInput(input: CreateSelectionSessionInput): CreateSelectionSessionInput {
+async function normalizedSessionInput(input: CreateSelectionSessionInput): Promise<CreateSelectionSessionInput> {
   const kind = requireString(input.kind, 'kind', { max: 30 }) as AdmissionSelectionKind
   if (!SESSION_KINDS.includes(kind)) invalidInput('Jenis sesi seleksi tidak valid.')
   const waveId = safeId(input.waveId, 'waveId')
   const programStudyId = safeId(input.programStudyId, 'programStudyId')
-  const wave = ADMISSION_WAVES.find(item => item.id === waveId && item.active)
-  if (!wave) invalidInput('Gelombang PMB tidak aktif.')
-  if (!ADMISSION_PROGRAMS.some(item => item.id === programStudyId && item.active)) invalidInput('Program studi PMB tidak aktif.')
+  const [wave] = await Promise.all([admissionWaveById(waveId), admissionProgramById(programStudyId)])
+  if (wave.programStudyIds.length && !wave.programStudyIds.includes(programStudyId)) invalidInput('Program studi tidak tersedia pada gelombang PMB.')
   const startsRaw = requireString(input.startsAt, 'startsAt', { max: 48 })
   const endsRaw = requireString(input.endsAt, 'endsAt', { max: 48 })
   const starts = Date.parse(startsRaw)
@@ -178,7 +175,7 @@ export async function createAdmissionSelectionSession(
   event?: H3Event,
   clock = new Date(),
 ): Promise<AdmissionSelectionWriteResult<AdmissionSelectionSession>> {
-  const input = normalizedSessionInput(inputValue)
+  const input = await normalizedSessionInput(inputValue)
   requireStaffProgramScope(context, input.programStudyId)
   const hash = requestHash(input)
   const namespace = `admission-selection-session:${context.uid}:${idempotencyKey}`
@@ -415,11 +412,7 @@ export async function finalizeAdmissionSelectionScore(
   return result
 }
 
-function programName(programStudyId: string): string {
-  return ADMISSION_PROGRAMS.find(program => program.id === programStudyId)?.name || programStudyId
-}
-
-function buildLetter(application: AdmissionApplicationRecord, sequence: number, verificationCode: string, context: AuthContext, now: string): AdmissionLetterOfAcceptance {
+function buildLetter(application: AdmissionApplicationRecord, programStudyName: string, sequence: number, verificationCode: string, context: AuthContext, now: string): AdmissionLetterOfAcceptance {
   const year = new Date(now).getUTCFullYear()
   const id = opaqueId('admission_loa', application.id)
   const base = {
@@ -429,7 +422,7 @@ function buildLetter(application: AdmissionApplicationRecord, sequence: number, 
     registrationNumber: application.registrationNumber,
     applicantName: application.fullName,
     programStudyId: application.programStudyId,
-    programStudyName: programName(application.programStudyId),
+    programStudyName,
     academicYear: application.academicYear,
     documentNumber: `LOA/${application.programStudyId.toUpperCase()}/${year}/${String(sequence).padStart(5, '0')}`,
     verificationCode,
@@ -463,6 +456,8 @@ export async function issueAdmissionLetterOfAcceptance(
   const namespace = `admission-loa:${context.uid}:${idempotencyKey}`
   const now = clock.toISOString()
   const verificationCode = randomBytes(16).toString('hex').toUpperCase()
+  const sourceApplication = await loadApplication(applicationId)
+  const program = await admissionProgramById(sourceApplication.programStudyId)
   let result: AdmissionSelectionWriteResult<AdmissionLetterOfAcceptance>
   if (dataMode() === 'mock') {
     const state = admissionSelectionModuleState()
@@ -477,7 +472,7 @@ export async function issueAdmissionLetterOfAcceptance(
     if (existingId) conflict('LOA_ALREADY_ISSUED', 'Letter of Acceptance telah diterbitkan untuk pendaftar ini.')
     const counterKey = `${new Date(now).getUTCFullYear()}:${application.programStudyId}`
     const sequence = (state.letterCounters.get(counterKey) || 0) + 1
-    const letter = buildLetter(application, sequence, verificationCode, context, now)
+    const letter = buildLetter(application, program.name, sequence, verificationCode, context, now)
     state.letterCounters.set(counterKey, sequence)
     state.letters.set(letter.id, structuredClone(letter))
     state.letterAssignments.set(application.id, letter.id)
@@ -508,7 +503,7 @@ export async function issueAdmissionLetterOfAcceptance(
       const previous = Number(counterSnapshot.data()?.lastSequence || 0)
       if (!Number.isSafeInteger(previous) || previous < 0) serviceUnavailable('Counter LoA tidak valid.')
       const sequence = previous + 1
-      const letter = buildLetter(application, sequence, verificationCode, context, now)
+      const letter = buildLetter(application, program.name, sequence, verificationCode, context, now)
       const response: AdmissionSelectionWriteResult<AdmissionLetterOfAcceptance> = { value: letter, replayed: false }
       transaction.set(counterRef, { lastSequence: sequence, programStudyId: application.programStudyId, year: new Date(now).getUTCFullYear(), updatedAt: now })
       transaction.create(letterRef, letter)

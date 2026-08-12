@@ -27,29 +27,15 @@ service firebase.storage {
     }
 
     match /profile-images/{userId}/{fileName} {
-      allow read: if signedIn();
-      allow create, update: if signedIn() && request.auth.uid == userId && safeProfileImage();
-      allow delete: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow read, write: if false;
     }
 
     match /student-documents/{studentId}/{fileName} {
-      allow read: if signedIn()
-        && (resource.metadata.ownerUid == request.auth.uid || isAdmin());
-      allow create: if signedIn()
-        && request.resource.metadata.ownerUid == request.auth.uid
-        && request.auth.token.scope is map
-        && request.auth.token.scope.studentIds is list
-        && studentId in request.auth.token.scope.studentIds
-        && safeDocument();
-      allow update: if false;
-      allow delete: if signedIn()
-        && (resource.metadata.ownerUid == request.auth.uid || isAdmin());
+      allow read, write: if false;
     }
 
     match /admissions/public/{fileName} {
-      allow read: if true;
-      allow create, update: if (hasRole('admissions_staff') || isAdmin()) && safeDocument();
-      allow delete: if hasRole('admissions_staff') || isAdmin();
+      allow read, write: if false;
     }
 
     // Server-only objects are delivered through short-lived signed URLs.

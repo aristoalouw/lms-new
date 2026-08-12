@@ -70,49 +70,29 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if signedIn() && (request.auth.uid == userId || isAdmin());
-      // Account lifecycle and privileged profile changes use Firebase Admin,
-      // which bypasses Rules. Browser writes are limited to a validated
-      // non-administrator owner profile update.
-      allow create, delete: if false;
-      allow update: if isOwnerProfileUpdate(userId);
+      // Profil dilayani oleh Nitro API agar status akun, versi sesi, dan field
+      // yang boleh dibaca selalu diverifikasi dari dokumen accounts kanonik.
+      allow read, write: if false;
     }
 
     match /students/{studentId} {
-      allow read: if signedIn()
-        && (resource.data.userUid == request.auth.uid
-          || hasStudentScope(studentId)
-          || isAcademicReader(resource.data)
-          || isFinanceReader(resource.data));
-      allow write: if false;
+      allow read, write: if false;
     }
 
     match /krs/{krsId} {
-      allow read: if signedIn()
-        && (resource.data.studentUid == request.auth.uid
-          || resource.data.advisorId == request.auth.uid
-          || isAcademicReader(resource.data));
-      // Status transitions and credit validation are transactionally enforced by the Nuxt server.
-      allow write: if false;
+      allow read, write: if false;
     }
 
     match /invoices/{invoiceId} {
-      allow read: if signedIn()
-        && (resource.data.studentUid == request.auth.uid || isFinanceReader(resource.data));
-      allow write: if false;
+      allow read, write: if false;
     }
 
     match /payments/{paymentId} {
-      allow read: if signedIn()
-        && (resource.data.studentUid == request.auth.uid || isFinanceReader(resource.data));
-      allow write: if false;
+      allow read, write: if false;
     }
 
     match /pddiktiSyncJobs/{jobId} {
-      allow read: if hasRole('leader')
-        || isAdmin()
-        || (hasRole('academic_staff') && hasProgramScope(resource.data.programStudyId));
-      allow write: if false;
+      allow read, write: if false;
     }
 
     // PDDIKTI source projections, frozen payloads, mapping definitions,
@@ -720,8 +700,7 @@ service cloud.firestore {
     }
 
     match /publicContent/{contentId} {
-      allow read: if resource.data.status == 'PUBLISHED';
-      allow write: if hasRole('admissions_staff') || isAdmin();
+      allow read, write: if false;
     }
 
     match /{document=**} {

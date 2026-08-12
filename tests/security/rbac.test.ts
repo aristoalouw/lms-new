@@ -26,6 +26,45 @@ describe('server RBAC', () => {
       .toThrowError(CampusError)
   })
 
+  it('keeps the full-campus administrator technical and read-only for business workflows', () => {
+    const administrator = authContext('admin-001', ['administrator'])
+    const denied = [
+      'krs:approve',
+      'payments:record',
+      'pddikti:queue',
+      'pddikti:retry',
+      'classes:manage',
+      'enrollments:manage',
+      'academic.write',
+      'finance.write',
+      'pmb.write',
+      'student_affairs.write',
+    ] as const
+
+    denied.forEach(permission => expect(can(administrator, permission)).toBe(false))
+    expect(can(administrator, 'accounts:manage')).toBe(true)
+    expect(can(administrator, 'audit:view')).toBe(true)
+    expect(can(administrator, 'settings.read')).toBe(true)
+    expect(can(administrator, 'pmb.configure')).toBe(true)
+    expect(can(administrator, 'academic.configure')).toBe(true)
+    expect(can(administrator, 'evaluation.configure')).toBe(true)
+    expect(can(administrator, 'pmb.write')).toBe(false)
+    expect(can(administrator, 'academic.read')).toBe(false)
+    expect(can(administrator, 'finance.read')).toBe(false)
+    expect(() => requireKrsApprovalScope(administrator, MOCK_KRS[0]!)).toThrowError(CampusError)
+    expect(() => requirePaymentScope(administrator, MOCK_INVOICES[0]!)).toThrowError(CampusError)
+  })
+
+  it('accepts only the constrained internal payment-gateway principal outside program scope', () => {
+    const gateway = authContext('system:payment-gateway:campus-bank', ['finance_staff'], [])
+    gateway.provider = 'firebase'
+    gateway.scope.unitIds = ['integration:payment-gateway:campus-bank']
+    expect(() => requirePaymentScope(gateway, MOCK_INVOICES[0]!)).not.toThrow()
+
+    gateway.scope.unitIds = []
+    expect(() => requirePaymentScope(gateway, MOCK_INVOICES[0]!)).toThrowError(CampusError)
+  })
+
   it('uses the reduced role contract for the LMS MVP profile', () => {
     process.env.APP_FEATURE_PROFILE = 'lms-mvp'
     const administrator = authContext('admin-001', ['administrator'])

@@ -22,7 +22,7 @@ const errorMessage = ref('')
 const noticeMessage = ref('')
 const fileInput = ref<HTMLInputElement>()
 
-const staffMode = computed(() => Boolean(route.query.applicationId) || user.value?.roles.some(role => ['administrator', 'admissions_staff'].includes(role)))
+const staffMode = computed(() => user.value?.activeRole === 'admissions_staff')
 const pendingTypes = computed(() => workspace.value?.checklist.filter(item => item.status === 'MISSING' || item.status === 'REJECTED').map(item => item.documentType) || [])
 const label = (type: AdmissionDocumentType) => ({ IDENTITY: 'Identitas resmi', DIPLOMA: 'Ijazah/SKL', TRANSCRIPT: 'Transkrip institusi asal', KIP_CARD: 'Bukti KIP Kuliah', RPL_PORTFOLIO: 'Portofolio RPL', OTHER: 'Dokumen lain' })[type]
 const statusLabel = (status: AdmissionDocumentRecord['status'] | 'MISSING') => ({ MISSING: 'Belum diunggah', PENDING: 'Menunggu verifikasi', VERIFIED: 'Terverifikasi', REJECTED: 'Ditolak' })[status]

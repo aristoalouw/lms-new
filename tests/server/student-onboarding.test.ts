@@ -67,6 +67,7 @@ describe('canonical student onboarding', () => {
   it('rejects cross-program staff, students, and mismatched account scope', async () => {
     await expect(onboardStudent(staff(['informatics-s1']), input(), 'student-onboard-0005')).rejects.toMatchObject({ statusCode: 403 })
     await expect(onboardStudent(authContext('student-001', ['student'], ['management-s1']), input(), 'student-onboard-0006')).rejects.toMatchObject({ statusCode: 403 })
+    await expect(onboardStudent(authContext('admin-001', ['administrator'], []), input(), 'student-onboard-admin-denied')).rejects.toMatchObject({ statusCode: 403 })
     await expect(onboardStudent(staff(), { ...input(), studentId: 'student-wrong' }, 'student-onboard-0007')).rejects.toMatchObject({ statusCode: 409, code: 'STUDENT_SCOPE_MISMATCH' })
   })
 })

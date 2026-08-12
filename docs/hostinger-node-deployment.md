@@ -85,7 +85,7 @@ Spark-safe index contract, which preserves every composite index and indexing
 exemption but omits the six TTL policy flags:
 
 ```powershell
-npm run firebase:prepare:spark
+npm run firebase:prepare:spark -- --profile=full-campus
 firebase deploy --config .firebase-spark/firebase.json --project <firebase-project-id> --only firestore:rules,firestore:indexes
 ```
 
@@ -140,8 +140,16 @@ Production deployment requires explicit approval. First deploy a staging domain 
 pwsh -NoProfile -File scripts/smoke-production.ps1 -BaseUrl https://staging.example.ac.id
 ```
 
-7. Confirm responses contain CSP, HSTS, frame/content-type/referrer/permissions policies, private cache controls, and an application-generated `X-Request-ID`.
-8. Complete the documented role, upload/scan, email-worker, Sentry, backup, and isolated restore checks before production approval.
+7. Verify that the immutable release and feature profile reached that same Hostinger origin. The verifier is read-only, does not follow redirects, never sends credentials, and refuses HTTP except on loopback test addresses. It requests only `/login`, `/api/health`, `/api/ready`, and one explicitly selected private API path on the supplied origin:
+
+```powershell
+npm run verify:hostinger -- --base-url=https://staging.example.ac.id --expected-version=<APP_VERSION> --expected-profile=full-campus
+```
+
+The command fails unless health and readiness are `200`, health reports the exact expected version, the rendered Nuxt public config reports the expected feature profile, all four responses carry the required security and `no-store` headers, and anonymous `GET /api/accounts` returns `401`. Use `--private-api-path=/api/<another-private-route>` only when that endpoint is guaranteed to reject anonymous `GET` with `401`. Response bodies are validated but never printed.
+
+8. Confirm responses contain CSP, HSTS, frame/content-type/referrer/permissions/cross-origin policies, private cache controls, and an application-generated `X-Request-ID`.
+9. Complete the documented role, upload/scan, email-worker, Sentry, backup, and isolated restore checks before production approval.
 
 The application never trusts a client-provided request ID on Hostinger. It generates one per request, reuses it for audit/Sentry correlation, and returns it as `X-Request-ID`. `TRUSTED_PROXY_HOPS=1` is the reviewed default for the managed edge; change it only after Hostinger documents a different proxy chain and staging authorization/rate-limit tests pass.
 

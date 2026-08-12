@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AdmissionApplicationView, AdmissionListResult } from '~/server/types/admissions'
+import type { AdmissionApplicationView, AdmissionListResult, AdmissionProgram, AdmissionWave } from '~/server/types/admissions'
 import type {
   AdmissionLetterOfAcceptance,
   AdmissionLetterVerification,
@@ -30,18 +30,21 @@ const recommendation = ref<'ACCEPT' | 'REJECT' | 'WAITLIST'>('ACCEPT')
 const verificationCode = ref('')
 const verification = ref<AdmissionLetterVerification | null>(null)
 const sessionReady = ref(false)
+const programs = ref<AdmissionProgram[]>([])
+const waves = ref<AdmissionWave[]>([])
 const sessionDraft = reactive({
-  name: 'Wawancara penerimaan gelombang 3',
+  name: '',
   kind: 'INTERVIEW',
-  programStudyId: user.value?.programStudyId || 'management-s1',
-  location: 'Ruang Seleksi A-201',
-  startsAt: '2026-07-25T08:00',
-  endsAt: '2026-07-25T10:00',
+  waveId: '',
+  programStudyId: user.value?.programStudyId || '',
+  location: '',
+  startsAt: '',
+  endsAt: '',
   capacity: 20,
-  examinerIds: 'examiner-001',
+  examinerIds: '',
 })
 
-const canManage = computed(() => ['administrator', 'admissions_staff'].includes(user.value?.activeRole || ''))
+const canManage = computed(() => user.value?.activeRole === 'admissions_staff')
 const readyApplications = computed(() => applications.value.filter(item => item.status === 'DOCUMENTS_VERIFIED' && ['PAID', 'WAIVED'].includes(item.registrationFeeStatus)))
 const acceptedApplications = computed(() => applications.value.filter(item => item.status === 'ACCEPTED' && item.applicantUid && ['PAID', 'WAIVED'].includes(item.registrationFeeStatus)))
 const selectedAssignment = computed(() => assignments.value.find(item => item.id === selectedAssignmentId.value))
@@ -71,6 +74,11 @@ async function loadWorkspace() {
   errorMessage.value = ''
   try {
     await ensureSession()
+    const catalog = await $api.get<{ programs: AdmissionProgram[]; waves: AdmissionWave[] }>('/admissions/catalog')
+    programs.value = catalog.data.programs
+    waves.value = catalog.data.waves
+    if (!sessionDraft.waveId) sessionDraft.waveId = waves.value[0]?.id || ''
+    if (!sessionDraft.programStudyId) sessionDraft.programStudyId = programs.value[0]?.id || ''
     const requests = [
       $api.get<{ sessions: AdmissionSelectionSession[] }>('/admissions/selection/sessions'),
       $api.get<{ assignments: AdmissionSelectionAssignment[] }>('/admissions/selection/assignments'),
@@ -81,7 +89,7 @@ async function loadWorkspace() {
     assignments.value = assignmentResponse.data.assignments
     letters.value = letterResponse.data.letters
     if (canManage.value) {
-      const { data } = await $api.get<AdmissionListResult>('/admissions/applications', { params: { waveId: '2026-wave-3', limit: 100 } })
+      const { data } = await $api.get<AdmissionListResult>('/admissions/applications', { params: { ...(waves.value[0]?.id ? { waveId: waves.value[0].id } : {}), limit: 100 } })
       applications.value = data.items
     }
     if (!selectedSessionId.value) selectedSessionId.value = sessions.value[0]?.id || ''
@@ -113,7 +121,7 @@ const createSession = () => runAction(async () => {
   await $api.post('/admissions/selection/sessions', {
     name: sessionDraft.name,
     kind: sessionDraft.kind,
-    waveId: '2026-wave-3',
+    waveId: sessionDraft.waveId,
     programStudyId: sessionDraft.programStudyId,
     location: sessionDraft.location,
     startsAt: new Date(sessionDraft.startsAt).toISOString(),
@@ -198,6 +206,7 @@ onMounted(loadWorkspace)
           <header class="workflow-surface__header"><div><span class="section-kicker">Panitia PMB</span><h2>Buat sesi</h2></div></header>
           <form class="workflow-surface__body d-grid gap-2" @submit.prevent="createSession">
             <label class="form-label">Nama<input v-model="sessionDraft.name" class="form-control" required maxlength="160"></label>
+            <div class="row g-2"><label class="col form-label">Gelombang<select v-model="sessionDraft.waveId" class="form-select" required><option value="" disabled>Pilih gelombang</option><option v-for="wave in waves" :key="wave.id" :value="wave.id">{{ wave.label }} · {{ wave.academicYear }}</option></select></label><label class="col form-label">Program studi<select v-model="sessionDraft.programStudyId" class="form-select" required><option value="" disabled>Pilih program studi</option><option v-for="program in programs" :key="program.id" :value="program.id">{{ program.name }}</option></select></label></div>
             <div class="row g-2"><label class="col form-label">Mulai<input v-model="sessionDraft.startsAt" class="form-control" type="datetime-local" required></label><label class="col form-label">Selesai<input v-model="sessionDraft.endsAt" class="form-control" type="datetime-local" required></label></div>
             <label class="form-label">Lokasi<input v-model="sessionDraft.location" class="form-control" required maxlength="200"></label>
             <div class="row g-2"><label class="col form-label">Kapasitas<input v-model.number="sessionDraft.capacity" class="form-control" type="number" min="1" max="1000" required></label><label class="col form-label">Jenis<select v-model="sessionDraft.kind" class="form-select"><option>INTERVIEW</option><option>WRITTEN_EXAM</option><option>PORTFOLIO_REVIEW</option></select></label></div>

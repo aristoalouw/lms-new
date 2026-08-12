@@ -43,14 +43,13 @@ async function loadApplication(id: string): Promise<AdmissionApplicationRecord> 
 
 function canRead(context: AuthContext, application: AdmissionApplicationRecord): boolean {
   if (application.applicantUid === context.uid || (hasRole(context, 'applicant') && context.email?.toLowerCase() === application.email)) return true
-  return hasRole(context, 'administrator', 'leader') || (hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(application.programStudyId))
+  return hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(application.programStudyId)
 }
 function requireApplicant(context: AuthContext, application: AdmissionApplicationRecord): void {
   if (!hasRole(context, 'applicant') || application.applicantUid !== context.uid) forbidden('Dokumen hanya dapat dikirim oleh akun applicant yang tertaut.')
   if (['ENROLLMENT_PENDING_IDENTITY', 'ENROLLED'].includes(application.status)) conflict('APPLICATION_DOCUMENTS_CLOSED', 'Dokumen pendaftaran sudah ditutup setelah konversi mahasiswa.')
 }
 function requireReviewer(context: AuthContext, application: AdmissionApplicationRecord): void {
-  if (hasRole(context, 'administrator')) return
   if (!hasRole(context, 'admissions_staff') || !context.scope.programStudyIds.includes(application.programStudyId)) forbidden('Dokumen berada di luar lingkup verifikasi PMB Anda.')
 }
 

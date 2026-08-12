@@ -21,7 +21,9 @@ import { CampusError, conflict, forbidden, notFound, serviceUnavailable } from '
 import { fileUploadsEnabled } from '../utils/capabilities'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from '../utils/firestore-ttl'
+import { can } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
+import { serverFeatureProfile } from '../utils/feature-profile'
 import {
   FILE_DOWNLOAD_TTL_MS,
   FILE_UPLOAD_SESSION_TTL_MS,
@@ -95,7 +97,15 @@ function ownsFile(context: AuthContext, file: PrivateFileRecord): boolean {
 }
 
 function isAdministrator(context: AuthContext): boolean {
-  return context.roles.includes('administrator')
+  return serverFeatureProfile() === 'lms-mvp' && context.roles.includes('administrator')
+}
+
+function requireFileReadPermission(context: AuthContext): void {
+  if (!can(context, 'file.read') && !can(context, 'files:read')) forbidden('Anda tidak memiliki izin membaca file privat.')
+}
+
+function requireFileWritePermission(context: AuthContext): void {
+  if (!can(context, 'files:write')) forbidden('Anda tidak memiliki izin mengelola file privat.')
 }
 
 function intersects(left: readonly string[], right: readonly string[]): boolean {
@@ -139,6 +149,7 @@ async function requireUploadLearningSpaceAccess(
 }
 
 export async function canAccessPrivateFile(context: AuthContext, file: PrivateFileRecord): Promise<boolean> {
+  if (!can(context, 'file.read') && !can(context, 'files:read')) return false
   // A class-scoped file always revalidates current membership first. Ownership
   // must not preserve access after an enrolment is withdrawn.
   if (file.access.learningSpaceIds?.length && !await canAccessLearningSpaces(context, file.access.learningSpaceIds)) return false
@@ -158,6 +169,7 @@ async function requireReadAccess(context: AuthContext, file: PrivateFileRecord):
 }
 
 function requireManageAccess(context: AuthContext, file: PrivateFileRecord): void {
+  requireFileWritePermission(context)
   if (!ownsFile(context, file) && !isAdministrator(context)) forbidden('Hanya pemilik atau administrator yang dapat mengelola file ini.')
 }
 
@@ -331,6 +343,7 @@ export async function expireUploadSessions(
   now = Date.now(),
   event?: H3Event,
 ): Promise<number> {
+  requireFileWritePermission(context)
   const cutoff = nowIso(now)
   let sessions: FileUploadSession[]
   if (dataMode() === 'mock') {
@@ -369,6 +382,7 @@ export async function createFileUploadSession(
   idempotencyKeyOrEvent?: string | H3Event,
   event?: H3Event,
 ): Promise<CreateUploadSessionResult> {
+  requireFileWritePermission(context)
   requireFileUploadsEnabled()
   const explicitIdempotencyKey = typeof idempotencyKeyOrEvent === 'string' ? idempotencyKeyOrEvent : undefined
   const auditEvent = typeof idempotencyKeyOrEvent === 'string' ? event : idempotencyKeyOrEvent
@@ -629,6 +643,7 @@ export async function storeMockUploadContent(
   bytes: Uint8Array,
   contentType: string,
 ): Promise<void> {
+  requireFileWritePermission(context)
   requireFileUploadsEnabled()
   const session = await getUploadSession(sessionId)
   requireSessionActor(context, session)
@@ -644,6 +659,7 @@ export async function storeMockUploadContent(
 }
 
 export async function getMockUploadLimit(context: AuthContext, sessionId: string): Promise<number> {
+  requireFileWritePermission(context)
   requireFileUploadsEnabled()
   const session = await getUploadSession(sessionId)
   requireSessionActor(context, session)
@@ -886,6 +902,7 @@ export async function finalizeFileUpload(
   sessionId: string,
   event?: H3Event,
 ): Promise<FileDetailResult> {
+  requireFileWritePermission(context)
   requireFileUploadsEnabled()
   const session = await getUploadSession(sessionId)
   requireSessionActor(context, session)
@@ -943,7 +960,8 @@ export async function rescanQuarantinedFile(
   versionNumber: number,
   event?: H3Event,
 ): Promise<FileDetailResult> {
-  if (!isAdministrator(context)) forbidden('Hanya administrator yang dapat menjalankan pemindaian ulang.')
+  requireFileWritePermission(context)
+  if (!isAdministrator(context)) forbidden('Pemindaian ulang hanya tersedia bagi administrator dukungan LMS.')
   const file = await getFileRecord(fileId)
   if (file.deleted) conflict('FILE_DELETED', 'File telah dihapus.')
   const version = await getVersionRecord(fileId, versionNumber)
@@ -953,6 +971,7 @@ export async function rescanQuarantinedFile(
 }
 
 export async function listPrivateFiles(context: AuthContext, filters: FileListFilters = {}): Promise<FileListResult> {
+  requireFileReadPermission(context)
   const limit = Math.min(Math.max(filters.limit || 20, 1), 50)
   const cursor = decodeCursor(filters.cursor)
   let candidates: PrivateFileRecord[]

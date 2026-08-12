@@ -48,6 +48,7 @@ describe('private file management', () => {
     process.env.CAMPUS_DATA_MODE = 'mock'
     delete process.env.FILE_UPLOADS_ENABLED
     delete process.env.FILE_QUOTA_BYTES
+    delete process.env.APP_FEATURE_PROFILE
     resetMockState()
     resetAcademicClassStateForTests()
     resetLearningMockState()
@@ -59,6 +60,7 @@ describe('private file management', () => {
   afterEach(() => {
     delete process.env.FILE_UPLOADS_ENABLED
     delete process.env.FILE_QUOTA_BYTES
+    delete process.env.APP_FEATURE_PROFILE
     configureMalwareScanner(undefined)
     resetFileStorageForTests()
   })
@@ -139,7 +141,7 @@ describe('private file management', () => {
     await finalizeFileUpload(owner, created.session.id)
     await expect(issuePrivateFileDownload(owner, created.file.id)).resolves.toMatchObject({ fileName: 'Tugas kelas.pdf' })
 
-    await updateClassEnrollment(authContext('admin-001', ['administrator'], []), 'class-mgt-401-a', 'student-001', {
+    await updateClassEnrollment(authContext('academic-001', ['academic_staff'], ['management-s1']), 'class-mgt-401-a', 'student-001', {
       status: 'WITHDRAWN', reason: 'Akses ditarik untuk pengujian membership terbaru.', expectedVersion: 1,
     }, 'file-membership-withdraw-0001')
     await expect(issuePrivateFileDownload(owner, created.file.id))
@@ -281,7 +283,7 @@ describe('private file management', () => {
       .rejects.toMatchObject({ code: 'FILE_NOT_READY' } satisfies Partial<CampusError>)
   })
 
-  it('authorizes audited signed downloads by owner, explicit scope, and administrator only', async () => {
+  it('authorizes owner, explicit scope, and LMS-support admin without full-campus admin bypass', async () => {
     const staff = authContext('academic-owner', ['academic_staff'])
     const created = await createFileUploadSession(staff, {
       name: 'Panduan Akademik.pdf',
@@ -301,6 +303,9 @@ describe('private file management', () => {
     expect(signed.auditId).toMatch(/^audit_/)
     await expect(issuePrivateFileDownload(outsider, created.file.id))
       .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
+    await expect(issuePrivateFileDownload(admin, created.file.id))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
+    process.env.APP_FEATURE_PROFILE = 'lms-mvp'
     await expect(issuePrivateFileDownload(admin, created.file.id)).resolves.toMatchObject({ version: 1 })
   })
 

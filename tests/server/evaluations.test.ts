@@ -42,7 +42,6 @@ const baseAnswers: EvaluationAnswer[] = [
 ]
 
 const academic = authContext('academic-001', ['academic_staff'], ['management-s1'])
-const admin = authContext('admin-001', ['administrator'], [])
 const reportOpen = '2026-07-01T00:00:00.000Z'
 const reportClose = '2026-07-10T00:00:00.000Z'
 const submissionNow = Date.parse('2026-07-05T12:00:00.000Z')
@@ -311,7 +310,7 @@ describe('lecturer evaluations', () => {
     await submitFor('student-three', period.period.id, 'aggregate-submit-003', [
       { questionId: 'clarity', value: 4 }, { questionId: 'fairness', value: 5 }, { questionId: 'recommend', value: true },
     ])
-    const report = await generateEvaluationReport(admin, {
+    const report = await generateEvaluationReport(academic, {
       evaluationPeriodId: period.period.id, groupBy: 'lecturer',
     })
     const group = report.groups[0]!
@@ -348,6 +347,9 @@ describe('lecturer evaluations', () => {
     await expect(generateEvaluationReport(authContext('student-one', ['student']), {
       evaluationPeriodId: period.period.id, groupBy: 'program',
     })).rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
+    await expect(generateEvaluationReport(authContext('admin-001', ['administrator'], []), {
+      evaluationPeriodId: period.period.id, groupBy: 'program',
+    })).rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
   })
 
   it('groups aggregate reports by lecturer, course, class, and program', async () => {
@@ -356,7 +358,7 @@ describe('lecturer evaluations', () => {
       await submitFor(uid, period.period.id, `group-submit-${uid}`)
     }
     for (const groupBy of ['lecturer', 'course', 'class', 'program'] as const) {
-      const report = await generateEvaluationReport(admin, { evaluationPeriodId: period.period.id, groupBy })
+      const report = await generateEvaluationReport(academic, { evaluationPeriodId: period.period.id, groupBy })
       expect(report.groupBy).toBe(groupBy)
       expect(report.groups).toHaveLength(1)
       expect(report.groups[0]?.suppressed).toBe(false)
@@ -379,7 +381,7 @@ describe('lecturer evaluations', () => {
         answers: [{ questionId: 'formula', value: 4 + (index % 2) }],
       }, `csv-submission-${uid}`, undefined, submissionNow)
     }
-    const report = await generateEvaluationReport(admin, { evaluationPeriodId: period.period.id, groupBy: 'class' })
+    const report = await generateEvaluationReport(academic, { evaluationPeriodId: period.period.id, groupBy: 'class' })
     const csv = evaluationReportToCsv(report)
     expect(csv.startsWith('\uFEFF')).toBe(true)
     expect(csv).toContain('"\'-danger · +cmd"')
@@ -393,7 +395,7 @@ describe('lecturer evaluations', () => {
     expect(safeCsvCell('normal')).toBe('"normal"')
     expect(safeCsvCell(-2)).toBe('-2')
 
-    const exported = await exportEvaluationReportCsv(admin, {
+    const exported = await exportEvaluationReportCsv(academic, {
       evaluationPeriodId: period.period.id,
       groupBy: 'class',
     })

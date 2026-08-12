@@ -52,7 +52,6 @@ function safeId(value: unknown, label: string): string { return requireString(va
 function requireKey(value: string): string { if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/.test(value)) invalidInput('Idempotency key tidak valid.'); return value }
 
 function requireOnboardingStaff(context: AuthContext, programStudyId?: string): void {
-  if (hasRole(context, 'administrator')) return
   if (!hasRole(context, 'academic_staff')) forbidden('Onboarding akademik hanya dapat dikelola staf akademik.')
   if (programStudyId && !context.scope.programStudyIds.includes(programStudyId)) forbidden('Mahasiswa berada di luar lingkup program studi Anda.')
 }

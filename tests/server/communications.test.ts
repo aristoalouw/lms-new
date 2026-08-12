@@ -59,6 +59,11 @@ describe('administrative service tickets', () => {
     await expect(getTicketDetail(authContext('academic-001', ['academic_staff']), 'ticket-demo-001')).resolves.toBeDefined()
     await expect(getTicketDetail(authContext('academic-002', ['academic_staff'], ['informatics-s1']), 'ticket-demo-001'))
       .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+    const administrator = authContext('admin-001', ['administrator'])
+    await expect(getTicketDetail(administrator, 'ticket-demo-001'))
+      .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+    await expect(changeTicketStatus(administrator, 'ticket-demo-001', { status: 'WAITING_FOR_REQUESTER', expectedVersion: 2 }))
+      .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
   })
 
   it('applies the transition graph and optimistic versions', async () => {

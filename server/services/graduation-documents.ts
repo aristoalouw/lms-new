@@ -14,7 +14,7 @@ import { GRADUATION_DOCUMENT_TYPES } from '../types/graduation'
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { graduationModuleState } from './graduation-state'
 
@@ -59,14 +59,15 @@ const NUMBER_PREFIX: Record<GraduationDocumentType, string> = {
 }
 
 function isDocumentStaff(context: AuthContext): boolean {
-  return hasRole(context, 'academic_staff', 'administrator')
+  return hasRole(context, 'academic_staff')
 }
 
 function isProgramScoped(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'administrator') || context.scope.programStudyIds.includes(programStudyId)
+  return context.scope.programStudyIds.includes(programStudyId)
 }
 
 function requireDocumentIssuer(context: AuthContext, programStudyId: string): void {
+  requirePermission(context, 'graduation.issue')
   if (!isDocumentStaff(context) || !isProgramScoped(context, programStudyId)) {
     forbidden('Penerbitan dokumen berada di luar lingkup program studi Anda.')
   }
@@ -74,8 +75,7 @@ function requireDocumentIssuer(context: AuthContext, programStudyId: string): vo
 
 function canReadDocument(context: AuthContext, document: IssuedGraduationDocument): boolean {
   return document.studentUid === context.uid
-    || hasRole(context, 'administrator', 'leader')
-    || (hasRole(context, 'academic_staff') && isProgramScoped(context, document.programStudyId))
+    || (hasRole(context, 'academic_staff', 'lecturer', 'advisor') && isProgramScoped(context, document.programStudyId))
 }
 
 function requireDocumentRead(context: AuthContext, document: IssuedGraduationDocument): void {
@@ -298,8 +298,8 @@ function ensureIssuable(application: GraduationApplication): void {
 }
 
 export async function listGraduationTemplates(context: AuthContext): Promise<GraduationDocumentTemplate[]> {
-  if (!hasRole(context, 'academic_staff', 'leader', 'administrator')) forbidden()
-  const visible = (template: GraduationDocumentTemplate) => hasRole(context, 'administrator', 'leader')
+  if (!hasRole(context, 'academic_staff', 'administrator')) forbidden()
+  const visible = (template: GraduationDocumentTemplate) => hasRole(context, 'administrator')
     || !template.programStudyId || context.scope.programStudyIds.includes(template.programStudyId)
   if (dataMode() === 'mock') {
     return [...graduationModuleState().templates.values()]
@@ -322,7 +322,7 @@ export async function publishGraduationTemplate(
   idempotencyKey: string,
   event?: H3Event,
 ): Promise<{ template: GraduationDocumentTemplate; replayed: boolean; auditId?: string }> {
-  if (!hasRole(context, 'administrator')) forbidden('Hanya administrator yang dapat menerbitkan versi template.')
+  requirePermission(context, 'graduation.configure')
   const layout = validateTemplateLayout(input.layout)
   const name = cleanText(input.name, 'Nama template', 160)
   const hash = requestHash({ sourceTemplateId, input: { ...input, name, layout } })
@@ -394,6 +394,8 @@ export async function listGraduationDocuments(
   context: AuthContext,
   filters: { applicationId?: string; type?: GraduationDocumentType } = {},
 ): Promise<IssuedGraduationDocument[]> {
+  requirePermission(context, 'graduation.read')
+  if (hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
   if (filters.type) validateDocumentType(filters.type)
   let documents: IssuedGraduationDocument[]
   if (dataMode() === 'mock') {
@@ -401,18 +403,15 @@ export async function listGraduationDocuments(
   } else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan kelulusan tidak tersedia.')
-    if (!hasRole(context, 'administrator', 'leader', 'academic_staff')) {
+    if (!hasRole(context, 'academic_staff', 'lecturer', 'advisor')) {
       const snapshot = await db.collection('issuedGraduationDocuments').where('studentUid', '==', context.uid).limit(100).get()
       documents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as IssuedGraduationDocument)
-    } else if (hasRole(context, 'academic_staff') && !hasRole(context, 'administrator', 'leader')) {
+    } else {
       const scopes = context.scope.programStudyIds
       if (!scopes.length) return []
       const chunks = Array.from({ length: Math.ceil(scopes.length / 30) }, (_, index) => scopes.slice(index * 30, index * 30 + 30))
       const snapshots = await Promise.all(chunks.map(chunk => db.collection('issuedGraduationDocuments').where('programStudyId', 'in', chunk).limit(200).get()))
       documents = snapshots.flatMap(snapshot => snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as IssuedGraduationDocument))
-    } else {
-      const snapshot = await db.collection('issuedGraduationDocuments').limit(500).get()
-      documents = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as IssuedGraduationDocument)
     }
   }
   return documents

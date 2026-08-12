@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import type { AdmissionApplicationView, AdmissionListResult, AdmissionStatus } from '~/server/types/admissions'
+import type { AdmissionApplicationView, AdmissionListResult, AdmissionProgram, AdmissionStatus, AdmissionWave } from '~/server/types/admissions'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Workflow Penerimaan Mahasiswa Baru' })
 
 const { $api } = useNuxtApp()
+const { can } = useAuth()
 const config = useRuntimeConfig()
 const applications = ref<AdmissionApplicationView[]>([])
 const selectedId = ref('')
@@ -15,7 +16,9 @@ const errorMessage = ref('')
 const noticeMessage = ref('')
 const notes = ref('')
 const paymentReference = ref('')
-const filters = reactive({ programStudyId: '', status: '', waveId: '2026-wave-3' })
+const filters = reactive({ programStudyId: '', status: '', waveId: '' })
+const programs = ref<AdmissionProgram[]>([])
+const waves = ref<AdmissionWave[]>([])
 const sessionReady = ref(false)
 
 const selected = computed(() => applications.value.find(item => item.id === selectedId.value) || applications.value[0])
@@ -27,10 +30,8 @@ const statusTones: Record<AdmissionStatus, string> = {
   SUBMITTED: 'pending', UNDER_REVIEW: 'review', DOCUMENTS_VERIFIED: 'verified', ACCEPTED: 'active',
   REJECTED: 'blocked', ENROLLMENT_PENDING_IDENTITY: 'review', ENROLLED: 'verified',
 }
-const programLabels: Record<string, string> = {
-  'management-s1': 'S1 Manajemen', 'accounting-s1': 'S1 Akuntansi', 'informatics-s1': 'S1 Informatika',
-  'information-systems-s1': 'S1 Sistem Informasi', 'communication-science-s1': 'S1 Ilmu Komunikasi',
-}
+const programLabels = computed<Record<string, string>>(() => Object.fromEntries(programs.value.map(program => [program.id, program.name])))
+const waveLabels = computed<Record<string, string>>(() => Object.fromEntries(waves.value.map(wave => [wave.id, wave.label])))
 const transition: Partial<Record<AdmissionStatus, AdmissionStatus>> = {
   SUBMITTED: 'UNDER_REVIEW', UNDER_REVIEW: 'DOCUMENTS_VERIFIED', DOCUMENTS_VERIFIED: 'ACCEPTED',
 }
@@ -45,7 +46,7 @@ const columns = [
 ]
 const rows = computed<Record<string, unknown>[]>(() => applications.value.map(item => ({
   ...item,
-  program: programLabels[item.programStudyId] || item.programStudyId,
+  program: programLabels.value[item.programStudyId] || item.programStudyId,
   fee: item.registrationFeeStatus,
   updated: new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(item.updatedAt)),
 })))
@@ -72,6 +73,11 @@ const loadApplications = async (append = false) => {
   errorMessage.value = ''
   try {
     await ensureSession()
+    if (!programs.value.length) {
+      const catalog = await $api.get<{ programs: AdmissionProgram[]; waves: AdmissionWave[] }>('/admissions/catalog')
+      programs.value = catalog.data.programs
+      waves.value = catalog.data.waves
+    }
     const { data } = await $api.get<AdmissionListResult>('/admissions/applications', {
       params: {
         ...(filters.programStudyId ? { programStudyId: filters.programStudyId } : {}),
@@ -163,7 +169,7 @@ onMounted(() => loadApplications())
 
 <template>
   <div class="page-stack" data-clarity-mask="true">
-    <AppPageHeader eyebrow="Penerimaan mahasiswa baru" title="Workflow pendaftar" description="Tinjau berkas, validasi biaya, tetapkan hasil, lalu konversi akun applicant menjadi mahasiswa dengan NIM unik." status="active" status-label="Gelombang 3">
+    <AppPageHeader eyebrow="Penerimaan mahasiswa baru" title="Workflow pendaftar" description="Tinjau berkas, validasi biaya, tetapkan hasil, lalu konversi akun applicant menjadi mahasiswa dengan NIM unik.">
       <template #actions><NuxtLink class="btn btn-outline-secondary" to="/pmb"><i class="uil uil-arrow-left me-2" />Ringkasan</NuxtLink><button class="btn btn-primary" type="button" :disabled="loading" @click="loadApplications()"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
     </AppPageHeader>
 
@@ -174,6 +180,7 @@ onMounted(() => loadApplications())
       <div class="workflow-toolbar__meta"><i class="uil uil-user-check" /><div><strong>{{ applications.length }} pendaftar dimuat</strong><small>Identitas penuh hanya tampil bagi petugas dalam lingkup program studi.</small></div></div>
       <div class="workflow-toolbar__filters">
         <label><span>Program studi</span><select v-model="filters.programStudyId" class="form-select form-select-sm"><option value="">Semua lingkup</option><option v-for="(label, id) in programLabels" :key="id" :value="id">{{ label }}</option></select></label>
+        <label><span>Gelombang</span><select v-model="filters.waveId" class="form-select form-select-sm"><option value="">Semua gelombang</option><option v-for="(label, id) in waveLabels" :key="id" :value="id">{{ label }}</option></select></label>
         <label><span>Status</span><select v-model="filters.status" class="form-select form-select-sm"><option value="">Semua status</option><option v-for="(label, status) in statusLabels" :key="status" :value="status">{{ label }}</option></select></label>
       </div>
     </section>
@@ -191,13 +198,13 @@ onMounted(() => loadApplications())
     </section>
 
     <section v-if="selected" class="workflow-surface">
-      <header class="workflow-surface__header"><div><span class="section-kicker">{{ selected.registrationNumber }}</span><h2>{{ selected.fullName }}</h2><p>{{ programLabels[selected.programStudyId] }} · {{ selected.email }} · identitas berakhir {{ selected.identityLast4 }}</p></div><StatusBadge :status="statusTones[selected.status]" :label="statusLabels[selected.status]" /></header>
+      <header class="workflow-surface__header"><div><span class="section-kicker">{{ selected.registrationNumber }}</span><h2>{{ selected.fullName }}</h2><p>{{ programLabels[selected.programStudyId] || selected.programStudyId }} · {{ waveLabels[selected.waveId] || selected.waveId }} · {{ selected.email }} · identitas berakhir {{ selected.identityLast4 }}</p></div><StatusBadge :status="statusTones[selected.status]" :label="statusLabels[selected.status]" /></header>
       <div class="workflow-surface__body">
         <div class="detail-grid">
           <div><span>Jalur / sistem</span><strong>{{ selected.admissionPathId }} · {{ selected.studyModeId }}</strong></div><div><span>Asal institusi</span><strong>{{ selected.priorInstitution }}</strong></div><div><span>Biaya formulir</span><strong>{{ selected.registrationFeeStatus }} · Rp {{ selected.registrationFeeAmount.toLocaleString('id-ID') }}</strong></div><div><span>Akun tertaut</span><strong>{{ selected.applicantUid || 'Belum ditautkan' }}</strong></div><div><span>NIM</span><strong>{{ selected.studentNumber || 'Belum dialokasikan' }}</strong></div><div><span>Versi</span><strong>{{ selected.version }}</strong></div>
         </div>
         <label class="form-label mt-4"><span>Catatan tinjauan / alasan penolakan</span><textarea v-model="notes" class="form-control" rows="3" maxlength="1000" /></label>
-        <div v-if="selected.registrationFeeStatus === 'UNPAID'" class="input-group mt-3"><span class="input-group-text">Referensi bayar</span><input v-model.trim="paymentReference" class="form-control" maxlength="120" placeholder="Contoh: VA-2026-000123"><button class="btn btn-outline-primary" type="button" :disabled="working" @click="markFee">Tandai lunas</button></div>
+        <div v-if="selected.registrationFeeStatus === 'UNPAID' && can('payments:record')" class="input-group mt-3"><span class="input-group-text">Referensi bayar</span><input v-model.trim="paymentReference" class="form-control" maxlength="120" placeholder="Contoh: VA-2026-000123"><button class="btn btn-outline-primary" type="button" :disabled="working" @click="markFee">Tandai lunas</button></div>
         <div class="action-row mt-4">
           <NuxtLink class="btn btn-outline-secondary" :to="`/pmb/dokumen?applicationId=${encodeURIComponent(selected.id)}`"><i class="uil uil-file-check-alt me-2" />Verifikasi dokumen</NuxtLink>
           <button v-if="transition[selected.status]" class="btn btn-primary" type="button" :disabled="working" @click="advance">Lanjut ke {{ statusLabels[transition[selected.status]!] }}</button>

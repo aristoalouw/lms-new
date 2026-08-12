@@ -158,8 +158,8 @@ function gatewayActor(provider: string): AuthContext {
   return {
     uid: `system:payment-gateway:${provider}`,
     displayName: `Payment gateway ${provider}`,
-    roles: ['administrator'],
-    scope: { unitIds: [], programStudyIds: [], cohortYears: [], studentIds: [] },
+    roles: ['finance_staff'],
+    scope: { unitIds: [`integration:payment-gateway:${provider}`], programStudyIds: [], cohortYears: [], studentIds: [] },
     provider: 'firebase',
     issuedAt: now,
     expiresAt: now + 60_000,
@@ -232,11 +232,10 @@ export async function processGatewayEvent(
 }
 
 function requireReconciliationRole(context: AuthContext): void {
-  if (!hasRole(context, 'administrator', 'finance_staff', 'leader')) forbidden('Anda tidak memiliki akses rekonsiliasi pembayaran.')
+  if (!hasRole(context, 'finance_staff')) forbidden('Anda tidak memiliki akses rekonsiliasi pembayaran.')
 }
 
 function visibleForContext(context: AuthContext, record: PaymentGatewayEventRecord, programStudyId?: string): boolean {
-  if (hasRole(context, 'administrator', 'leader')) return !programStudyId || record.programStudyId === programStudyId
   const scoped = programStudyId || (context.scope.programStudyIds.length === 1 ? context.scope.programStudyIds[0] : undefined)
   return Boolean(scoped && record.programStudyId === scoped && context.scope.programStudyIds.includes(scoped))
 }
@@ -265,10 +264,10 @@ export async function listGatewayEvents(
     .where('provider', '==', provider)
     .orderBy('receivedAt', 'desc')
   const effectiveProgram = programStudyId
-    || (!hasRole(context, 'administrator', 'leader') && context.scope.programStudyIds.length === 1
+    || (context.scope.programStudyIds.length === 1
       ? context.scope.programStudyIds[0]
       : undefined)
-  if (!hasRole(context, 'administrator', 'leader') && !effectiveProgram) invalidInput('programStudyId wajib dipilih untuk akun dengan beberapa lingkup.')
+  if (!effectiveProgram) invalidInput('programStudyId wajib dipilih untuk akun dengan beberapa lingkup.')
   if (effectiveProgram) query = query.where('programStudyId', '==', effectiveProgram)
   if (options.status) query = query.where('status', '==', options.status)
   const snapshot = await query.limit(limit).get()

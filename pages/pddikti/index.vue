@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import type {
+  AcademicAdministrationWorkspace,
+  AcademicPeriodDefinition,
+  AcademicProgramStudy,
+} from '~/server/types/academic-administration'
 import type { PddiktiEntityType, PddiktiJobStatus } from '~/server/types/domain'
 import { PDDIKTI_ENTITY_TYPES } from '~/server/types/domain'
 import type {
@@ -15,15 +20,17 @@ useHead({ title: 'Pelaporan PDDIKTI' })
 
 const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
-const { user } = useAuth()
+const { user, can } = useAuth()
 const activeTab = ref<'readiness' | 'queue' | 'reconciliation'>('readiness')
 const loading = ref(false)
 const mutating = ref(false)
 const errorMessage = ref('')
 const noticeMessage = ref('')
-const programStudyId = ref(user.value?.programStudyId || 'management-s1')
-const periodId = ref('2025-2026-2')
-const queueForm = reactive({ entityType: 'grade' as PddiktiEntityType, entityIds: 'grade-101, grade-102' })
+const programs = ref<AcademicProgramStudy[]>([])
+const periods = ref<AcademicPeriodDefinition[]>([])
+const programStudyId = ref(config.public.demoMode ? 'management-s1' : user.value?.programStudyId || '')
+const periodId = ref(config.public.demoMode ? '2025-2026-2' : '')
+const queueForm = reactive({ entityType: 'grade' as PddiktiEntityType, entityIds: config.public.demoMode ? 'grade-101, grade-102' : '' })
 const compareEntity = ref<PddiktiEntityType>('grade')
 const selectedReconciliationId = ref('')
 const selectedRows = ref<string[]>([])
@@ -63,7 +70,7 @@ const workerStatus = ref<PddiktiWorkerStatus | null>(config.public.demoMode ? de
 const jobs = ref<PddiktiWorkerJob[]>(config.public.demoMode ? [demoJob({}), demoJob({ id: 'sync-demo-002', entityType: 'student', entityIds: ['student-009'], recordCount: 1, status: 'FAILED', attempts: 2, acceptedCount: 0, rejectedCount: 0, updatedAt: '2026-07-21T00:09:00.000Z', lastError: { code: 'ADAPTER_TIMEOUT', message: 'Gateway tidak merespons dalam batas waktu.', occurredAt: '2026-07-21T00:09:00.000Z' } })] : [])
 const reconciliations = ref<PddiktiReconciliation[]>(config.public.demoMode ? [demoReconciliation] : [])
 const selectedReconciliation = computed(() => reconciliations.value.find(item => item.id === selectedReconciliationId.value) ?? reconciliations.value[0])
-const canMutate = computed(() => ['administrator', 'academic_staff'].includes(user.value?.activeRole || ''))
+const canMutate = computed(() => can('pddikti:queue') || can('pddikti:retry'))
 
 const entityLabels: Record<PddiktiEntityType, string> = { student: 'Mahasiswa', lecturer: 'Dosen', course: 'Mata kuliah', class: 'Kelas kuliah', grade: 'Nilai', student_activity: 'Aktivitas mahasiswa', graduation: 'Kelulusan' }
 const statusLabels: Record<PddiktiJobStatus, string> = { QUEUED: 'Menunggu', PROCESSING: 'Diproses', SUCCEEDED: 'Berhasil', FAILED: 'Gagal', DEAD_LETTER: 'Dead letter' }
@@ -77,8 +84,29 @@ const errorText = (error: unknown) => {
 }
 const mutationKey = (action: string) => `${action}:${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 
+const loadCatalog = async () => {
+  if (config.public.demoMode) return
+  const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
+  programs.value = data.programs.filter(program => program.active)
+  periods.value = data.periods.filter(period => period.active)
+  if (!programs.value.some(program => program.id === programStudyId.value)) {
+    const scopedProgram = user.value?.programStudyId
+    programStudyId.value = programs.value.find(program => program.id === scopedProgram)?.id
+      || (programs.value.length === 1 ? programs.value[0]!.id : '')
+  }
+  if (!periods.value.some(period => period.id === periodId.value)) periodId.value = periods.value[0]?.id || ''
+}
+
 const loadWorkspace = async () => {
   if (config.public.demoMode) return
+  if (!programStudyId.value || !periodId.value) {
+    readiness.value = null
+    workerStatus.value = null
+    jobs.value = []
+    reconciliations.value = []
+    errorMessage.value = 'Pilih program studi dan periode akademik dari master resmi.'
+    return
+  }
   loading.value = true
   errorMessage.value = ''
   try {
@@ -103,7 +131,10 @@ const loadWorkspace = async () => {
 
 const queueSync = async () => {
   const entityIds = [...new Set(queueForm.entityIds.split(/[\s,]+/).map(value => value.trim()).filter(Boolean))]
-  if (!entityIds.length) return
+  if (!programStudyId.value || !periodId.value || !entityIds.length) {
+    errorMessage.value = 'Pilih konteks akademik dan isi identifier internal yang nyata.'
+    return
+  }
   mutating.value = true
   errorMessage.value = ''
   noticeMessage.value = ''
@@ -139,6 +170,10 @@ const openJob = async (job: PddiktiWorkerJob) => {
 }
 
 const compareSnapshots = async () => {
+  if (!programStudyId.value || !periodId.value) {
+    errorMessage.value = 'Pilih program studi dan periode akademik sebelum membandingkan snapshot.'
+    return
+  }
   mutating.value = true
   errorMessage.value = ''
   try {
@@ -172,36 +207,54 @@ const decideRows = async (decision: 'QUEUE_INTERNAL' | 'ACKNOWLEDGE_REMOTE') => 
   } catch (error) { errorMessage.value = errorText(error) } finally { mutating.value = false }
 }
 
-onMounted(loadWorkspace)
+const initialize = async () => {
+  if (config.public.demoMode) return
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    await loadCatalog()
+    if (programStudyId.value && periodId.value) await loadWorkspace()
+    else errorMessage.value = 'Master program studi atau periode aktif belum tersedia.'
+  } catch (error) {
+    errorMessage.value = errorText(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(initialize)
 </script>
 
 <template>
   <div class="page-stack pddikti-page">
     <AppPageHeader eyebrow="Pelaporan eksternal" title="PDDIKTI Neo Feeder" description="Validasi sumber internal, kelola worker berlease, dan rekonsiliasi snapshot tanpa penimpaan tersembunyi.">
-      <template #actions><NuxtLink class="btn btn-outline-secondary" to="/pddikti/data-mahasiswa"><i class="uil uil-user-square me-2" />PDM & ijazah</NuxtLink><button class="btn btn-outline-secondary" type="button" :disabled="loading" @click="loadWorkspace"><i class="uil uil-refresh me-2" />Muat ulang</button><button v-if="canMutate" class="btn btn-primary" type="button" @click="activeTab = 'queue'"><i class="uil uil-cloud-upload me-2" />Buat antrean</button></template>
+      <template #actions><NuxtLink v-if="can('pddikti.read')" class="btn btn-outline-secondary" to="/pddikti/data-mahasiswa"><i class="uil uil-user-square me-2" />PDM & ijazah</NuxtLink><button class="btn btn-outline-secondary" type="button" :disabled="loading" @click="initialize"><i class="uil uil-refresh me-2" />Muat ulang</button><button v-if="canMutate" class="btn btn-primary" type="button" @click="activeTab = 'queue'"><i class="uil uil-cloud-upload me-2" />Buat antrean</button></template>
     </AppPageHeader>
     <div v-if="noticeMessage" class="alert alert-success mb-0" role="status">{{ noticeMessage }}</div><div v-if="errorMessage" class="alert alert-danger mb-0" role="alert">{{ errorMessage }}</div>
 
     <section class="worker-banner" :class="{ online: workerStatus?.adapter.reachable }">
-      <div class="worker-banner__status"><span><i class="uil" :class="workerStatus?.adapter.reachable ? 'uil-link' : 'uil-unlink'" /></span><div><small>Gateway adapter</small><strong>{{ workerStatus?.adapter.reachable ? 'Terjangkau' : workerStatus?.adapter.configured ? 'Tidak terjangkau' : 'Belum dikonfigurasi' }}</strong><p>{{ workerStatus?.adapter.message || `Kontrak ${workerStatus?.contract.version}` }}</p></div></div>
+      <div class="worker-banner__status"><span><i class="uil" :class="workerStatus?.adapter.reachable ? 'uil-link' : 'uil-unlink'" /></span><div><small>Gateway adapter</small><strong>{{ !workerStatus ? 'Menunggu konteks' : workerStatus.adapter.reachable ? 'Terjangkau' : workerStatus.adapter.configured ? 'Tidak terjangkau' : 'Belum dikonfigurasi' }}</strong><p>{{ workerStatus?.adapter.message || (workerStatus ? `Kontrak ${workerStatus.contract.version}` : 'Pilih program studi dan periode akademik untuk memuat status nyata.') }}</p></div></div>
       <div class="worker-metrics"><div><strong>{{ workerStatus?.queue.QUEUED ?? 0 }}</strong><span>Menunggu</span></div><div><strong>{{ workerStatus?.queue.PROCESSING ?? 0 }}</strong><span>Diproses</span></div><div><strong>{{ workerStatus?.queue.DEAD_LETTER ?? 0 }}</strong><span>Dead letter</span></div><div><strong>{{ workerStatus?.contract.maxBatchSize ?? '-' }}</strong><span>Batas batch</span></div></div>
     </section>
 
-    <section class="workflow-toolbar"><div class="tab-strip" role="tablist"><button type="button" :class="{ active: activeTab === 'readiness' }" @click="activeTab = 'readiness'">Kesiapan</button><button type="button" :class="{ active: activeTab === 'queue' }" @click="activeTab = 'queue'">Antrean & riwayat</button><button type="button" :class="{ active: activeTab === 'reconciliation' }" @click="activeTab = 'reconciliation'">Rekonsiliasi</button></div><div class="workflow-toolbar__filters"><label><span>Program studi</span><input v-model="programStudyId" class="form-control form-control-sm" maxlength="80"></label><label><span>Periode</span><input v-model="periodId" class="form-control form-control-sm" maxlength="40"></label></div></section>
+    <section class="workflow-toolbar"><div class="tab-strip" role="tablist"><button type="button" :class="{ active: activeTab === 'readiness' }" @click="activeTab = 'readiness'">Kesiapan</button><button type="button" :class="{ active: activeTab === 'queue' }" @click="activeTab = 'queue'">Antrean & riwayat</button><button type="button" :class="{ active: activeTab === 'reconciliation' }" @click="activeTab = 'reconciliation'">Rekonsiliasi</button></div><div class="workflow-toolbar__filters"><label><span>Program studi</span><input v-if="config.public.demoMode" v-model="programStudyId" class="form-control form-control-sm" maxlength="80"><select v-else v-model="programStudyId" class="form-select form-select-sm" required @change="loadWorkspace"><option value="" disabled>Pilih program resmi</option><option v-for="program in programs" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label><label><span>Periode</span><input v-if="config.public.demoMode" v-model="periodId" class="form-control form-control-sm" maxlength="40"><select v-else v-model="periodId" class="form-select form-select-sm" required @change="loadWorkspace"><option value="" disabled>Pilih periode resmi</option><option v-for="period in periods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ period.term }}</option></select></label></div></section>
     <div v-if="loading" class="workspace-loading"><span class="spinner-border spinner-border-sm" />Memuat data pelaporan...</div>
 
     <template v-else-if="activeTab === 'readiness'">
-      <section class="readiness-summary"><div><span>Kelengkapan eligible</span><strong>{{ readiness?.completenessPercent.toLocaleString('id-ID') ?? 0 }}%</strong><small>{{ readiness?.eligible ?? 0 }} dari {{ readiness?.total ?? 0 }} record</small></div><div class="readiness-bar"><span :style="{ width: `${readiness?.completenessPercent ?? 0}%` }" /></div><StatusBadge :status="readiness?.blocked ? 'review' : 'success'" :label="`${readiness?.blocked ?? 0} blocker`" /></section>
-      <section class="entity-grid"><article v-for="entity in readiness?.entities" :key="entity.entityType" class="entity-card"><header><span><i class="uil uil-database" /></span><div><h2>{{ entityLabels[entity.entityType] }}</h2><small>{{ entity.mappingVersion }}</small></div><strong>{{ entity.completenessPercent.toLocaleString('id-ID') }}%</strong></header><dl><div><dt>Total</dt><dd>{{ entity.total }}</dd></div><div><dt>Eligible</dt><dd>{{ entity.eligible }}</dd></div><div><dt>Antrean</dt><dd>{{ entity.queued }}</dd></div><div><dt>Terpetakan</dt><dd>{{ entity.synced }}</dd></div></dl><div v-if="Object.keys(entity.blockerCounts).length" class="blocker-list"><span v-for="(count, code) in entity.blockerCounts" :key="code">{{ code }} · {{ count }}</span></div><div v-else class="blocker-clear"><i class="uil uil-check-circle" />Tidak ada blocker</div></article></section>
+      <EmptyState v-if="!readiness" icon="uil-database" title="Konteks pelaporan belum dipilih" description="Pilih program studi dan periode akademik dari master resmi untuk memuat kesiapan PDDIKTI." />
+      <template v-else>
+        <section class="readiness-summary"><div><span>Kelengkapan eligible</span><strong>{{ readiness.completenessPercent.toLocaleString('id-ID') }}%</strong><small>{{ readiness.eligible }} dari {{ readiness.total }} record</small></div><div class="readiness-bar"><span :style="{ width: `${readiness.completenessPercent}%` }" /></div><StatusBadge :status="readiness.blocked ? 'review' : 'success'" :label="`${readiness.blocked} blocker`" /></section>
+        <section class="entity-grid"><article v-for="entity in readiness.entities" :key="entity.entityType" class="entity-card"><header><span><i class="uil uil-database" /></span><div><h2>{{ entityLabels[entity.entityType] }}</h2><small>{{ entity.mappingVersion }}</small></div><strong>{{ entity.completenessPercent.toLocaleString('id-ID') }}%</strong></header><dl><div><dt>Total</dt><dd>{{ entity.total }}</dd></div><div><dt>Eligible</dt><dd>{{ entity.eligible }}</dd></div><div><dt>Antrean</dt><dd>{{ entity.queued }}</dd></div><div><dt>Terpetakan</dt><dd>{{ entity.synced }}</dd></div></dl><div v-if="Object.keys(entity.blockerCounts).length" class="blocker-list"><span v-for="(count, code) in entity.blockerCounts" :key="code">{{ code }} · {{ count }}</span></div><div v-else class="blocker-clear"><i class="uil uil-check-circle" />Tidak ada blocker</div></article></section>
+      </template>
     </template>
 
     <template v-else-if="activeTab === 'queue'">
-      <section v-if="canMutate" class="workflow-card queue-composer"><div><span class="section-kicker">Snapshot immutable</span><h2>Antrekan record eligible</h2><p>Identifier divalidasi terhadap sumber internal dan mapping aktif sebelum payload dibekukan.</p></div><form @submit.prevent="queueSync"><label><span>Entitas</span><select v-model="queueForm.entityType" class="form-select"><option v-for="entityType in PDDIKTI_ENTITY_TYPES" :key="entityType" :value="entityType">{{ entityLabels[entityType] }}</option></select></label><label class="ids-field"><span>Identifier internal, pisahkan koma</span><input v-model="queueForm.entityIds" class="form-control" maxlength="4000" required></label><button class="btn btn-primary" type="submit" :disabled="mutating">Validasi & antrekan</button></form></section>
+      <section v-if="canMutate" class="workflow-card queue-composer"><div><span class="section-kicker">Snapshot immutable</span><h2>Antrekan record eligible</h2><p>Identifier divalidasi terhadap sumber internal dan mapping aktif sebelum payload dibekukan.</p></div><form @submit.prevent="queueSync"><label><span>Entitas</span><select v-model="queueForm.entityType" class="form-select"><option v-for="entityType in PDDIKTI_ENTITY_TYPES" :key="entityType" :value="entityType">{{ entityLabels[entityType] }}</option></select></label><label class="ids-field"><span>Identifier internal, pisahkan koma</span><input v-model="queueForm.entityIds" class="form-control" maxlength="4000" required></label><button class="btn btn-primary" type="submit" :disabled="mutating || !programStudyId || !periodId || !queueForm.entityIds.trim()">Validasi & antrekan</button></form></section>
       <section class="workflow-card"><header class="section-heading"><div><span class="section-kicker">Lease, retry, hasil</span><h2>Antrean dan riwayat worker</h2><p>Payload akademik tidak dikirim pada daftar ini; buka detail untuk metadata hasil dan mapping.</p></div></header><div class="job-list"><article v-for="job in jobs" :key="job.id" class="job-row"><span class="job-icon"><i class="uil uil-process" /></span><div class="job-copy"><div><strong>{{ entityLabels[job.entityType] }}</strong><StatusBadge :status="statusTones[job.status]" :label="statusLabels[job.status]" /></div><p>{{ job.id }} · {{ job.recordCount }} record · percobaan {{ job.attempts }}/{{ job.maxAttempts }}</p><small>{{ job.mappingVersion }} · {{ dateLabel(job.updatedAt) }}<template v-if="job.leaseRecoveries"> · {{ job.leaseRecoveries }} lease dipulihkan</template></small><span v-if="job.lastError" class="job-error">{{ job.lastError.code }} · {{ job.lastError.message }}</span></div><div class="job-count"><strong>{{ job.acceptedCount }}</strong><small>diterima</small><strong>{{ job.rejectedCount }}</strong><small>ditolak</small></div><div class="job-actions"><button class="btn btn-sm btn-outline-secondary" type="button" @click="openJob(job)">Detail</button><button v-if="canMutate && ['FAILED','DEAD_LETTER'].includes(job.status)" class="btn btn-sm btn-primary" type="button" :disabled="mutating" @click="retryJob(job)">Retry</button></div></article><div v-if="!jobs.length" class="empty-list">Belum ada job dalam lingkup ini.</div></div></section>
     </template>
 
     <template v-else>
-      <section class="workflow-card compare-card"><div><span class="section-kicker">Tidak menimpa sumber</span><h2>Bandingkan snapshot</h2><p>Hasil hanya mencatat fingerprint dan nama field berbeda. Nilai internal/remote tidak disalin otomatis.</p></div><div class="compare-controls"><select v-model="compareEntity" class="form-select"><option v-for="entityType in PDDIKTI_ENTITY_TYPES" :key="entityType" :value="entityType">{{ entityLabels[entityType] }}</option></select><button v-if="canMutate" class="btn btn-primary" type="button" :disabled="mutating" @click="compareSnapshots">Bandingkan sekarang</button></div></section>
+      <section class="workflow-card compare-card"><div><span class="section-kicker">Tidak menimpa sumber</span><h2>Bandingkan snapshot</h2><p>Hasil hanya mencatat fingerprint dan nama field berbeda. Nilai internal/remote tidak disalin otomatis.</p></div><div class="compare-controls"><select v-model="compareEntity" class="form-select"><option v-for="entityType in PDDIKTI_ENTITY_TYPES" :key="entityType" :value="entityType">{{ entityLabels[entityType] }}</option></select><button v-if="canMutate" class="btn btn-primary" type="button" :disabled="mutating || !programStudyId || !periodId" @click="compareSnapshots">Bandingkan sekarang</button></div></section>
       <section v-if="reconciliations.length" class="reconciliation-layout"><aside class="reconciliation-list"><button v-for="item in reconciliations" :key="item.id" type="button" :class="{ active: selectedReconciliation?.id === item.id }" @click="selectedReconciliationId = item.id; selectedRows = []"><strong>{{ entityLabels[item.entityType] }}</strong><span>{{ item.status }} · v{{ item.version }}</span><small>{{ dateLabel(item.updatedAt) }}</small></button></aside><article v-if="selectedReconciliation" class="workflow-card reconciliation-detail"><header class="section-heading"><div><span class="section-kicker">{{ selectedReconciliation.mappingVersion }}</span><h2>Hasil rekonsiliasi</h2><p>Kontrak {{ selectedReconciliation.contractVersion }}</p></div><StatusBadge :status="selectedReconciliation.status === 'REVIEWED' ? 'success' : 'review'" :label="selectedReconciliation.status" /></header><div class="recon-summary"><span v-for="(count, state) in selectedReconciliation.summary" :key="state"><strong>{{ count }}</strong>{{ differenceLabels[state] }}</span></div><div class="recon-actions" v-if="canMutate"><span>{{ selectedRows.length }} baris dipilih</span><button class="btn btn-sm btn-outline-secondary" type="button" :disabled="!selectedRows.length || mutating" @click="decideRows('ACKNOWLEDGE_REMOTE')">Catat sebagai ditinjau</button><button class="btn btn-sm btn-primary" type="button" :disabled="!selectedRows.length || mutating || selectedReconciliation.rows.filter(row => selectedRows.includes(row.key)).some(row => !row.internalId || row.state === 'MISSING_INTERNAL')" @click="decideRows('QUEUE_INTERNAL')">Antrekan internal</button></div><div class="recon-table"><div v-for="row in selectedReconciliation.rows" :key="row.key" class="recon-row"><input v-if="canMutate && row.state !== 'MATCH' && !row.decision" v-model="selectedRows" type="checkbox" :value="row.key" :aria-label="`Pilih ${row.key}`"><span v-else class="checkbox-space" /><div><strong>{{ row.internalId || row.remoteId }}</strong><small>Internal {{ row.internalId || '-' }} · Remote {{ row.remoteId || '-' }}</small><p v-if="row.differingFields.length">Field: {{ row.differingFields.join(', ') }}</p><p v-if="row.decision">Keputusan {{ row.decision }} oleh {{ row.decidedBy }}</p></div><StatusBadge :status="differenceTones[row.state]" :label="differenceLabels[row.state]" /></div></div></article></section><div v-else class="workflow-card empty-list">Belum ada snapshot rekonsiliasi pada lingkup ini.</div>
     </template>
 

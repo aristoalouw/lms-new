@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AxiosError } from 'axios'
+import type { AcademicAdministrationWorkspace } from '~/server/types/academic-administration'
 import type { DashboardSnapshot } from '~/server/types/domain'
 
 definePageMeta({ middleware: 'auth' })
@@ -13,12 +14,15 @@ const { can } = useAuth()
 const { isLmsMvp } = useFeatureFlags()
 const { $api } = useNuxtApp()
 const summary = ref<Summary | null>(null)
-const filters = reactive({ periodId: '2025-2026-2', programStudyId: '' })
+const filters = reactive({ periodId: '', programStudyId: '' })
+const periods = ref<AcademicAdministrationWorkspace['periods']>([])
+const programs = ref<AcademicAdministrationWorkspace['programs']>([])
 const loading = ref(true)
 const exporting = ref(false)
 const errorMessage = ref('')
 const rupiah = (value: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value)
 const percent = (value: number) => `${new Intl.NumberFormat('id-ID', { maximumFractionDigits: 1 }).format(value)}%`
+const termLabel = (term: AcademicAdministrationWorkspace['periods'][number]['term']) => ({ ODD: 'Ganjil', EVEN: 'Genap', SHORT: 'Pendek' })[term]
 const updatedLabel = computed(() => summary.value ? new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(summary.value.updatedAt)) : '')
 const errorText = (error: unknown) => {
   const data = (error as AxiosError<{ statusMessage?: string; message?: string }>).response?.data
@@ -43,17 +47,29 @@ const cards = computed(() => {
 
 const links = computed(() => isLmsMvp.value ? [
   ...(can('classes:manage') ? [{ to: '/admin/kelas', label: 'Kelas & enrolment', detail: 'Kelola kelas, dosen, dan roster kanonik', icon: 'uil-presentation-check' }] : []),
-  { to: '/pembelajaran', label: 'Pembelajaran', detail: 'Materi, tugas, diskusi, dan feedback', icon: 'uil-presentation-play' },
-  { to: '/notifikasi', label: 'Notifikasi', detail: 'Pembaruan aktivitas kelas', icon: 'uil-bell' },
-  { to: '/berkas', label: 'Berkas privat', detail: 'File pembelajaran yang telah dipindai', icon: 'uil-folder-open' },
+  ...(can('learning.read') ? [{ to: '/pembelajaran', label: 'Pembelajaran', detail: 'Materi, tugas, diskusi, dan feedback', icon: 'uil-presentation-play' }] : []),
+  ...(can('notification.read') ? [{ to: '/notifikasi', label: 'Notifikasi', detail: 'Pembaruan aktivitas kelas', icon: 'uil-bell' }] : []),
+  ...(can('file.read') ? [{ to: '/berkas', label: 'Berkas privat', detail: 'File pembelajaran yang telah dipindai', icon: 'uil-folder-open' }] : []),
 ] : [
-  { to: '/akademik/kelas', label: 'Pelaksanaan kelas', detail: 'Presensi, jurnal, dan nilai', icon: 'uil-presentation-check' },
-  { to: '/akademik/krs', label: 'KRS', detail: 'Pengisian dan persetujuan', icon: 'uil-clipboard-alt' },
-  { to: '/pddikti', label: 'PDDIKTI', detail: 'Readiness dan rekonsiliasi', icon: 'uil-sync' },
-  { to: '/keuangan', label: 'Keuangan', detail: 'Tagihan dan piutang', icon: 'uil-receipt' },
-  { to: '/pmb', label: 'PMB', detail: 'Pendaftar dan seleksi', icon: 'uil-user-plus' },
-  { to: '/tracer-study', label: 'Tracer study', detail: 'Outcome lulusan', icon: 'uil-chart-growth' },
+  ...(can('academic.read') ? [{ to: '/akademik/kelas', label: 'Pelaksanaan kelas', detail: 'Presensi, jurnal, dan nilai', icon: 'uil-presentation-check' }, { to: '/akademik/krs', label: 'KRS', detail: 'Pengisian dan persetujuan', icon: 'uil-clipboard-alt' }] : []),
+  ...(can('pddikti.read') ? [{ to: '/pddikti', label: 'PDDIKTI', detail: 'Readiness dan rekonsiliasi', icon: 'uil-sync' }] : []),
+  ...(can('finance.read') ? [{ to: '/keuangan', label: 'Keuangan', detail: 'Tagihan dan piutang', icon: 'uil-receipt' }] : []),
+  ...(can('pmb.read') ? [{ to: '/pmb', label: 'PMB', detail: 'Pendaftar dan seleksi', icon: 'uil-user-plus' }] : []),
+  ...(can('tracer.read') ? [{ to: '/tracer-study', label: 'Tracer study', detail: 'Outcome lulusan', icon: 'uil-chart-growth' }] : []),
 ])
+
+async function loadFilters() {
+  if (isLmsMvp.value) return
+  try {
+    const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
+    periods.value = data.periods.filter(item => item.active)
+    programs.value = data.programs.filter(item => item.active)
+    if (!filters.periodId) filters.periodId = periods.value[0]?.id || ''
+    if (!filters.programStudyId && programs.value.length === 1) filters.programStudyId = programs.value[0]!.id
+  } catch {
+    // Dashboard API tetap dapat memilih periode aktif server-side bila katalog tidak tersedia untuk role ini.
+  }
+}
 
 async function load() {
   loading.value = true; errorMessage.value = ''
@@ -75,7 +91,7 @@ async function download(format: 'csv' | 'pdf') {
   } catch (error) { errorMessage.value = errorText(error) } finally { exporting.value = false }
 }
 
-onMounted(load)
+onMounted(async () => { await loadFilters(); await load() })
 </script>
 
 <template>
@@ -85,7 +101,7 @@ onMounted(load)
     </AppPageHeader>
 
     <div v-if="errorMessage && !isLmsMvp" class="alert alert-danger mb-0">{{ errorMessage }}</div>
-    <section v-if="!isLmsMvp" class="filter-bar"><div class="filter-context"><span><i class="uil uil-filter" /></span><div><strong>Sudut pandang laporan</strong><small>{{ summary ? `Diperbarui ${updatedLabel}` : 'Memuat snapshot…' }}</small></div></div><div class="filter-controls"><label><span>Periode stabil</span><input v-model="filters.periodId" class="form-control form-control-sm" placeholder="2025-2026-2"></label><label><span>Program studi (opsional)</span><input v-model="filters.programStudyId" class="form-control form-control-sm" placeholder="management-s1"></label><button class="btn btn-sm btn-outline-secondary" :disabled="loading" @click="load">Terapkan</button></div></section>
+    <section v-if="!isLmsMvp" class="filter-bar"><div class="filter-context"><span><i class="uil uil-filter" /></span><div><strong>Sudut pandang laporan</strong><small>{{ summary ? `Diperbarui ${updatedLabel}` : 'Memuat snapshot…' }}</small></div></div><div class="filter-controls"><label><span>Periode</span><select v-model="filters.periodId" class="form-select form-select-sm"><option value="">Periode aktif server</option><option v-for="period in periods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ termLabel(period.term) }}</option></select></label><label><span>Program studi (opsional)</span><select v-model="filters.programStudyId" class="form-select form-select-sm"><option value="">Seluruh lingkup</option><option v-for="program in programs" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label><button class="btn btn-sm btn-outline-secondary" :disabled="loading" @click="load">Terapkan</button></div></section>
 
     <div v-if="loading && !isLmsMvp" class="loading-state"><span class="spinner-border spinner-border-sm" /> Memuat snapshot dashboard…</div>
     <template v-else-if="summary && !isLmsMvp">
@@ -106,6 +122,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page-stack{display:grid;gap:1.35rem}.filter-bar{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.8rem 1rem;border:1px solid #e2e9e5;border-radius:.9rem;background:#fff}.filter-context,.filter-controls,.filter-controls label{display:flex;align-items:center}.filter-context{gap:.7rem}.filter-context>span{display:grid;place-items:center;width:2.2rem;height:2.2rem;border-radius:.65rem;color:#346a59;background:#edf5f0}.filter-context strong,.filter-context small,.filter-controls label>span{display:block}.filter-context strong{color:#28483f;font-size:.72rem}.filter-context small{color:#7d8b86;font-size:.58rem}.filter-controls{gap:.65rem}.filter-controls label{gap:.4rem}.filter-controls label>span{color:#71817a;font-size:.55rem;font-weight:750}.filter-controls .form-control{min-width:145px;border-color:#dce5e0;font-size:.63rem}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.8rem}.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}.surface-card{padding:1rem;border:1px solid #e0e8e3;border-radius:.9rem;background:#fff}.surface-card header{margin-bottom:.8rem}.surface-card h2,.section-heading h2{margin:.15rem 0;color:#304f43;font-size:.8rem}.surface-card dl{display:grid;gap:.5rem;margin:0}.surface-card dl div{display:flex;justify-content:space-between;gap:1rem;padding:.45rem 0;border-top:1px solid #edf1ee}.surface-card dt,.surface-card dd{color:#788880;font-size:.6rem}.surface-card dd{margin:0;color:#35564a;font-weight:800;text-align:right}.progress-metric+.progress-metric{margin-top:.8rem}.progress-metric>div:first-child{display:flex;justify-content:space-between;margin-bottom:.35rem;color:#657970;font-size:.59rem}.progress-metric .progress{height:.38rem}.quick-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem;margin-top:.7rem}.quick-grid>a{display:grid;grid-template-columns:auto 1fr auto;gap:.65rem;align-items:center;padding:.8rem;border:1px solid #e0e8e3;border-radius:.8rem;color:inherit;background:#fff;text-decoration:none}.quick-grid>a>span{display:grid;place-items:center;width:2rem;height:2rem;border-radius:.55rem;color:#3f735d;background:#edf5ef}.quick-grid strong,.quick-grid small{display:block;color:#38554a;font-size:.64rem}.quick-grid small{margin-top:.12rem;color:#84918c;font-size:.53rem}.loading-state,.empty-dashboard{display:grid;place-items:center;align-content:center;min-height:220px;border:1px solid #e0e8e3;border-radius:.9rem;color:#7c8c85;background:#fff;text-align:center}.loading-state{display:flex;gap:.5rem;font-size:.65rem}.empty-dashboard i{color:#477762;font-size:2rem}.empty-dashboard h2{margin:.5rem 0 .2rem;color:#36564a;font-size:.85rem}.empty-dashboard p{max-width:520px;color:#788982;font-size:.62rem}.section-heading{margin-bottom:.3rem}.section-kicker{color:#638275;font-size:.53rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
-@media(max-width:991.98px){.filter-bar{align-items:stretch;flex-direction:column}.filter-controls{flex-wrap:wrap}.quick-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:575.98px){.filter-controls,.filter-controls label{align-items:stretch;flex-direction:column}.filter-controls .form-control{width:100%}.quick-grid{grid-template-columns:1fr}}
+.page-stack{display:grid;gap:1.35rem}.filter-bar{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.8rem 1rem;border:1px solid #e2e9e5;border-radius:.9rem;background:#fff}.filter-context,.filter-controls,.filter-controls label{display:flex;align-items:center}.filter-context{gap:.7rem}.filter-context>span{display:grid;place-items:center;width:2.2rem;height:2.2rem;border-radius:.65rem;color:#346a59;background:#edf5f0}.filter-context strong,.filter-context small,.filter-controls label>span{display:block}.filter-context strong{color:#28483f;font-size:.72rem}.filter-context small{color:#7d8b86;font-size:.58rem}.filter-controls{gap:.65rem}.filter-controls label{gap:.4rem}.filter-controls label>span{color:#71817a;font-size:.55rem;font-weight:750}.filter-controls .form-select{min-width:175px;border-color:#dce5e0;font-size:.63rem}.metric-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:.8rem}.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}.surface-card{padding:1rem;border:1px solid #e0e8e3;border-radius:.9rem;background:#fff}.surface-card header{margin-bottom:.8rem}.surface-card h2,.section-heading h2{margin:.15rem 0;color:#304f43;font-size:.8rem}.surface-card dl{display:grid;gap:.5rem;margin:0}.surface-card dl div{display:flex;justify-content:space-between;gap:1rem;padding:.45rem 0;border-top:1px solid #edf1ee}.surface-card dt,.surface-card dd{color:#788880;font-size:.6rem}.surface-card dd{margin:0;color:#35564a;font-weight:800;text-align:right}.progress-metric+.progress-metric{margin-top:.8rem}.progress-metric>div:first-child{display:flex;justify-content:space-between;margin-bottom:.35rem;color:#657970;font-size:.59rem}.progress-metric .progress{height:.38rem}.quick-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:.7rem;margin-top:.7rem}.quick-grid>a{display:grid;grid-template-columns:auto 1fr auto;gap:.65rem;align-items:center;padding:.8rem;border:1px solid #e0e8e3;border-radius:.8rem;color:inherit;background:#fff;text-decoration:none}.quick-grid>a>span{display:grid;place-items:center;width:2rem;height:2rem;border-radius:.55rem;color:#3f735d;background:#edf5ef}.quick-grid strong,.quick-grid small{display:block;color:#38554a;font-size:.64rem}.quick-grid small{margin-top:.12rem;color:#84918c;font-size:.53rem}.loading-state,.empty-dashboard{display:grid;place-items:center;align-content:center;min-height:220px;border:1px solid #e0e8e3;border-radius:.9rem;color:#7c8c85;background:#fff;text-align:center}.loading-state{display:flex;gap:.5rem;font-size:.65rem}.empty-dashboard i{color:#477762;font-size:2rem}.empty-dashboard h2{margin:.5rem 0 .2rem;color:#36564a;font-size:.85rem}.empty-dashboard p{max-width:520px;color:#788982;font-size:.62rem}.section-heading{margin-bottom:.3rem}.section-kicker{color:#638275;font-size:.53rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+@media(max-width:991.98px){.filter-bar{align-items:stretch;flex-direction:column}.filter-controls{flex-wrap:wrap}.quick-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:575.98px){.filter-controls,.filter-controls label{align-items:stretch;flex-direction:column}.filter-controls .form-select{width:100%}.quick-grid{grid-template-columns:1fr}}
 </style>

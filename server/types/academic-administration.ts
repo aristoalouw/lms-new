@@ -257,6 +257,8 @@ export interface MbkmActivity {
 
 export interface AcademicGradeRecord {
   id: string
+  classId?: string
+  publicationVersion?: number
   studentId: string
   periodId: string
   courseCode: string

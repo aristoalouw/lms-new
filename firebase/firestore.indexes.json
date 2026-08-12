@@ -1,6 +1,54 @@
 {
   "indexes": [
     {
+      "collectionGroup": "academicStudentProfiles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "programStudyId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "academicClasses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "programStudyId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "admissionApplications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "academicYear", "order": "ASCENDING" },
+        { "fieldPath": "programStudyId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pddiktiSyncJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "periodId", "order": "ASCENDING" },
+        { "fieldPath": "programStudyId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tracerResponses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "programStudyId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "krs",
       "queryScope": "COLLECTION",
       "fields": [
@@ -695,22 +743,6 @@
       "fields": [
         { "fieldPath": "lecturerIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "periodId", "order": "ASCENDING" },
-        { "fieldPath": "programStudyId", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "academicClasses",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "periodId", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "academicClasses",
-      "queryScope": "COLLECTION",
-      "fields": [
         { "fieldPath": "programStudyId", "order": "ASCENDING" },
         { "fieldPath": "__name__", "order": "ASCENDING" }
       ]

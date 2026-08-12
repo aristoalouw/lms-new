@@ -273,11 +273,11 @@ describe('account lifecycle', () => {
     }
   })
 
-  it('validates current scope and student identity before reactivating a contained LMS account', async () => {
+  it('menolak identitas mahasiswa duplikat pada full-campus maupun LMS MVP', async () => {
     const previousProfile = process.env.APP_FEATURE_PROFILE
     process.env.APP_FEATURE_PROFILE = 'full-campus'
     try {
-      const duplicate = await createAccount(admin(), {
+      await expect(createAccount(admin(), {
         email: 'legacy.duplicate@example.test',
         displayName: 'Legacy Duplicate',
         roles: ['student'],
@@ -288,19 +288,7 @@ describe('account lifecycle', () => {
           studentIds: ['student-001'],
         },
         status: 'active',
-      }, 'account-create-legacy-duplicate')
-
-      process.env.APP_FEATURE_PROFILE = 'lms-mvp'
-      const blocked = await updateAccount(admin(), duplicate.account.id, {
-        status: 'blocked',
-        expectedVersion: 1,
-      }, 'account-block-legacy-duplicate')
-      expect(blocked.account.status).toBe('blocked')
-
-      await expect(updateAccount(admin(), duplicate.account.id, {
-        status: 'active',
-        expectedVersion: 2,
-      }, 'account-reactivate-legacy-duplicate')).rejects.toMatchObject({
+      }, 'account-create-legacy-duplicate')).rejects.toMatchObject({
         statusCode: 409,
         code: 'STUDENT_ID_ALREADY_USED',
       } satisfies Partial<CampusError>)

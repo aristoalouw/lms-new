@@ -4,20 +4,25 @@ import type {
   GatewayReconciliationRow,
   PaymentGatewayEventRecord,
 } from '~/server/types/payment-gateway'
+import type { AdmissionProgram } from '~/server/types/admissions'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Rekonsiliasi Payment Gateway' })
 
 const { $api } = useNuxtApp()
 const config = useRuntimeConfig()
+const { user } = useAuth()
 const provider = ref('')
 const signatureAlgorithm = ref('HMAC-SHA256')
 const events = ref<PaymentGatewayEventRecord[]>([])
-const reportText = ref([
-  'event_id,transaction_id,amount,occurred_at',
-  `evt-provider-example,VA/EXAMPLE/0001,2500000,${new Date().toISOString()}`,
-].join('\n'))
-const programStudyId = ref('management-s1')
+const programs = ref<AdmissionProgram[]>([])
+const reportText = ref(config.public.demoMode
+  ? [
+      'event_id,transaction_id,amount,occurred_at',
+      `evt-provider-example,VA/EXAMPLE/0001,2500000,${new Date().toISOString()}`,
+    ].join('\n')
+  : 'event_id,transaction_id,amount,occurred_at')
+const programStudyId = ref(user.value?.programStudyId || '')
 const now = new Date()
 const periodEnd = ref(now.toISOString().slice(0, 16))
 const periodStart = ref(new Date(now.getTime() - 7 * 86_400_000).toISOString().slice(0, 16))
@@ -43,7 +48,22 @@ const ensureSession = async () => {
   sessionReady.value = true
 }
 
+const loadPrograms = async () => {
+  const response = await $api.get<{ programs: AdmissionProgram[] }>('/admissions/catalog')
+  programs.value = response.data.programs.filter(program => program.active)
+  if (!programs.value.some(program => program.id === programStudyId.value)) {
+    const scopedProgram = user.value?.programStudyId
+    programStudyId.value = programs.value.find(program => program.id === scopedProgram)?.id
+      || (programs.value.length === 1 ? programs.value[0]!.id : '')
+  }
+}
+
 const loadEvents = async () => {
+  if (!programStudyId.value) {
+    events.value = []
+    errorMessage.value = 'Pilih program studi dari katalog resmi sebelum memuat event.'
+    return
+  }
   busy.value = true
   errorMessage.value = ''
   try {
@@ -84,6 +104,10 @@ const parseReport = (): GatewayReconciliationRow[] => {
 }
 
 const reconcile = async () => {
+  if (!programStudyId.value) {
+    errorMessage.value = 'Pilih program studi dari katalog resmi sebelum rekonsiliasi.'
+    return
+  }
   busy.value = true
   errorMessage.value = ''
   message.value = ''
@@ -142,7 +166,21 @@ const eventTone = (value: string) => value === 'PROCESSED' ? 'success' : 'blocke
 const resultTone = (value: string) => value === 'MATCHED' ? 'success' : value === 'MISMATCH' ? 'blocked' : 'review'
 const rupiah = (value: unknown) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(value))
 
-onMounted(loadEvents)
+const initialize = async () => {
+  busy.value = true
+  errorMessage.value = ''
+  try {
+    await ensureSession()
+    await loadPrograms()
+    if (programStudyId.value) await loadEvents()
+  } catch (error) {
+    errorMessage.value = readableError(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+onMounted(initialize)
 </script>
 
 <template>
@@ -157,7 +195,7 @@ onMounted(loadEvents)
       <template #actions>
         <NuxtLink class="btn btn-outline-secondary" to="/keuangan"><i class="uil uil-arrow-left me-2" />Kembali</NuxtLink>
         <label class="btn btn-outline-secondary mb-0"><i class="uil uil-file-upload me-2" />Pilih laporan<input class="visually-hidden" type="file" accept=".csv,text/csv" @change="onFile"></label>
-        <button class="btn btn-primary" type="button" :disabled="busy || !provider" @click="reconcile"><span v-if="busy" class="spinner-border spinner-border-sm me-2" />Rekonsiliasi</button>
+        <button class="btn btn-primary" type="button" :disabled="busy || !provider || !programStudyId" @click="reconcile"><span v-if="busy" class="spinner-border spinner-border-sm me-2" />Rekonsiliasi</button>
       </template>
     </AppPageHeader>
 
@@ -166,7 +204,7 @@ onMounted(loadEvents)
 
     <section class="workflow-surface">
       <header class="workflow-surface__header"><div><span class="section-kicker">Laporan provider</span><h2>Parameter perbandingan</h2><p>Preview ini hanya membandingkan data; tidak mengubah invoice atau pembayaran.</p></div><span class="secure-chip"><i class="uil uil-shield-check" /> Payload webhook diverifikasi server</span></header>
-      <div class="workflow-surface__body"><div class="row g-3"><label class="col-sm-4 form-label"><span>Program studi</span><select v-model="programStudyId" class="form-select"><option value="management-s1">S1 Manajemen</option><option value="informatics-s1">S1 Informatika</option></select></label><label class="col-sm-4 form-label"><span>Mulai</span><input v-model="periodStart" class="form-control" type="datetime-local"></label><label class="col-sm-4 form-label"><span>Selesai</span><input v-model="periodEnd" class="form-control" type="datetime-local"></label><label class="col-12 form-label"><span>CSV settlement provider</span><textarea v-model="reportText" class="form-control report-source" rows="7" spellcheck="false" /></label></div></div>
+      <div class="workflow-surface__body"><div class="row g-3"><label class="col-sm-4 form-label"><span>Program studi</span><select v-model="programStudyId" class="form-select" required @change="loadEvents"><option value="" disabled>Pilih program studi resmi</option><option v-for="program in programs" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label><label class="col-sm-4 form-label"><span>Mulai</span><input v-model="periodStart" class="form-control" type="datetime-local"></label><label class="col-sm-4 form-label"><span>Selesai</span><input v-model="periodEnd" class="form-control" type="datetime-local"></label><label class="col-12 form-label"><span>CSV settlement provider</span><textarea v-model="reportText" class="form-control report-source" rows="7" spellcheck="false" /></label></div></div>
     </section>
 
     <template v-if="result">

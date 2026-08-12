@@ -41,7 +41,7 @@ const submitLogin = async () => {
   }
 
   try {
-    await login(email.value.trim(), password.value)
+    await login(email.value.trim(), password.value, remember.value)
     await navigateTo(redirectAfterLogin.value)
   } catch {
     localError.value = authError.value || 'Login gagal. Periksa kembali akun Anda.'
@@ -120,7 +120,7 @@ watch(resetEmail, () => { resetIdempotencyKey = '' })
 
       <div class="login-story__footer">
         <span>Status layanan</span>
-        <strong><i aria-hidden="true" /> Semua sistem beroperasi normal</strong>
+        <strong><i aria-hidden="true" /> Status layanan diperiksa saat Anda masuk</strong>
       </div>
     </section>
 

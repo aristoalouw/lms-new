@@ -32,7 +32,7 @@ const adjustmentDraft = reactive({ type: 'SCHOLARSHIP' as 'SCHOLARSHIP' | 'DISCO
 const installmentText = ref('')
 const depositCredit = reactive({ studentId: '', amountIdr: 0, sourceReference: '', expectedVersion: 0 })
 
-const isFinance = computed(() => user.value?.roles.some(role => ['administrator', 'finance_staff'].includes(role)) || false)
+const isFinance = computed(() => user.value?.roles.includes('finance_staff') || false)
 const selected = computed(() => invoices.value.find(item => item.id === selectedId.value) || invoices.value[0])
 const rupiah = (value: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value)
 const dateLabel = (value: string) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeZone: 'Asia/Jakarta' }).format(new Date(`${value}T00:00:00+07:00`))

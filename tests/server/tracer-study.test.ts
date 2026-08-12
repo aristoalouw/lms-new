@@ -196,7 +196,9 @@ describe('tracer study security, privacy, and workflow', () => {
     expect(JSON.stringify(suppressed)).not.toContain('PRIVATE_ONE')
 
     await submitToken(delivery.byEmail.get('alumni-3@example.test')!, 'tracer-threshold-submit-0003', '+PRIVATE_THREE')
-    const report = await generateTracerOutcomeReport(admin, { periodId: period.id, groupBy: 'program' })
+    await expect(generateTracerOutcomeReport(admin, { periodId: period.id, groupBy: 'program' }))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
+    const report = await generateTracerOutcomeReport(staff, { periodId: period.id, groupBy: 'program' })
     expect(report.groups[0]).toMatchObject({ suppressed: false, responseCount: 3, averageWaitMonths: 2, averageFieldAlignment: 4 })
     expect(report.groups[0]?.employmentStatus.EMPLOYED).toEqual({ count: 3, percent: 100 })
     const csv = tracerOutcomeReportToCsv(report)

@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import type {
+  AcademicAdministrationWorkspace,
+  AcademicPeriodDefinition,
+  AcademicProgramStudy,
+} from '~/server/types/academic-administration'
 import type { PddiktiDiplomaEligibility, PddiktiStudentDataChangeItem, PddiktiStudentDataChangeRequest } from '~/server/types/pddikti'
 
 definePageMeta({ middleware: 'auth' })
@@ -14,13 +19,23 @@ const loading = ref(false)
 const mutating = ref(false)
 const errorMessage = ref('')
 const noticeMessage = ref('')
-const programStudyId = ref(user.value?.programStudyId || 'management-s1')
-const periodId = ref('2025-2026-2')
-const form = reactive({ studentId: 'student-001', studentNumber: '23011001', reason: '', field: 'birthPlace' as PddiktiStudentDataChangeItem['field'], previousValue: '', requestedValue: '', evidenceFileIds: '' })
-const reviewNote = ref('Dokumen bukti dan sumber data telah diperiksa.')
+const programs = ref<AcademicProgramStudy[]>([])
+const periods = ref<AcademicPeriodDefinition[]>([])
+const programStudyId = ref(config.public.demoMode ? 'management-s1' : user.value?.programStudyId || '')
+const periodId = ref(config.public.demoMode ? '2025-2026-2' : '')
+const form = reactive({
+  studentId: config.public.demoMode ? 'student-001' : '',
+  studentNumber: config.public.demoMode ? '23011001' : '',
+  reason: '',
+  field: 'birthPlace' as PddiktiStudentDataChangeItem['field'],
+  previousValue: '',
+  requestedValue: '',
+  evidenceFileIds: '',
+})
+const reviewNote = ref(config.public.demoMode ? 'Dokumen bukti dan sumber data telah diperiksa.' : '')
 const remoteTicket = ref('')
 
-const canMutate = computed(() => user.value?.roles.some(role => ['administrator', 'academic_staff'].includes(role)) ?? false)
+const canMutate = computed(() => user.value?.roles.includes('academic_staff') ?? false)
 const statusLabel = (status: PddiktiStudentDataChangeRequest['status']) => ({ SUBMITTED: 'Diajukan', VALIDATED: 'Tervalidasi', QUEUED: 'Dalam proses PDDIKTI', COMPLETED: 'Selesai', REJECTED: 'Ditolak' })[status]
 const statusTone = (status: PddiktiStudentDataChangeRequest['status']) => ({ SUBMITTED: 'pending', VALIDATED: 'scheduled', QUEUED: 'processing', COMPLETED: 'success', REJECTED: 'blocked' })[status]
 const fieldLabel = (field: PddiktiStudentDataChangeItem['field']) => ({ name: 'Nama', birthPlace: 'Tempat lahir', birthDate: 'Tanggal lahir', gender: 'Jenis kelamin', identityNumber: 'Nomor identitas', motherName: 'Nama ibu' })[field]
@@ -31,7 +46,25 @@ const errorText = (error: unknown) => {
   return value.response?.data?.statusMessage || value.response?.data?.message || value.message || 'Permintaan PDDIKTI tidak dapat diproses.'
 }
 
+const loadCatalog = async () => {
+  if (config.public.demoMode) return
+  const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
+  programs.value = data.programs.filter(program => program.active)
+  periods.value = data.periods.filter(period => period.active)
+  if (!programs.value.some(program => program.id === programStudyId.value)) {
+    const scopedProgram = user.value?.programStudyId
+    programStudyId.value = programs.value.find(program => program.id === scopedProgram)?.id
+      || (programs.value.length === 1 ? programs.value[0]!.id : '')
+  }
+  if (!periods.value.some(period => period.id === periodId.value)) periodId.value = periods.value[0]?.id || ''
+}
+
 const load = async () => {
+  if (!programStudyId.value) {
+    items.value = []
+    errorMessage.value = 'Pilih program studi dari master resmi.'
+    return
+  }
   loading.value = true; errorMessage.value = ''
   try {
     if (config.public.demoMode) await $api.post('/auth/demo-login', { profileId: 'admin' })
@@ -41,6 +74,10 @@ const load = async () => {
 }
 
 const submit = async () => {
+  if (!programStudyId.value || !periodId.value || !form.studentId.trim() || !form.studentNumber.trim()) {
+    errorMessage.value = 'Pilih konteks akademik dan isi identitas mahasiswa dari data sumber.'
+    return
+  }
   mutating.value = true; errorMessage.value = ''; noticeMessage.value = ''
   try {
     await $api.post('/pddikti/student-data-changes', {
@@ -58,6 +95,10 @@ const targets = (item: PddiktiStudentDataChangeRequest): PddiktiStudentDataChang
   SUBMITTED: ['VALIDATED', 'REJECTED'], VALIDATED: ['QUEUED', 'REJECTED'], QUEUED: ['COMPLETED', 'REJECTED'], COMPLETED: [], REJECTED: [],
 })[item.status] as PddiktiStudentDataChangeRequest['status'][]
 const transition = async (item: PddiktiStudentDataChangeRequest, status: PddiktiStudentDataChangeRequest['status']) => {
+  if (!reviewNote.value.trim()) {
+    errorMessage.value = 'Catatan peninjau wajib diisi berdasarkan pemeriksaan yang dilakukan.'
+    return
+  }
   mutating.value = true; errorMessage.value = ''; noticeMessage.value = ''
   try {
     await $api.post(`/pddikti/student-data-changes/${encodeURIComponent(item.id)}/transition`, { status, reviewNote: reviewNote.value, ...(status === 'COMPLETED' ? { remoteTicket: remoteTicket.value } : {}), expectedVersion: item.version })
@@ -67,6 +108,10 @@ const transition = async (item: PddiktiStudentDataChangeRequest, status: Pddikti
 }
 
 const checkDiploma = async () => {
+  if (!programStudyId.value || !periodId.value || !form.studentId.trim()) {
+    errorMessage.value = 'Pilih konteks akademik dan isi ID mahasiswa dari data sumber.'
+    return
+  }
   loading.value = true; errorMessage.value = ''; eligibility.value = null
   try {
     const response = await $api.get<PddiktiDiplomaEligibility>('/pddikti/diploma-eligibility', { params: { studentId: form.studentId, programStudyId: programStudyId.value, periodId: periodId.value } })
@@ -74,28 +119,46 @@ const checkDiploma = async () => {
   } catch (error) { errorMessage.value = errorText(error) } finally { loading.value = false }
 }
 
-onMounted(load)
+const initialize = async () => {
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    if (config.public.demoMode) {
+      await load()
+      return
+    }
+    await loadCatalog()
+    if (programStudyId.value) await load()
+    else errorMessage.value = 'Master program studi aktif belum tersedia.'
+  } catch (error) {
+    errorMessage.value = errorText(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(initialize)
 </script>
 
 <template>
   <div class="page-stack pdm-page">
     <AppPageHeader eyebrow="Pelaporan PDDIKTI" title="Data mahasiswa dan ijazah" description="Kelola Perubahan Data Mahasiswa secara auditable dan periksa blocker PDDIKTI sebelum penomoran ijazah.">
-      <template #actions><NuxtLink class="btn btn-outline-secondary" to="/pddikti"><i class="uil uil-arrow-left me-2" />Kembali ke sinkronisasi</NuxtLink><button class="btn btn-primary" type="button" :disabled="loading" @click="load"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
+      <template #actions><NuxtLink class="btn btn-outline-secondary" to="/pddikti"><i class="uil uil-arrow-left me-2" />Kembali ke sinkronisasi</NuxtLink><button class="btn btn-primary" type="button" :disabled="loading" @click="initialize"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
     </AppPageHeader>
     <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div><div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
 
-    <section class="context-bar"><div class="tab-strip"><button :class="{ active: activeTab === 'pdm' }" @click="activeTab = 'pdm'">Perubahan Data Mahasiswa</button><button :class="{ active: activeTab === 'diploma' }" @click="activeTab = 'diploma'">Kelayakan penomoran ijazah</button></div><label>Program studi<input v-model="programStudyId" class="form-control form-control-sm"></label><label>Periode<input v-model="periodId" class="form-control form-control-sm"></label></section>
+    <section class="context-bar"><div class="tab-strip"><button :class="{ active: activeTab === 'pdm' }" @click="activeTab = 'pdm'">Perubahan Data Mahasiswa</button><button :class="{ active: activeTab === 'diploma' }" @click="activeTab = 'diploma'">Kelayakan penomoran ijazah</button></div><label>Program studi<input v-if="config.public.demoMode" v-model="programStudyId" class="form-control form-control-sm"><select v-else v-model="programStudyId" class="form-select form-select-sm" required @change="load"><option value="" disabled>Pilih program resmi</option><option v-for="program in programs" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label><label>Periode<input v-if="config.public.demoMode" v-model="periodId" class="form-control form-control-sm"><select v-else v-model="periodId" class="form-select form-select-sm" required><option value="" disabled>Pilih periode resmi</option><option v-for="period in periods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ period.term }}</option></select></label></section>
     <div v-if="loading" class="alert alert-info">Memuat data pelaporan...</div>
 
     <template v-if="activeTab === 'pdm'">
       <div class="pdm-grid">
-        <section v-if="canMutate" class="surface-card form-card"><header><span>Permintaan baru</span><h2>Ajukan PDM</h2><p>Nilai identitas tidak ditulis ke audit metadata; audit hanya mencatat field yang berubah.</p></header><form @submit.prevent="submit"><div class="form-row"><label>ID mahasiswa<input v-model="form.studentId" class="form-control" required></label><label>NIM<input v-model="form.studentNumber" class="form-control" required></label></div><label>Field<select v-model="form.field" class="form-select"><option value="name">Nama</option><option value="birthPlace">Tempat lahir</option><option value="birthDate">Tanggal lahir</option><option value="gender">Jenis kelamin</option><option value="identityNumber">Nomor identitas</option><option value="motherName">Nama ibu</option></select></label><div class="form-row"><label>Nilai saat ini<input v-model="form.previousValue" class="form-control" required></label><label>Nilai diminta<input v-model="form.requestedValue" class="form-control" required></label></div><label>Alasan<textarea v-model="form.reason" class="form-control" rows="4" minlength="15" required /></label><label>ID berkas bukti privat <small>pisahkan koma</small><input v-model="form.evidenceFileIds" class="form-control" placeholder="file-ktp, file-kk" required></label><button class="btn btn-primary" :disabled="mutating">Ajukan perubahan</button></form></section>
+        <section v-if="canMutate" class="surface-card form-card"><header><span>Permintaan baru</span><h2>Ajukan PDM</h2><p>Nilai identitas tidak ditulis ke audit metadata; audit hanya mencatat field yang berubah.</p></header><form @submit.prevent="submit"><div class="form-row"><label>ID mahasiswa<input v-model="form.studentId" class="form-control" required></label><label>NIM<input v-model="form.studentNumber" class="form-control" required></label></div><label>Field<select v-model="form.field" class="form-select"><option value="name">Nama</option><option value="birthPlace">Tempat lahir</option><option value="birthDate">Tanggal lahir</option><option value="gender">Jenis kelamin</option><option value="identityNumber">Nomor identitas</option><option value="motherName">Nama ibu</option></select></label><div class="form-row"><label>Nilai saat ini<input v-model="form.previousValue" class="form-control" required></label><label>Nilai diminta<input v-model="form.requestedValue" class="form-control" required></label></div><label>Alasan<textarea v-model="form.reason" class="form-control" rows="4" minlength="15" required /></label><label>ID berkas bukti privat <small>pisahkan koma</small><input v-model="form.evidenceFileIds" class="form-control" placeholder="Pilih ID berkas dari penyimpanan privat" required></label><button class="btn btn-primary" :disabled="mutating || !programStudyId || !periodId || !form.studentId || !form.studentNumber">Ajukan perubahan</button></form></section>
         <section class="surface-card pdm-list" :class="{ wide: !canMutate }"><header><span>Jejak keputusan</span><h2>Permintaan PDM</h2><p>Perubahan harus melalui validasi, antrean operator, dan tiket remote sebelum selesai.</p></header><div v-if="canMutate" class="review-controls"><input v-model="reviewNote" class="form-control" aria-label="Catatan peninjau"><input v-model="remoteTicket" class="form-control" placeholder="Tiket remote untuk penyelesaian" aria-label="Tiket remote"></div><article v-for="item in items" :key="item.id"><div class="pdm-copy"><div><strong>{{ item.studentNumber }} · {{ item.studentId }}</strong><StatusBadge :status="statusTone(item.status)" :label="statusLabel(item.status)" /></div><p>{{ item.reason }}</p><ul><li v-for="change in item.changes" :key="change.field"><strong>{{ fieldLabel(change.field) }}</strong><span>{{ change.previousValue }}</span><i class="uil uil-arrow-right" /><span>{{ change.requestedValue }}</span></li></ul><small>{{ item.evidenceFileIds.length }} bukti · versi {{ item.version }} · {{ dateLabel(item.updatedAt) }}</small><small v-if="item.reviewNote">Catatan: {{ item.reviewNote }}</small><small v-if="item.remoteTicket">Tiket remote: {{ item.remoteTicket }}</small></div><aside v-if="canMutate"><button v-for="target in targets(item)" :key="target" class="btn btn-sm" :disabled="mutating || (target === 'COMPLETED' && !remoteTicket)" :class="target === 'REJECTED' ? 'btn-outline-danger' : 'btn-outline-primary'" @click="transition(item, target)">{{ statusLabel(target) }}</button></aside></article><EmptyState v-if="!items.length" icon="uil-user-square" title="Belum ada PDM" description="Permintaan perubahan data dalam lingkup program studi akan tampil di sini." /></section>
       </div>
     </template>
 
     <template v-else>
-      <section class="surface-card diploma-check"><header><span>Pemeriksaan point-in-time</span><h2>Kelayakan data dan penomoran ijazah</h2><p>Hasil tidak menerbitkan nomor; snapshot ini menjadi bukti sebelum modul kelulusan melakukan penomoran resmi.</p></header><form @submit.prevent="checkDiploma"><label>ID mahasiswa<input v-model="form.studentId" class="form-control" required></label><button class="btn btn-primary" :disabled="loading">Periksa kelayakan</button></form></section>
+      <section class="surface-card diploma-check"><header><span>Pemeriksaan point-in-time</span><h2>Kelayakan data dan penomoran ijazah</h2><p>Hasil tidak menerbitkan nomor; snapshot ini menjadi bukti sebelum modul kelulusan melakukan penomoran resmi.</p></header><form @submit.prevent="checkDiploma"><label>ID mahasiswa<input v-model="form.studentId" class="form-control" required></label><button class="btn btn-primary" :disabled="loading || !programStudyId || !periodId || !form.studentId">Periksa kelayakan</button></form></section>
       <section v-if="eligibility" class="surface-card eligibility-card" :class="{ eligible: eligibility.eligible }"><div class="eligibility-hero"><span><i class="uil" :class="eligibility.eligible ? 'uil-check-circle' : 'uil-exclamation-triangle'" /></span><div><small>{{ eligibility.studentNumber || eligibility.studentId }}</small><h2>{{ eligibility.eligible ? 'Layak melanjutkan penomoran' : 'Belum layak untuk penomoran' }}</h2><p>Snapshot {{ eligibility.snapshotHash.slice(0, 16) }}… · {{ dateLabel(eligibility.evaluatedAt) }}</p></div></div><div class="check-grid"><article v-for="check in eligibility.checks" :key="check.code" :class="{ passed: check.passed }"><i class="uil" :class="check.passed ? 'uil-check-circle' : 'uil-times-circle'" /><div><strong>{{ check.code }}</strong><p>{{ check.message }}</p></div></article></div></section>
     </template>
   </div>

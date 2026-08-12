@@ -15,7 +15,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { graduationModuleState } from './graduation-state'
 
@@ -49,11 +49,11 @@ export interface UpdateGraduationPeriodInput {
 export type ApplicationTransition = 'START_REVIEW' | 'FIRST_APPROVE' | 'FINAL_APPROVE' | 'REJECT' | 'CANCEL'
 
 function isStaff(context: AuthContext): boolean {
-  return hasRole(context, 'academic_staff', 'administrator')
+  return hasRole(context, 'academic_staff')
 }
 
 function programScoped(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'administrator') || context.scope.programStudyIds.includes(programStudyId)
+  return context.scope.programStudyIds.includes(programStudyId)
 }
 
 function requireStaffScope(context: AuthContext, programStudyId: string): void {
@@ -62,8 +62,7 @@ function requireStaffScope(context: AuthContext, programStudyId: string): void {
 
 function canReadApplication(context: AuthContext, application: GraduationApplication): boolean {
   return application.studentUid === context.uid
-    || hasRole(context, 'administrator', 'leader')
-    || (hasRole(context, 'academic_staff') && programScoped(context, application.programStudyId))
+    || (hasRole(context, 'academic_staff', 'lecturer', 'advisor') && programScoped(context, application.programStudyId))
 }
 
 function requireApplicationRead(context: AuthContext, application: GraduationApplication): void {
@@ -72,8 +71,7 @@ function requireApplicationRead(context: AuthContext, application: GraduationApp
 
 function canReadParticipant(context: AuthContext, participant: GraduationParticipant): boolean {
   return participant.studentUid === context.uid
-    || hasRole(context, 'administrator', 'leader')
-    || (hasRole(context, 'academic_staff') && programScoped(context, participant.programStudyId))
+    || (hasRole(context, 'academic_staff', 'lecturer', 'advisor') && programScoped(context, participant.programStudyId))
 }
 
 function validateRequirements(input: GraduationRequirementsInput): void {
@@ -217,7 +215,7 @@ export async function listGraduationPeriods(context: AuthContext): Promise<Gradu
 }
 
 export async function createGraduationPeriod(context: AuthContext, input: CreateGraduationPeriodInput, idempotencyKey: string, event?: H3Event): Promise<{ period: GraduationPeriod; replayed: boolean; auditId?: string }> {
-  if (!hasRole(context, 'administrator')) forbidden('Hanya administrator yang dapat membuat periode.')
+  requirePermission(context, 'graduation.configure')
   validatePeriodDates(input)
   if (!input.programStudyIds.length || input.programStudyIds.length > 100) invalidInput('Lingkup program studi tidak valid.')
   const hash = requestHash(input)
@@ -264,7 +262,7 @@ export async function createGraduationPeriod(context: AuthContext, input: Create
 }
 
 export async function updateGraduationPeriod(context: AuthContext, id: string, input: UpdateGraduationPeriodInput, idempotencyKey: string, event?: H3Event): Promise<{ period: GraduationPeriod; replayed: boolean; auditId?: string }> {
-  if (!hasRole(context, 'administrator')) forbidden('Hanya administrator yang dapat mengubah periode.')
+  requirePermission(context, 'graduation.configure')
   const hash = requestHash({ id, input })
   const namespace = `graduation-period-update:${idempotencyKey}`
   const now = new Date().toISOString()
@@ -390,6 +388,8 @@ export async function listGraduationApplications(
   context: AuthContext,
   filters: { periodId?: string; status?: GraduationApplicationStatus; limit?: number } | number = {},
 ): Promise<GraduationApplication[]> {
+  requirePermission(context, 'graduation.read')
+  if (hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
   const options = typeof filters === 'number' ? { limit: filters } : filters
   const limit = options.limit ?? 100
   let applications: GraduationApplication[]
@@ -397,10 +397,7 @@ export async function listGraduationApplications(
   else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan kelulusan tidak tersedia.')
-    if (hasRole(context, 'administrator', 'leader')) {
-      const snapshot = await db.collection('graduationApplications').limit(Math.min(limit, 200)).get()
-      applications = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as GraduationApplication)
-    } else if (hasRole(context, 'academic_staff')) {
+    if (hasRole(context, 'academic_staff', 'lecturer', 'advisor')) {
       const snapshots = await Promise.all(context.scope.programStudyIds.slice(0, 30).map(programStudyId => db.collection('graduationApplications').where('programStudyId', '==', programStudyId).limit(100).get()))
       applications = snapshots.flatMap(snapshot => snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as GraduationApplication))
     } else {
@@ -542,16 +539,15 @@ export async function transitionGraduationApplication(context: AuthContext, id: 
 }
 
 export async function listGraduationParticipants(context: AuthContext, limit = 100): Promise<GraduationParticipant[]> {
+  requirePermission(context, 'graduation.read')
+  if (hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
   let participants: GraduationParticipant[]
   if (dataMode() === 'mock') {
     participants = [...graduationModuleState().participants.values()].map(participant => structuredClone(participant))
   } else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan kelulusan tidak tersedia.')
-    if (hasRole(context, 'administrator', 'leader')) {
-      const snapshot = await db.collection('graduationParticipants').limit(Math.min(limit, 200)).get()
-      participants = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as GraduationParticipant)
-    } else if (hasRole(context, 'academic_staff')) {
+    if (hasRole(context, 'academic_staff', 'lecturer', 'advisor')) {
       const scopes = context.scope.programStudyIds
       if (!scopes.length) return []
       const chunks = Array.from({ length: Math.ceil(scopes.length / 30) }, (_, index) => scopes.slice(index * 30, index * 30 + 30))

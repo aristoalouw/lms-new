@@ -65,7 +65,7 @@ const submitTicket = async () => {
       const now = new Date().toISOString()
       tickets.value.unshift({ id: `demo-${Date.now()}`, ticketNumber: `LYN-DEMO-${String(tickets.value.length + 1).padStart(3, '0')}`, requesterId: 'usr-demo-admin', requesterName: 'Alya Prameswari', programStudyId: 'management-s1', category: form.category, priority: form.priority, subject: form.subject.trim(), status: 'OPEN', assignedUnit: categories.find(item => item.value === form.category)?.label ?? 'Pusat Layanan', slaHours: form.priority === 'HIGH' ? 8 : 24, dueAt: new Date(Date.now() + (form.priority === 'HIGH' ? 8 : 24) * 3_600_000).toISOString(), createdAt: now, updatedAt: now, version: 1, messageCount: 1 })
     } else {
-      const { data } = await $api.post<{ ticket: ServiceTicket }>('/tickets', { ...form, programStudyId: 'management-s1', attachments: [] })
+      const { data } = await $api.post<{ ticket: ServiceTicket }>('/tickets', { ...form, attachments: [] })
       tickets.value.unshift(data.ticket)
     }
     Object.assign(form, { category: 'ACADEMIC', priority: 'NORMAL', subject: '', message: '' })

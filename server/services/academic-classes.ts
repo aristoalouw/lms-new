@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import type { Query } from 'firebase-admin/firestore'
 import type { H3Event } from 'h3'
 import type { AuthContext } from '../types/auth'
+import type { AcademicGradeRecord } from '../types/academic-administration'
 import type { LearningSpace } from '../types/learning'
 import type {
   AcademicClassDetail,
@@ -31,6 +32,7 @@ import { opaqueId, requestHash } from '../utils/security'
 import { normalizeIsoInstant, optionalString, requireInteger, requireRecord, requireString, requireStringArray } from '../utils/validation'
 import { serverFeatureProfile } from '../utils/feature-profile'
 import { resolveLmsClassCatalogSelection } from './academic-administration'
+import { academicAdministrationState } from './academic-administration-state'
 import { listActiveAccountsByIds } from './accounts'
 import { learningMockState } from './learning-mock'
 
@@ -383,19 +385,25 @@ function studentCandidates(context: AuthContext): string[] {
 }
 
 function isAssignedLecturer(context: AuthContext, record: AcademicClassRecord): boolean {
-  return hasRole(context, 'lecturer', 'advisor') && record.lecturerIds.includes(context.uid)
+  return hasRole(context, 'lecturer') && record.lecturerIds.includes(context.uid)
 }
 
-function isScopedAcademicStaff(context: AuthContext, record: AcademicClassRecord): boolean {
-  return hasRole(context, 'academic_staff') && context.scope.programStudyIds.includes(record.programStudyId)
+function isAssignedAdvisor(context: AuthContext, record: AcademicClassRecord): boolean {
+  return hasRole(context, 'advisor') && record.lecturerIds.includes(context.uid)
+}
+
+function canManageClassProgram(context: AuthContext, programStudyId: string): boolean {
+  return (serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator'))
+    || (hasRole(context, 'academic_staff') && context.scope.programStudyIds.includes(programStudyId))
 }
 
 function canManageClass(context: AuthContext, record: AcademicClassRecord): boolean {
-  return isAssignedLecturer(context, record) || isScopedAcademicStaff(context, record)
+  return isAssignedLecturer(context, record) || canManageClassProgram(context, record.programStudyId)
 }
 
 async function canReadClass(context: AuthContext, record: AcademicClassRecord): Promise<boolean> {
-  if (canManageClass(context, record) || hasRole(context, 'administrator', 'leader')) return true
+  if (canManageClass(context, record) || isAssignedAdvisor(context, record)) return true
+  if (serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator')) return true
   if (!hasRole(context, 'student')) return false
   return Boolean(await activeStudentEnrollment(context, record.id))
 }
@@ -413,7 +421,7 @@ export async function getAcademicClassExportContext(
   classId: string,
 ): Promise<AcademicClassExportContext> {
   const record = await loadClass(safeClassId(classId))
-  if (hasRole(context, 'administrator')) {
+  if (serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator')) {
     return { classRecord: record, mode: 'ADMIN_METADATA' }
   }
   if (isAssignedLecturer(context, record)) {
@@ -773,6 +781,28 @@ function publicationRows(
   })
 }
 
+function academicGradeRecordsForPublication(
+  record: AcademicClassRecord,
+  snapshot: GradePublicationSnapshot,
+): AcademicGradeRecord[] {
+  return snapshot.rows.map(row => ({
+    id: opaqueId('academicgrade', `${snapshot.id}:${row.studentId}`),
+    classId: record.id,
+    publicationVersion: snapshot.publicationVersion,
+    studentId: row.studentId,
+    periodId: record.periodId,
+    courseCode: record.courseCode,
+    courseName: record.courseName,
+    credits: record.credits,
+    numericScore: row.finalScore,
+    letterGrade: row.letterGrade,
+    gradePoint: qualityFor(row.letterGrade),
+    publicationId: snapshot.id,
+    publishedAt: snapshot.publishedAt,
+    immutable: true,
+  }))
+}
+
 function stableIdentifier(value: unknown, label: string): string {
   return requireString(value, label, { max: 100, pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]*$/ })
 }
@@ -933,6 +963,7 @@ export async function createAcademicClass(
 ): Promise<AcademicWriteResult<{ classRecord: AcademicClassRecord; learningSpace: LearningSpace }>> {
   requirePermission(context, 'classes:manage')
   const input = await parseCreateClassInput(context, value)
+  if (!canManageClassProgram(context, input.programStudyId)) forbidden('Kelas berada di luar lingkup pengelolaan Anda.')
   const hash = requestHash(input)
   const namespace = `academic:class-create:${context.uid}:${idempotencyKey}`
   const now = clock.toISOString()
@@ -1075,6 +1106,7 @@ export async function updateAcademicClass(
   let result: AcademicWriteResult<{ classRecord: AcademicClassRecord; learningSpace: LearningSpace }>
 
   const updatedRecord = (current: AcademicClassRecord): AcademicClassRecord => {
+    if (!canManageClassProgram(context, current.programStudyId)) forbidden('Kelas berada di luar lingkup pengelolaan Anda.')
     const currentVersion = current.version ?? 1
     if (currentVersion !== input.expectedVersion) conflict('VERSION_CONFLICT', 'Kelas telah berubah.', { currentVersion })
     if (serverFeatureProfile() === 'lms-mvp' && current.courseVersionId) {
@@ -1311,6 +1343,7 @@ export async function createClassEnrollment(
   requirePermission(context, 'enrollments:manage')
   const safeId = safeClassId(classId)
   const classRecordForValidation = await loadClass(safeId)
+  if (!canManageClassProgram(context, classRecordForValidation.programStudyId)) forbidden('Kelas berada di luar lingkup pengelolaan Anda.')
   const input = await canonicalizeLmsEnrollmentInput(parseCreateEnrollmentInput(value), classRecordForValidation)
   const hash = requestHash({ classId: safeId, ...input })
   const namespace = `academic:enrollment-create:${context.uid}:${idempotencyKey}`
@@ -1412,6 +1445,7 @@ export async function updateClassEnrollment(
     const replay = mockReplay<ClassEnrollment>(namespace, hash)
     if (replay) return replay
     const classRecord = await loadClass(safeId)
+    if (!canManageClassProgram(context, classRecord.programStudyId)) forbidden('Kelas berada di luar lingkup pengelolaan Anda.')
     const existing = state.enrollments.get(enrollmentId)
     if (!existing) notFound('Enrolment')
     before = clone(existing)
@@ -1441,6 +1475,7 @@ export async function updateClassEnrollment(
       if (!classSnapshot.exists) notFound('Kelas')
       if (!enrollmentSnapshot.exists) notFound('Enrolment')
       const classRecord = { id: classSnapshot.id, ...classSnapshot.data() } as AcademicClassRecord
+      if (!canManageClassProgram(context, classRecord.programStudyId)) forbidden('Kelas berada di luar lingkup pengelolaan Anda.')
       before = { id: enrollmentSnapshot.id, ...enrollmentSnapshot.data() } as ClassEnrollment
       const updated = updatedEnrollment(before)
       const activeCount = classRecord.enrollmentCount ?? 0
@@ -1515,6 +1550,9 @@ function decodeClassCursor(value?: string): { id: string } | undefined {
 }
 
 export async function listAcademicClassesPage(context: AuthContext, query: AcademicClassListQuery = {}): Promise<AcademicClassPage> {
+  if (hasRole(context, 'leader') || (hasRole(context, 'administrator') && serverFeatureProfile() !== 'lms-mvp')) {
+    forbidden('Data operasional kelas tidak tersedia untuk role ini.')
+  }
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 50)
   const cursor = decodeClassCursor(query.cursor)
   let records: AcademicClassRecord[]
@@ -1557,7 +1595,7 @@ export async function listAcademicClassesPage(context: AuthContext, query: Acade
         return pageQuery(candidate.orderBy('__name__')).get()
       }))
       records = [...new Map(snapshots.flatMap(snapshot => snapshot.docs).map(document => [document.id, ({ id: document.id, ...document.data() }) as AcademicClassRecord])).values()].slice(0, limit + 1)
-    } else if (hasRole(context, 'administrator', 'leader')) {
+    } else if (serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator')) {
       const snapshot = await pageQuery(filteredClassQuery(db.collection('academicClasses')).orderBy('__name__')).get()
       records = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as AcademicClassRecord)
     } else records = []
@@ -1666,10 +1704,11 @@ export async function listClassAttendancePage(
   const safeId = safeClassId(classId)
   const record = await loadClass(safeId)
   const manager = canManageClass(context, record)
+  const assignedAdvisor = isAssignedAdvisor(context, record)
   const ownEnrollment = hasRole(context, 'student') && !manager
     ? await requireActiveStudentEnrollment(context, safeId)
     : undefined
-  if (!manager && !ownEnrollment) forbidden('Riwayat presensi hanya tersedia bagi dosen pengampu dan mahasiswa terdaftar.')
+  if (!manager && !assignedAdvisor && !ownEnrollment) forbidden('Riwayat presensi hanya tersedia bagi dosen pengampu, dosen wali terkait, dan mahasiswa terdaftar.')
 
   const meetingNumber = query.meetingNumber === undefined
     ? undefined
@@ -1813,6 +1852,7 @@ export async function issueAttendanceChallenge(
   event?: H3Event,
   clock = new Date(),
 ): Promise<AcademicWriteResult<IssuedAttendanceChallenge>> {
+  requirePermission(context, 'learning:manage_attendance')
   const safeId = safeClassId(classId)
   const input = parseChallengeInput(value)
   const hash = requestHash({ classId: safeId, ...input })
@@ -1936,6 +1976,7 @@ export async function checkInAttendance(
   event?: H3Event,
   clock = new Date(),
 ): Promise<AcademicWriteResult<AttendanceRecord>> {
+  requirePermission(context, 'learning:check_in')
   const safeId = safeClassId(classId)
   const body = requireRecord(value)
   rejectUnknown(body, ['challengeToken'])
@@ -2022,6 +2063,7 @@ export async function correctAttendance(
   event?: H3Event,
   clock = new Date(),
 ): Promise<AcademicWriteResult<AttendanceRecord>> {
+  requirePermission(context, 'learning:manage_attendance')
   const safeId = safeClassId(classId)
   const input = parseCorrectionInput(value)
   const hash = requestHash({ classId: safeId, ...input })
@@ -2336,6 +2378,9 @@ export async function publishGrades(
     const publications = state.publications.get(safeId) ?? new Map()
     publications.set(snapshot.id, clone(snapshot))
     state.publications.set(safeId, publications)
+    for (const gradeRecord of academicGradeRecordsForPublication(record, snapshot)) {
+      academicAdministrationState().grades.set(gradeRecord.id, clone(gradeRecord))
+    }
     state.classes.set(safeId, { ...record, publicationVersion, publishedGradebookVersion: record.gradebookVersion, latestPublicationId: snapshot.id, updatedAt: now })
     result = { value: snapshot, replayed: false }
     saveMockReplay(namespace, hash, result, now)
@@ -2346,7 +2391,7 @@ export async function publishGrades(
     if (!db) serviceUnavailable('Penyimpanan nilai tidak tersedia.')
     const classRef = db.collection('academicClasses').doc(safeId)
     const configRef = classRef.collection('gradeConfiguration').doc('current')
-    const rosterQuery = classRef.collection('roster').where('status', '==', 'ACTIVE')
+    const rosterQuery = db.collection('classEnrollments').where('classId', '==', safeId).where('status', '==', 'ACTIVE')
     const gradesQuery = classRef.collection('grades')
     const idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace))
     result = await db.runTransaction(async (transaction) => {
@@ -2365,12 +2410,24 @@ export async function publishGrades(
       if (record.gradebookVersion !== input.expectedGradebookVersion) conflict('GRADEBOOK_VERSION_CONFLICT', 'Gradebook telah berubah.', { currentVersion: record.gradebookVersion })
       if (record.publishedGradebookVersion === record.gradebookVersion) conflict('GRADEBOOK_ALREADY_PUBLISHED', 'Versi gradebook ini telah dipublikasikan.')
       const configuration = configSnapshot.data() as GradeConfiguration
-      const roster = rosterSnapshot.docs.map((document) => ({ studentId: document.id, ...document.data() }) as ClassRosterEntry)
+      const roster = rosterSnapshot.docs.map((document) => {
+        const enrollment = { id: document.id, ...document.data() } as ClassEnrollment
+        return {
+          studentId: enrollment.studentId,
+          studentNumber: enrollment.studentNumber,
+          studentName: enrollment.studentName,
+          programStudyId: enrollment.programStudyId,
+          status: enrollment.status,
+        } satisfies ClassRosterEntry
+      })
       const grades = gradeSnapshot.docs.map((document) => ({ id: document.id, ...document.data() }) as StudentGrade)
       const publicationVersion = record.publicationVersion + 1
       const snapshot: GradePublicationSnapshot = { id: `publication-${safeId}-v${publicationVersion}`, classId: safeId, publicationVersion, gradebookVersion: record.gradebookVersion, configVersion: configuration.version, components: clone(configuration.components), rows: publicationRows(record, roster, configuration, grades), publishedAt: now, publishedBy: context.uid }
       const response: AcademicWriteResult<GradePublicationSnapshot> = { value: snapshot, replayed: false }
       transaction.create(classRef.collection('gradePublications').doc(snapshot.id), snapshot)
+      for (const gradeRecord of academicGradeRecordsForPublication(record, snapshot)) {
+        transaction.create(db.collection('academicGradeRecords').doc(gradeRecord.id), gradeRecord)
+      }
       transaction.update(classRef, { publicationVersion, publishedGradebookVersion: record.gradebookVersion, latestPublicationId: snapshot.id, updatedAt: now })
       transaction.create(idemRef, idempotencyDocument(hash, response, now))
       return response

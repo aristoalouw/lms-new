@@ -15,6 +15,7 @@ import {
   resetAcademicClassStateForTests,
   upsertMockKrsClassEnrollment,
 } from '../../server/services/academic-classes'
+import { getSemesterResult, resetAcademicAdministrationStateForTests } from '../../server/services/academic-administration'
 import { CampusError } from '../../server/utils/errors'
 import { mockState, resetMockState } from '../../server/utils/mock-store'
 import { authContext } from './fixtures'
@@ -40,6 +41,7 @@ describe('academic class scope and teaching journal', () => {
     process.env.CAMPUS_DATA_MODE = 'mock'
     resetMockState()
     resetAcademicClassStateForTests()
+    resetAcademicAdministrationStateForTests()
   })
 
   it('filters class reads by lecturer assignment, program scope, and roster ownership', async () => {
@@ -279,6 +281,10 @@ describe('gradebook and immutable publication', () => {
     expect(published.value.rows).toHaveLength(2)
     expect(replay.replayed).toBe(true)
     expect(replay.value).toEqual(published.value)
+    const semester = await getSemesterResult(student('student-001'), 'student-001', '2025-2026-2')
+    expect(semester.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ courseCode: 'MGT401', publicationId: published.value.id, immutable: true }),
+    ]))
 
     await expect(publishGrades(advisor(), classId, { expectedGradebookVersion: 2 }, 'grade-publish-key-002'))
       .rejects.toMatchObject({ statusCode: 409, code: 'GRADEBOOK_ALREADY_PUBLISHED' } satisfies Partial<CampusError>)

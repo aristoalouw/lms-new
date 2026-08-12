@@ -76,13 +76,11 @@ function assertStorageAvailable(): 'mock' | 'firebase' {
 }
 
 function requireOperator(context: AuthContext): void {
-  if (!hasRole(context, 'administrator', 'academic_staff')) {
-    forbidden('Hanya administrator atau staf akademik yang dapat mengelola impor data.')
-  }
+  if (!hasRole(context, 'academic_staff')) forbidden('Hanya staf akademik scoped yang dapat mengelola impor data.')
 }
 
 function requireApprover(context: AuthContext): void {
-  if (!hasRole(context, 'administrator')) forbidden('Persetujuan impor memerlukan administrator sistem.')
+  if (!hasRole(context, 'academic_staff')) forbidden('Persetujuan impor memerlukan staf akademik scoped yang berbeda.')
 }
 
 function scopedProgram(context: AuthContext, requested: string): string {
@@ -94,7 +92,6 @@ function scopedProgram(context: AuthContext, requested: string): string {
 }
 
 function requireRunScope(context: AuthContext, run: ImportRun): void {
-  if (hasRole(context, 'administrator')) return
   if (!context.scope.programStudyIds.includes(run.programStudyId)) forbidden('Impor berada di luar lingkup program studi Anda.')
 }
 
@@ -321,12 +318,10 @@ export async function listImportRuns(
   requireOperator(context)
   const programStudyId = options.programStudyId
     ? scopedProgram(context, options.programStudyId)
-    : hasRole(context, 'administrator')
-      ? undefined
-      : context.scope.programStudyIds.length === 1
-        ? context.scope.programStudyIds[0]
-        : undefined
-  if (!hasRole(context, 'administrator') && !programStudyId) invalidInput('programStudyId wajib dipilih untuk melihat riwayat impor.')
+    : context.scope.programStudyIds.length === 1
+      ? context.scope.programStudyIds[0]
+      : undefined
+  if (!programStudyId) invalidInput('programStudyId wajib dipilih untuk melihat riwayat impor.')
   const limit = Math.min(Math.max(options.limit || 25, 1), 100)
 
   if (assertStorageAvailable() === 'mock') {
@@ -381,7 +376,7 @@ export async function approveImport(
     if (run.counts.errors > 0) conflict('IMPORT_HAS_ERRORS', 'Perbaiki seluruh error sebelum menyetujui impor.')
     if (Date.parse(run.expiresAt) <= Date.now()) conflict('IMPORT_PREVIEW_EXPIRED', 'Preview impor telah kedaluwarsa dan harus dibuat ulang.')
     if (dualApprovalRequired() && run.createdBy === context.uid) {
-      conflict('SECOND_APPROVER_REQUIRED', 'Produksi mewajibkan administrator lain untuk menyetujui impor.')
+      conflict('SECOND_APPROVER_REQUIRED', 'Produksi mewajibkan staf akademik lain untuk menyetujui impor.')
     }
     return { ...run, status: 'APPROVED', version: run.version + 1, approvedAt: now, approvedBy: context.uid }
   }

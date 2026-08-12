@@ -72,6 +72,17 @@ describe('student billing and account receivable', () => {
     await expect(createTariffPlanVersion(finance(), { ...input, name: 'Berubah' }, 'tariff-version-0001', undefined, clock)).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED' } satisfies Partial<CampusError>)
   })
 
+  it('denies administrator access to finance records and mutations', async () => {
+    const administrator = authContext('admin-001', ['administrator'], [])
+    await expect(getBillingDashboard(administrator, { page: 1, pageSize: 20 }, clock))
+      .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+    await expect(createTariffPlanVersion(administrator, {
+      logicalId: 'admin-denied', name: 'Tarif tidak sah', expectedLatestVersion: 0, status: 'ACTIVE',
+      applicability: { programStudyIds: ['management-s1'], cohortYearFrom: 2023, cohortYearTo: 2026, periodIds: ['2026-2027-1'] },
+      components: [{ id: 'admin-denied', code: 'DENIED', label: 'Tidak boleh dibuat admin', kind: 'MANDATORY', unitAmountIdr: 1_000 }],
+    }, 'tariff-admin-denied', undefined, clock)).rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+  })
+
   it('issues a unique invoice batch and creates an academic finance hold', async () => {
     const input = { tariffPlanVersionId: 'ukt-standard_v1', studentIds: ['student-010'], dueDate: '2026-08-31' }
     const issued = await issueInvoiceBatch(finance(), input, 'invoice-batch-0001', undefined, clock)

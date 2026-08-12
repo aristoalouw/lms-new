@@ -72,11 +72,11 @@ test('seluruh role membuka ruang kerja full-campus tanpa hydration mismatch', as
   await verifyRoleRoutes(browser, 'applicant', ['/pmb/status', '/pmb/dokumen'])
   await verifyRoleRoutes(browser, 'student', ['/akademik/krs', '/akademik/administrasi', '/keuangan', '/pembelajaran', '/kemahasiswaan', '/layanan'])
   await verifyRoleRoutes(browser, 'advisor', ['/akademik/kelas', '/akademik/administrasi', '/pembelajaran'])
-  await verifyRoleRoutes(browser, 'academic', ['/akademik', '/akademik/master', '/akademik/mahasiswa', '/akademik/administrasi'])
+  await verifyRoleRoutes(browser, 'academic', ['/akademik', '/akademik/master', '/akademik/mahasiswa', '/akademik/administrasi', '/admin/kelas'])
   await verifyRoleRoutes(browser, 'finance', ['/keuangan', '/keuangan/rekonsiliasi'])
   await verifyRoleRoutes(browser, 'admissions', ['/pmb', '/pmb/kelola', '/pmb/seleksi'])
   await verifyRoleRoutes(browser, 'leader', ['/', '/pddikti', '/tracer-study'])
-  await verifyRoleRoutes(browser, 'admin', ['/admin/pengguna', '/admin/kelas', '/modul/audit-backup'])
+  await verifyRoleRoutes(browser, 'admin', ['/admin/pengguna', '/modul/pengaturan', '/pmb/pengaturan', '/kelulusan', '/tracer-study', '/pddikti', '/modul/audit-backup'])
 })
 
 test('dashboard mahasiswa tetap responsif pada lebar 360 px', async ({ page }) => {

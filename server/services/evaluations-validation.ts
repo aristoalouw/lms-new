@@ -7,6 +7,7 @@ import {
   type EvaluationQuestionType,
 } from '../types/evaluations'
 import { CampusError, forbidden, invalidInput } from '../utils/errors'
+import { can } from '../utils/rbac'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/
 
@@ -103,9 +104,7 @@ export function normalizeEvaluationAnswers(
 }
 
 export function requireEvaluationConfigurationAccess(context: AuthContext, programStudyId: string): void {
-  if (!context.roles.includes('administrator') && !context.roles.includes('academic_staff')) {
-    forbidden('Hanya administrator atau staf akademik yang dapat mengatur evaluasi.')
-  }
+  if (!can(context, 'evaluation.configure')) forbidden('Anda tidak memiliki akses konfigurasi evaluasi.')
   if (!context.roles.includes('administrator') && !context.scope.programStudyIds.includes(programStudyId)) {
     forbidden('Program studi berada di luar lingkup akses Anda.')
   }
@@ -116,9 +115,10 @@ export function requireEvaluationReportAccess(
   programStudyId: string,
   lecturerId?: string,
 ): void {
-  if (context.roles.some(role => role === 'administrator' || role === 'leader')) return
+  if (context.roles.includes('leader')) return
   if (context.roles.includes('academic_staff') && context.scope.programStudyIds.includes(programStudyId)) return
   if (context.roles.includes('lecturer') && lecturerId === context.uid) return
+  if (context.roles.includes('advisor') && context.scope.programStudyIds.includes(programStudyId)) return
   forbidden('Laporan evaluasi berada di luar lingkup akses Anda.')
 }
 

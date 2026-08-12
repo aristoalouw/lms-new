@@ -71,9 +71,10 @@ describe('Firebase security rule invariants', () => {
     expect(lmsStorageRules).not.toContain('admissions/public')
   })
 
-  it('enforces MIME type and size constraints for client uploads', () => {
-    expect(storageRules).toContain('request.resource.size <= 10 * 1024 * 1024')
-    expect(storageRules).toContain("request.resource.contentType.matches('application/pdf|image/jpeg|image/png')")
+  it('keeps every production client upload behind the server quarantine pipeline', () => {
+    expect(storageRules).toMatch(/match \/profile-images\/\{userId\}\/\{fileName\}[\s\S]*?allow read, write: if false;/)
+    expect(storageRules).toMatch(/match \/student-documents\/\{studentId\}\/\{fileName\}[\s\S]*?allow read, write: if false;/)
+    expect(storageRules).toMatch(/match \/admissions\/public\/\{fileName\}[\s\S]*?allow read, write: if false;/)
     expect(storageRules).toMatch(/match \/private\/\{allPaths=\*\*\}[\s\S]*?allow read, write: if false;/)
   })
 

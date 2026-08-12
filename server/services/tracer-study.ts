@@ -28,7 +28,7 @@ import {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { can, hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { graduationModuleState } from './graduation-state'
 import { tracerStudyMockState } from './tracer-study-mock'
@@ -124,15 +124,21 @@ function uniqueIds(values: string[], label: string): string[] {
 }
 
 function requireTracerManager(context: AuthContext, programStudyIds: string[]): void {
-  if (hasRole(context, 'administrator')) return
+  requirePermission(context, 'tracer.manage')
   if (!hasRole(context, 'student_affairs_staff') || !programStudyIds.length
     || programStudyIds.some(id => !context.scope.programStudyIds.includes(id))) {
     forbidden('Tracer study berada di luar lingkup program studi Anda.')
   }
 }
 
+function requireTracerConfiguration(context: AuthContext, programStudyIds: string[]): void {
+  if (can(context, 'tracer.configure') && hasRole(context, 'administrator')) return
+  requireTracerManager(context, programStudyIds)
+}
+
 function requireAggregateReader(context: AuthContext): void {
-  if (!hasRole(context, 'student_affairs_staff', 'leader', 'administrator')) forbidden('Laporan tracer study tidak tersedia untuk role Anda.')
+  requirePermission(context, 'tracer.report')
+  if (!hasRole(context, 'student_affairs_staff', 'leader')) forbidden('Laporan tracer study tidak tersedia untuk role Anda.')
 }
 
 function validateQuestion(question: TracerQuestionDefinition, index: number): TracerQuestionDefinition {
@@ -275,7 +281,7 @@ export function isTracerPeriodOpen(period: TracerDistributionPeriod, now = Date.
 }
 
 export async function listTracerQuestionnaires(context: AuthContext): Promise<TracerQuestionnaire[]> {
-  if (!hasRole(context, 'student_affairs_staff', 'administrator')) forbidden('Konfigurasi tracer study tidak tersedia untuk role Anda.')
+  if (!can(context, 'tracer.configure') && !can(context, 'tracer.manage')) forbidden('Konfigurasi tracer study tidak tersedia untuk role Anda.')
   let records: TracerQuestionnaire[]
   if (dataMode() === 'mock') records = [...tracerStudyMockState().questionnaires.values()].map(item => structuredClone(item))
   else {
@@ -303,7 +309,7 @@ export async function createTracerQuestionnaire(
   event?: H3Event,
 ): Promise<{ questionnaire: TracerQuestionnaire; definition: TracerQuestionnaireVersion; replayed: boolean; auditId?: string }> {
   const normalized = normalizeQuestionnaire(input)
-  requireTracerManager(context, [normalized.programStudyId])
+  requireTracerConfiguration(context, [normalized.programStudyId])
   const hash = requestHash(normalized)
   const namespace = `questionnaire:create:${idempotencyKey}`
   const id = opaqueId('tracer_questionnaire', `${context.uid}:${idempotencyKey}`)
@@ -355,7 +361,7 @@ export async function updateTracerQuestionnaire(
   event?: H3Event,
 ): Promise<{ questionnaire: TracerQuestionnaire; definition: TracerQuestionnaireVersion; auditId: string }> {
   const normalized = normalizeQuestionnaire(input)
-  requireTracerManager(context, [normalized.programStudyId])
+  requireTracerConfiguration(context, [normalized.programStudyId])
   const expectedVersion = requireInteger(input.expectedVersion, 'Versi yang diharapkan', 1, 10_000)
   const status = input.status ?? 'ACTIVE'
   if (!['ACTIVE', 'ARCHIVED'].includes(status)) invalidInput('Status kuesioner tidak valid.')
@@ -365,7 +371,7 @@ export async function updateTracerQuestionnaire(
   if (dataMode() === 'mock') {
     const current = tracerStudyMockState().questionnaires.get(id)
     if (!current) notFound('Kuesioner tracer study')
-    requireTracerManager(context, [current.programStudyId])
+    requireTracerConfiguration(context, [current.programStudyId])
     if (current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Kuesioner telah berubah.', { currentVersion: current.version })
     const nextVersion = current.currentVersion + 1
     questionnaire = { ...current, name: normalized.name, description: normalized.description, programStudyId: normalized.programStudyId, currentVersion: nextVersion, version: current.version + 1, status, updatedAt: now, updatedBy: context.uid }
@@ -380,7 +386,7 @@ export async function updateTracerQuestionnaire(
       const snapshot = await transaction.get(reference)
       if (!snapshot.exists) notFound('Kuesioner tracer study')
       const current = { id: snapshot.id, ...snapshot.data() } as TracerQuestionnaire
-      requireTracerManager(context, [current.programStudyId])
+      requireTracerConfiguration(context, [current.programStudyId])
       if (current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Kuesioner telah berubah.', { currentVersion: current.version })
       const nextVersion = current.currentVersion + 1
       const next: TracerQuestionnaire = { ...current, name: normalized.name, description: normalized.description, programStudyId: normalized.programStudyId, currentVersion: nextVersion, version: current.version + 1, status, updatedAt: now, updatedBy: context.uid }
@@ -395,7 +401,7 @@ export async function updateTracerQuestionnaire(
 }
 
 export async function listTracerPeriods(context: AuthContext): Promise<TracerDistributionPeriod[]> {
-  requireAggregateReader(context)
+  if (!can(context, 'tracer.configure') && !can(context, 'tracer.manage') && !can(context, 'tracer.report')) forbidden('Periode tracer study tidak tersedia untuk role Anda.')
   let periods: TracerDistributionPeriod[]
   if (dataMode() === 'mock') periods = [...tracerStudyMockState().periods.values()].map(item => structuredClone(item))
   else {
@@ -415,7 +421,7 @@ export async function createTracerPeriod(
   event?: H3Event,
 ): Promise<{ period: TracerDistributionPeriod; replayed: boolean; auditId?: string }> {
   const normalized = normalizePeriod(input)
-  requireTracerManager(context, normalized.programStudyIds)
+  requireTracerConfiguration(context, normalized.programStudyIds)
   const definition = await getQuestionnaireVersion(normalized.questionnaireId, normalized.questionnaireVersion)
   const questionnaireProgram = dataMode() === 'mock'
     ? tracerStudyMockState().questionnaires.get(normalized.questionnaireId)?.programStudyId
@@ -471,13 +477,13 @@ export async function updateTracerPeriod(
   const normalized = normalizePeriod({ ...input, questionnaireId: 'placeholder', questionnaireVersion: 1 })
   const expectedVersion = requireInteger(input.expectedVersion, 'Versi yang diharapkan', 1, 10_000)
   if (!['DRAFT', 'ACTIVE', 'CLOSED'].includes(input.status)) invalidInput('Status periode tidak valid.')
-  requireTracerManager(context, normalized.programStudyIds)
+  requireTracerConfiguration(context, normalized.programStudyIds)
   const now = new Date().toISOString()
   let period: TracerDistributionPeriod
   if (dataMode() === 'mock') {
     const current = tracerStudyMockState().periods.get(id)
     if (!current) notFound('Periode tracer study')
-    requireTracerManager(context, current.programStudyIds)
+    requireTracerConfiguration(context, current.programStudyIds)
     if (current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Periode telah berubah.', { currentVersion: current.version })
     if (!validPeriodTransition(current.status, input.status)) conflict('INVALID_STATE_TRANSITION', `Periode tidak dapat berubah dari ${current.status} ke ${input.status}.`)
     period = { ...current, ...normalized, questionnaireId: current.questionnaireId, questionnaireVersion: current.questionnaireVersion, status: input.status, version: current.version + 1, updatedAt: now, updatedBy: context.uid }
@@ -490,7 +496,7 @@ export async function updateTracerPeriod(
       const snapshot = await transaction.get(reference)
       if (!snapshot.exists) notFound('Periode tracer study')
       const current = { id: snapshot.id, ...snapshot.data() } as TracerDistributionPeriod
-      requireTracerManager(context, current.programStudyIds)
+      requireTracerConfiguration(context, current.programStudyIds)
       if (current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Periode telah berubah.', { currentVersion: current.version })
       if (!validPeriodTransition(current.status, input.status)) conflict('INVALID_STATE_TRANSITION', `Periode tidak dapat berubah dari ${current.status} ke ${input.status}.`)
       const next: TracerDistributionPeriod = { ...current, ...normalized, questionnaireId: current.questionnaireId, questionnaireVersion: current.questionnaireVersion, status: input.status, version: current.version + 1, updatedAt: now, updatedBy: context.uid }
@@ -884,9 +890,9 @@ function maskEmail(email: string): string {
 }
 
 export async function listTracerRespondents(context: AuthContext, periodId: string): Promise<TracerRespondentMonitorItem[]> {
-  if (!hasRole(context, 'student_affairs_staff', 'administrator')) forbidden('Monitoring responden hanya tersedia untuk staf tracer study.')
+  if (!hasRole(context, 'student_affairs_staff')) forbidden('Monitoring responden hanya tersedia untuk staf tracer study.')
   const period = await loadTracerPeriod(periodId)
-  requireTracerManager(context, period.programStudyIds.filter(id => hasRole(context, 'administrator') || context.scope.programStudyIds.includes(id)))
+  requireTracerManager(context, period.programStudyIds.filter(id => context.scope.programStudyIds.includes(id)))
   let recipients: TracerRecipient[]
   if (dataMode() === 'mock') recipients = [...tracerStudyMockState().recipients.values()].filter(item => item.periodId === period.id).map(item => structuredClone(item))
   else {
@@ -895,7 +901,7 @@ export async function listTracerRespondents(context: AuthContext, periodId: stri
     const snapshot = await db.collection('tracerRecipients').where('periodId', '==', period.id).limit(2_500).get()
     recipients = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as TracerRecipient)
   }
-  const allowed = recipients.filter(recipient => hasRole(context, 'administrator') || context.scope.programStudyIds.includes(recipient.programStudyId))
+  const allowed = recipients.filter(recipient => context.scope.programStudyIds.includes(recipient.programStudyId))
   const result: TracerRespondentMonitorItem[] = []
   for (const recipient of allowed) {
     const profile = await loadAlumniProfile(recipient.alumniProfileId)

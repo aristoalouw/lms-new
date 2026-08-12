@@ -13,7 +13,7 @@ export default defineCampusHandler(async (event) => {
   const body = requireRecord(await readBody(event))
   return submitStudentEvaluation(context, {
     evaluationPeriodId: requireString(body.evaluationPeriodId, 'evaluationPeriodId', { max: 100 }),
-    enrollmentId: requireString(body.enrollmentId, 'enrollmentId', { max: 100 }),
+    enrollmentId: requireString(body.enrollmentId, 'enrollmentId', { max: 300 }),
     answers: body.answers as EvaluationAnswer[],
   }, idempotencyKey, event)
 })

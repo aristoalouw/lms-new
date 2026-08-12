@@ -57,11 +57,11 @@ function numberList(value: unknown, max = 100): number[] {
   return [...new Set(value.filter((item): item is number => Number.isInteger(item) && item >= 1900 && item <= 2200))].slice(0, max)
 }
 
-function invalidLmsAccountAuthorization(): never {
+function invalidAccountAuthorization(): never {
   throw new CampusError(
     403,
     'ACCOUNT_AUTHORIZATION_INVALID',
-    'Konfigurasi role atau lingkup akun tidak valid untuk profil LMS MVP. Hubungi administrator.',
+    'Konfigurasi role atau lingkup akun tidak valid. Hubungi administrator.',
   )
 }
 
@@ -71,10 +71,10 @@ function strictScopeStringList(value: unknown): string[] {
     || value.length > 20
     || value.some(item => typeof item !== 'string' || !CANONICAL_SCOPE_ID_PATTERN.test(item))
   ) {
-    invalidLmsAccountAuthorization()
+    invalidAccountAuthorization()
   }
   const values = value as string[]
-  if (new Set(values).size !== values.length) invalidLmsAccountAuthorization()
+  if (new Set(values).size !== values.length) invalidAccountAuthorization()
   return [...values]
 }
 
@@ -84,18 +84,18 @@ function strictScopeCohortYears(value: unknown): number[] {
     || value.length > 20
     || value.some(item => !Number.isInteger(item) || Number(item) < 1900 || Number(item) > 2200)
   ) {
-    invalidLmsAccountAuthorization()
+    invalidAccountAuthorization()
   }
   const values = value as number[]
-  if (new Set(values).size !== values.length) invalidLmsAccountAuthorization()
+  if (new Set(values).size !== values.length) invalidAccountAuthorization()
   return [...values]
 }
 
 function strictLmsAccountScope(value: unknown): AccessScope {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidLmsAccountAuthorization()
+  if (!value || typeof value !== 'object' || Array.isArray(value)) invalidAccountAuthorization()
   const scope = value as Record<string, unknown>
   const allowedKeys = new Set(['unitIds', 'programStudyIds', 'cohortYears', 'studentIds'])
-  if (Object.keys(scope).some(key => !allowedKeys.has(key))) invalidLmsAccountAuthorization()
+  if (Object.keys(scope).some(key => !allowedKeys.has(key))) invalidAccountAuthorization()
   return {
     unitIds: strictScopeStringList(scope.unitIds),
     programStudyIds: strictScopeStringList(scope.programStudyIds),
@@ -114,18 +114,18 @@ function lmsMvpFirebaseAccountScope(data: Record<string, unknown>, roles: UserRo
     || storedRoles[0] !== roles[0]
     || !allowedRoles.has(roles[0]!)
   ) {
-    invalidLmsAccountAuthorization()
+    invalidAccountAuthorization()
   }
 
   const scope = strictLmsAccountScope(data.scope)
   const role = roles[0]!
   if (role === 'student') {
     if (scope.unitIds.length || scope.programStudyIds.length !== 1 || scope.studentIds.length !== 1) {
-      invalidLmsAccountAuthorization()
+      invalidAccountAuthorization()
     }
   } else if (role === 'lecturer') {
     if (scope.unitIds.length || scope.cohortYears.length || scope.studentIds.length) {
-      invalidLmsAccountAuthorization()
+      invalidAccountAuthorization()
     }
   } else if (
     scope.unitIds.length
@@ -133,7 +133,33 @@ function lmsMvpFirebaseAccountScope(data: Record<string, unknown>, roles: UserRo
     || scope.cohortYears.length
     || scope.studentIds.length
   ) {
-    invalidLmsAccountAuthorization()
+    invalidAccountAuthorization()
+  }
+  return scope
+}
+
+function fullCampusFirebaseAccountScope(data: Record<string, unknown>, roles: UserRole[]): AccessScope {
+  const scope = strictLmsAccountScope(data.scope)
+  const directIdentityRoles = roles.filter(role => ['applicant', 'student', 'guardian'].includes(role))
+  if (directIdentityRoles.length && roles.length !== 1) invalidAccountAuthorization()
+  if (roles.includes('advisor') && !roles.includes('lecturer')) invalidAccountAuthorization()
+
+  if (roles.includes('student') && (scope.studentIds.length !== 1 || scope.programStudyIds.length !== 1)) {
+    invalidAccountAuthorization()
+  }
+  if (roles.includes('applicant') && scope.studentIds.length) invalidAccountAuthorization()
+  if (roles.includes('guardian')) {
+    if (!scope.studentIds.length || scope.unitIds.length || scope.programStudyIds.length || scope.cohortYears.length) {
+      invalidAccountAuthorization()
+    }
+  }
+
+  const scopedStaffRoles: UserRole[] = ['advisor', 'academic_staff', 'finance_staff', 'student_affairs_staff', 'admissions_staff']
+  const requiresOrganizationScope = roles.some(role => scopedStaffRoles.includes(role))
+    && !roles.includes('administrator')
+    && !roles.includes('leader')
+  if (requiresOrganizationScope && !scope.unitIds.length && !scope.programStudyIds.length) {
+    invalidAccountAuthorization()
   }
   return scope
 }
@@ -301,7 +327,7 @@ async function firebaseSessionAccount(uid: string): Promise<FirebaseSessionAccou
   if (!roles.length || !Number.isInteger(version) || version < 1) return null
   const scope = serverFeatureProfile() === 'lms-mvp'
     ? lmsMvpFirebaseAccountScope(data, roles)
-    : normalizeScope(data.scope)
+    : fullCampusFirebaseAccountScope(data, roles)
   return {
     uid,
     email: typeof data.email === 'string' ? data.email.slice(0, 254) : undefined,

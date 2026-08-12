@@ -1,14 +1,39 @@
 <script setup lang="ts">
+import type { AdmissionProgram, AdmissionWave } from '~/server/types/admissions'
+
 definePageMeta({ layout: 'auth' })
 useHead({ title: 'Penerimaan Mahasiswa Baru' })
 
-const programs = [
-  { name: 'S1 Manajemen', faculty: 'Fakultas Ekonomi & Bisnis', mode: 'Reguler · Hybrid', icon: 'uil-chart-line' },
-  { name: 'S1 Akuntansi', faculty: 'Fakultas Ekonomi & Bisnis', mode: 'Reguler · Hybrid', icon: 'uil-calculator-alt' },
-  { name: 'S1 Informatika', faculty: 'Fakultas Teknologi', mode: 'Reguler · Hybrid', icon: 'uil-brackets-curly' },
-  { name: 'S1 Sistem Informasi', faculty: 'Fakultas Teknologi', mode: 'Reguler · Hybrid', icon: 'uil-database' },
-  { name: 'S1 Ilmu Komunikasi', faculty: 'Fakultas Sosial', mode: 'Reguler · Hybrid', icon: 'uil-comments' },
-]
+const { $api } = useNuxtApp()
+const programs = ref<AdmissionProgram[]>([])
+const waves = ref<AdmissionWave[]>([])
+const catalogLoading = ref(true)
+const catalogError = ref('')
+const activeWave = computed(() => {
+  const now = Date.now()
+  return waves.value.find(wave => wave.active && now >= Date.parse(wave.opensAt) && now <= Date.parse(wave.closesAt)) || null
+})
+const availablePrograms = computed(() => programs.value.filter(program => (
+  !activeWave.value?.programStudyIds.length || activeWave.value.programStudyIds.includes(program.id)
+)))
+const dateLabel = (value: string) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'long', timeZone: 'Asia/Jakarta' }).format(new Date(value))
+const money = (value: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value)
+
+async function loadCatalog() {
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const { data } = await $api.get<{ programs: AdmissionProgram[]; waves: AdmissionWave[] }>('/admissions/catalog')
+    programs.value = data.programs
+    waves.value = data.waves
+  } catch {
+    catalogError.value = 'Informasi gelombang resmi belum dapat dimuat.'
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+onMounted(loadCatalog)
 
 const steps = [
   { number: '01', title: 'Buat akun', detail: 'Gunakan email aktif untuk menerima informasi seleksi.' },
@@ -39,17 +64,17 @@ const faqs = [
       </div>
       <div class="admission-nav__actions">
         <NuxtLink class="btn btn-light d-none d-sm-inline-flex" to="/login">Masuk portal</NuxtLink>
-        <NuxtLink class="btn btn-primary" to="/pmb/daftar">Daftar sekarang</NuxtLink>
+        <NuxtLink v-if="activeWave" class="btn btn-primary" to="/pmb/daftar">Daftar sekarang</NuxtLink>
       </div>
     </nav>
 
     <section class="admission-hero">
       <div class="admission-hero__copy">
-        <span class="public-eyebrow"><i class="uil uil-graduation-cap" /> Pendaftaran 2026/2027 dibuka</span>
+        <span class="public-eyebrow"><i class="uil uil-graduation-cap" /> {{ activeWave ? `${activeWave.label} ${activeWave.academicYear} dibuka` : 'Belum ada gelombang aktif' }}</span>
         <h1>Mulai perjalanan kuliahmu dengan langkah yang jelas.</h1>
         <p>Pilih program studi, lengkapi berkas, dan pantau seluruh proses penerimaan melalui satu portal yang aman.</p>
         <div class="admission-hero__actions">
-          <NuxtLink class="btn btn-primary btn-lg" to="/pmb/daftar">Mulai pendaftaran <i class="uil uil-arrow-right" /></NuxtLink>
+          <NuxtLink v-if="activeWave" class="btn btn-primary btn-lg" to="/pmb/daftar">Mulai pendaftaran <i class="uil uil-arrow-right" /></NuxtLink>
           <a class="btn btn-outline-primary btn-lg" href="#program">Lihat program studi</a>
         </div>
         <div class="admission-trust">
@@ -59,33 +84,34 @@ const faqs = [
         </div>
       </div>
 
-      <div class="admission-hero__panel" aria-label="Ringkasan gelombang aktif">
+      <div v-if="activeWave" class="admission-hero__panel" aria-label="Ringkasan gelombang aktif">
         <div class="hero-panel__head">
           <span class="hero-panel__icon"><i class="uil uil-calendar-alt" /></span>
-          <div><small>Gelombang aktif</small><strong>Gelombang 3</strong></div>
+          <div><small>Gelombang aktif</small><strong>{{ activeWave.label }}</strong></div>
           <StatusBadge status="active" label="Dibuka" />
         </div>
         <div class="hero-panel__dates">
-          <div><small>Mulai</small><strong>1 Juli 2026</strong></div>
+          <div><small>Mulai</small><strong>{{ dateLabel(activeWave.opensAt) }}</strong></div>
           <i class="uil uil-arrow-right" />
-          <div><small>Berakhir</small><strong>31 Agustus 2026</strong></div>
+          <div><small>Berakhir</small><strong>{{ dateLabel(activeWave.closesAt) }}</strong></div>
         </div>
         <div class="hero-panel__progress">
-          <span><b>158</b> pendaftar saat ini</span><span>Kuota tersisa 242</span>
-          <div class="progress" role="progressbar" aria-label="Kuota terisi" aria-valuenow="39" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width: 39%" /></div>
+          <span><b>{{ activeWave.capacity }}</b> kapasitas gelombang</span><span>{{ availablePrograms.length }} program studi</span>
+          <div class="progress" role="progressbar" aria-label="Katalog gelombang tersedia" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width: 100%" /></div>
         </div>
         <div class="hero-panel__note">
           <i class="uil uil-info-circle" />
-          <span><strong>Seleksi berikutnya 8 Agustus</strong><small>Lengkapi berkas paling lambat 5 Agustus 2026.</small></span>
+          <span><strong>Jadwal seleksi melalui portal</strong><small>Jadwal resmi muncul setelah pendaftaran dan penempatan peserta.</small></span>
         </div>
       </div>
+      <div v-else class="admission-hero__panel" aria-label="Status penerimaan"><div class="hero-panel__head"><span class="hero-panel__icon"><i class="uil uil-calendar-alt" /></span><div><small>Status PMB</small><strong>{{ catalogLoading ? 'Memuat katalog resmi' : catalogError || 'Pendaftaran belum dibuka' }}</strong></div><StatusBadge status="inactive" label="Ditutup" /></div><div class="hero-panel__note"><i class="uil uil-info-circle" /><span><strong>Tidak menerima formulir baru</strong><small>Panitia harus membuat dan mengaktifkan gelombang resmi terlebih dahulu.</small></span></div></div>
     </section>
 
     <section class="public-metrics" aria-label="Ringkasan kampus">
-      <div><strong>5</strong><span>Program studi</span></div>
-      <div><strong>2.000+</strong><span>Komunitas mahasiswa</span></div>
-      <div><strong>Hybrid</strong><span>Model perkuliahan</span></div>
-      <div><strong>Terintegrasi</strong><span>Layanan akademik</span></div>
+      <div><strong>{{ availablePrograms.length }}</strong><span>Program studi tersedia</span></div>
+      <div><strong>{{ activeWave?.academicYear || '—' }}</strong><span>Tahun akademik</span></div>
+      <div><strong>{{ activeWave ? money(activeWave.registrationFee) : '—' }}</strong><span>Biaya formulir</span></div>
+      <div><strong>{{ activeWave ? 'Dibuka' : 'Ditutup' }}</strong><span>Status pendaftaran</span></div>
     </section>
 
     <section id="program" class="public-section">
@@ -94,10 +120,10 @@ const faqs = [
         <a href="#biaya" class="text-link">Lihat rincian biaya <i class="uil uil-arrow-right" /></a>
       </header>
       <div class="program-grid">
-        <article v-for="program in programs" :key="program.name" class="program-card">
-          <span class="program-card__icon"><i class="uil" :class="program.icon" /></span>
-          <div><small>{{ program.faculty }}</small><h3>{{ program.name }}</h3><p>{{ program.mode }}</p></div>
-          <NuxtLink :to="`/pmb/daftar?program=${encodeURIComponent(program.name)}`" :aria-label="`Daftar ${program.name}`"><i class="uil uil-arrow-up-right" /></NuxtLink>
+        <article v-for="program in availablePrograms" :key="program.id" class="program-card">
+          <span class="program-card__icon"><i class="uil uil-graduation-cap" /></span>
+          <div><small>{{ program.unitId }}</small><h3>{{ program.name }}</h3><p>{{ program.code }} · Program aktif</p></div>
+          <NuxtLink v-if="activeWave" :to="`/pmb/daftar?program=${encodeURIComponent(program.id)}`" :aria-label="`Daftar ${program.name}`"><i class="uil uil-arrow-up-right" /></NuxtLink>
         </article>
       </div>
     </section>
@@ -127,11 +153,11 @@ const faqs = [
           <NuxtLink class="btn btn-outline-primary" to="/pmb/daftar">Cek biaya sesuai pilihan</NuxtLink>
         </div>
         <div class="fee-card">
-          <div><small>Biaya formulir</small><strong>Rp 500.000</strong><span>Satu kali pembayaran</span></div>
+          <div><small>Biaya formulir</small><strong>{{ activeWave ? money(activeWave.registrationFee) : 'Belum ditetapkan' }}</strong><span>Sesuai gelombang resmi</span></div>
           <hr>
-          <div class="fee-card__row"><span>Uang kuliah mulai</span><strong>Rp 7,5 jt <small>/ semester</small></strong></div>
-          <div class="fee-card__row"><span>Pilihan cicilan</span><strong>Hingga 3×</strong></div>
-          <div class="fee-card__row"><span>Jalur beasiswa</span><strong>Tersedia</strong></div>
+          <div class="fee-card__row"><span>Program tersedia</span><strong>{{ availablePrograms.length }}</strong></div>
+          <div class="fee-card__row"><span>Kapasitas gelombang</span><strong>{{ activeWave?.capacity || '—' }}</strong></div>
+          <div class="fee-card__row"><span>Status</span><strong>{{ activeWave ? 'Aktif' : 'Belum dibuka' }}</strong></div>
           <p><i class="uil uil-lock" /> Pembayaran diproses melalui kanal resmi yang terverifikasi.</p>
         </div>
       </div>
@@ -148,8 +174,8 @@ const faqs = [
     </section>
 
     <section class="public-cta">
-      <div><span>Gelombang 3 berakhir 31 Agustus 2026</span><h2>Siap mengambil langkah pertama?</h2><p>Buat akun pendaftar dan simpan progres formulir kapan saja.</p></div>
-      <NuxtLink class="btn btn-light btn-lg" to="/pmb/daftar">Daftar sekarang <i class="uil uil-arrow-right" /></NuxtLink>
+      <div><span>{{ activeWave ? `${activeWave.label} berakhir ${dateLabel(activeWave.closesAt)}` : 'Belum ada gelombang aktif' }}</span><h2>{{ activeWave ? 'Siap mengambil langkah pertama?' : 'Pantau pembukaan pendaftaran resmi' }}</h2><p>{{ activeWave ? 'Isi formulir dan pantau proses melalui portal.' : 'Formulir baru tersedia setelah panitia mengaktifkan gelombang PMB.' }}</p></div>
+      <NuxtLink v-if="activeWave" class="btn btn-light btn-lg" to="/pmb/daftar">Daftar sekarang <i class="uil uil-arrow-right" /></NuxtLink>
     </section>
 
     <footer class="public-footer">

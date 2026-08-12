@@ -13,7 +13,7 @@ useHead({ title: 'Kelulusan & Yudisium' })
 
 const { $api } = useNuxtApp()
 const config = useRuntimeConfig()
-const { user } = useAuth()
+const { user, can } = useAuth()
 const loading = ref(false)
 const mutating = ref(false)
 const errorMessage = ref('')
@@ -100,7 +100,8 @@ const selectedApplication = computed(() => applications.value.find(item => item.
 const activePeriod = computed(() => periods.value.find(period => period.status === 'OPEN') ?? periods.value[0])
 const activeRole = computed(() => user.value?.activeRole ?? 'student')
 const isStudent = computed(() => activeRole.value === 'student')
-const canManage = computed(() => ['administrator', 'academic_staff'].includes(activeRole.value))
+const canManage = computed(() => can('graduation.manage'))
+const canConfigure = computed(() => can('graduation.configure'))
 const selectedDocuments = computed(() => documents.value.filter(document => document.applicationId === selectedApplication.value?.id))
 
 const areaMeta: Record<EligibilityArea, { label: string; icon: string }> = {
@@ -154,8 +155,8 @@ const loadWorkspace = async () => {
   try {
     const [periodResponse, applicationResponse, documentResponse] = await Promise.all([
       $api.get<{ periods: GraduationPeriod[] }>('/graduation/periods'),
-      $api.get<{ applications: GraduationApplication[] }>('/graduation/applications'),
-      $api.get<{ documents: IssuedGraduationDocument[] }>('/graduation/documents'),
+      can('graduation.read') ? $api.get<{ applications: GraduationApplication[] }>('/graduation/applications') : Promise.resolve({ data: { applications: [] } }),
+      can('graduation.read') ? $api.get<{ documents: IssuedGraduationDocument[] }>('/graduation/documents') : Promise.resolve({ data: { documents: [] } }),
     ])
     periods.value = periodResponse.data.periods
     applications.value = applicationResponse.data.applications
@@ -255,6 +256,7 @@ onMounted(loadWorkspace)
 
     <div v-if="noticeMessage" class="alert alert-success mb-0" role="status">{{ noticeMessage }}</div>
     <div v-if="errorMessage" class="alert alert-danger mb-0" role="alert">{{ errorMessage }}</div>
+    <div v-if="canConfigure && !can('graduation.read')" class="alert alert-info mb-0" role="status">Administrator hanya mengelola konfigurasi periode dan template; pengajuan, persetujuan, serta penerbitan dokumen tetap dijalankan staf akademik scoped.</div>
 
     <section class="graduation-hero">
       <div class="graduation-hero__copy">

@@ -77,7 +77,8 @@ describe('graduation eligibility and yudisium review', () => {
       .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
     await expect(getGraduationApplication(authContext('academic-info-001', ['academic_staff'], ['informatics-s1']), management.application.id))
       .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
-    expect(await listGraduationApplications(authContext('leader-001', ['leader'], []))).toHaveLength(2)
+    await expect(listGraduationApplications(authContext('leader-001', ['leader'], [])))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
   })
 
   it('enforces optimistic versions, the state graph, and distinct two-person final approval', async () => {
@@ -113,7 +114,8 @@ describe('graduation eligibility and yudisium review', () => {
     expect(replay).toMatchObject({ replayed: true, participant: { id: final.participant!.id } })
     expect(graduationModuleState().participants.size).toBe(1)
     expect((await listGraduationParticipants(authContext('student-001', ['student'], []))).map(item => item.id)).toEqual([final.participant!.id])
-    expect((await getGraduationParticipant(authContext('leader-001', ['leader'], []), final.participant!.id)).status).toBe('YUDISIUM_APPROVED')
+    await expect(getGraduationParticipant(authContext('leader-001', ['leader'], []), final.participant!.id))
+      .rejects.toMatchObject({ statusCode: 403, code: 'FORBIDDEN' } satisfies Partial<CampusError>)
     await expect(getGraduationParticipant(authContext('student-999', ['student'], []), final.participant!.id))
       .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
 

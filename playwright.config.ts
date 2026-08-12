@@ -4,6 +4,7 @@ export default defineConfig({
   testDir: './tests/e2e',
   testIgnore: 'full-campus.spec.ts',
   fullyParallel: false,
+  workers: 1,
   retries: process.env.CI ? 2 : 0,
   reporter: process.env.CI ? [['html', { open: 'never' }], ['github']] : 'list',
   use: {

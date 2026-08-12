@@ -10,7 +10,7 @@ import {
   mvpApiDecision,
   normalizeFeatureProfile,
 } from '../../shared/features'
-import { permissionsForRole } from '../../shared/auth'
+import { permissionsForLmsMvpRole } from '../../shared/auth'
 import { sanitizeSentryEvent } from '../../shared/observability/sentry'
 import { navigationCommandsForAccess } from '../../config/navigation'
 
@@ -61,7 +61,7 @@ describe('LMS MVP profile and telemetry invariants', () => {
   })
 
   it('keeps administrator outside submit and grade permissions', () => {
-    const permissions = permissionsForRole('administrator')
+    const permissions = permissionsForLmsMvpRole('administrator')
     expect(permissions).toContain('classes:manage')
     expect(permissions).toContain('enrollments:manage')
     expect(permissions).not.toContain('learning:submit')
@@ -99,8 +99,10 @@ describe('LMS MVP profile and telemetry invariants', () => {
     })
     expect(event.user).toBeUndefined()
     expect(event.request).toEqual({ url: 'https://campus.test/api/files/[ID disaring]/download' })
-    expect(event.breadcrumbs).toEqual([{ message: 'Submission [Email disaring]', data: { fileId: '[Disaring]' } }])
-    expect(event.extra).toEqual({ email: '[Disaring]', grade: '[Disaring]', nested: { message: 'Bearer [Disaring]' } })
+    expect(event.message).toBeUndefined()
+    expect(event.breadcrumbs).toEqual([{}])
+    expect(event.extra).toBeUndefined()
+    expect(event.exception?.values?.[0]?.value).toBe('[Pesan teknis disaring]')
     expect(JSON.stringify(event)).not.toContain('student@example.test')
     expect(JSON.stringify(event)).not.toContain('abc.def.ghi')
   })

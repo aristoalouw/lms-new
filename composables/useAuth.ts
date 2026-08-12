@@ -1,6 +1,12 @@
 import type { CampusUser, UserRole } from '~/types/domain'
 import type { Permission } from '~/shared/auth'
-import { signInWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth'
+import {
+  browserLocalPersistence,
+  browserSessionPersistence,
+  setPersistence,
+  signInWithEmailAndPassword,
+  signOut as firebaseSignOut,
+} from 'firebase/auth'
 
 type ServerSession = {
   uid: string
@@ -22,6 +28,23 @@ const initialsFor = (name: string) => name
   .slice(0, 2)
   .map(part => part[0]?.toUpperCase())
   .join('') || 'NC'
+
+const FIREBASE_LOGIN_TIMEOUT_MS = 20_000
+const SESSION_COLD_START_TIMEOUT_MS = 60_000
+
+const withLoginTimeout = async <T>(operation: Promise<T>, timeoutMs = FIREBASE_LOGIN_TIMEOUT_MS): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error('Layanan autentikasi tidak merespons.'), { code: 'AUTH_CLIENT_TIMEOUT' })), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 const userFromSession = (session: ServerSession, preferredRole?: UserRole): CampusUser => {
   const activeRole = preferredRole && session.roles.includes(preferredRole)
@@ -49,6 +72,7 @@ export const useAuth = () => {
   const authError = useState<string | null>('auth.error', () => null)
   const restored = useState<boolean>('auth.restored', () => false)
   const requestFetch = useRequestFetch()
+  const sessionFetch = requestFetch as unknown as (path: string) => Promise<{ session: ServerSession }>
 
   const isAuthenticated = computed(() => Boolean(user.value))
 
@@ -57,34 +81,38 @@ export const useAuth = () => {
     return Boolean(user.value?.permissions.includes(permission as Permission))
   }
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string, remember = false) => {
     pending.value = true
     authError.value = null
+    let firebaseSignedIn = false
 
     try {
+      const { $api } = useNuxtApp()
       if (config.public.demoMode) {
         if (!email || !password) throw new Error('Email dan kata sandi wajib diisi.')
-        const response = await requestFetch<{ session: ServerSession }>('/api/auth/demo-login', {
-          method: 'POST',
-          body: { profileId: 'admin' },
-        })
-        user.value = userFromSession(response.session)
+        const { data } = await $api.post<{ session: ServerSession }>('/auth/demo-login', { profileId: 'admin' })
+        user.value = userFromSession(data.session)
         restored.value = true
         return user.value
       }
 
-      const { $api } = useNuxtApp()
       const firebaseAuth = useNuxtApp().$firebaseAuth
       if (!firebaseAuth) throw new Error('Layanan autentikasi belum dikonfigurasi.')
-      const credential = await signInWithEmailAndPassword(firebaseAuth, email, password)
-      const idToken = await credential.user.getIdToken()
+      await setPersistence(firebaseAuth, remember ? browserLocalPersistence : browserSessionPersistence)
+      const credential = await withLoginTimeout(signInWithEmailAndPassword(firebaseAuth, email, password))
+      firebaseSignedIn = true
+      const idToken = await withLoginTimeout(credential.user.getIdToken(), 10_000)
       const { data } = await $api.post<{ session: ServerSession }>('/auth/session', { idToken }, {
-        timeout: 45_000,
+        // Hostinger can cold-start the managed Node process after an idle period.
+        timeout: SESSION_COLD_START_TIMEOUT_MS,
       })
       user.value = userFromSession(data.session)
       restored.value = true
       return user.value
     } catch (error) {
+      if (firebaseSignedIn && !config.public.demoMode && useNuxtApp().$firebaseAuth) {
+        await firebaseSignOut(useNuxtApp().$firebaseAuth!).catch(() => undefined)
+      }
       const failure = error as {
         code?: string
         message?: string
@@ -92,7 +120,7 @@ export const useAuth = () => {
       }
       authError.value = failure.response?.data?.statusMessage
         || failure.response?.data?.message
-        || (failure.code === 'ECONNABORTED'
+        || (failure.code === 'ECONNABORTED' || failure.code === 'AUTH_CLIENT_TIMEOUT'
           ? 'Server membutuhkan waktu terlalu lama untuk membuat sesi. Silakan coba lagi.'
           : failure.message || 'Login gagal. Periksa kembali akun Anda.')
       throw error
@@ -103,8 +131,11 @@ export const useAuth = () => {
 
   const logout = async () => {
     try {
-      await useNuxtApp().$api.post('/auth/logout')
-      if (!config.public.demoMode && useNuxtApp().$firebaseAuth) await firebaseSignOut(useNuxtApp().$firebaseAuth!)
+      const operations: Promise<unknown>[] = [useNuxtApp().$api.post('/auth/logout')]
+      if (!config.public.demoMode && useNuxtApp().$firebaseAuth) {
+        operations.push(firebaseSignOut(useNuxtApp().$firebaseAuth!))
+      }
+      await Promise.allSettled(operations)
     } finally {
       user.value = null
       restored.value = true
@@ -116,7 +147,7 @@ export const useAuth = () => {
     if (restored.value) return user.value
     pending.value = true
     try {
-      const response = await requestFetch<{ session: ServerSession }>('/api/auth/session')
+      const response = await sessionFetch('/api/auth/session')
       user.value = userFromSession(response.session, user.value?.activeRole)
     } catch {
       user.value = null

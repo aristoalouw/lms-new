@@ -1,5 +1,10 @@
 <script setup lang="ts">
 import type { AxiosError } from 'axios'
+import type {
+  AcademicAdministrationWorkspace,
+  AcademicPeriodDefinition,
+  AcademicProgramStudy,
+} from '~/server/types/academic-administration'
 
 type QuestionType = 'LIKERT_1_5' | 'BOOLEAN' | 'TEXT'
 type GroupBy = 'lecturer' | 'course' | 'class' | 'program'
@@ -90,17 +95,20 @@ interface EvaluationReport {
   confidentiality: { respondentIdentityIncluded: false; smallCohortsSuppressed: true; freeTextExcluded: true }
 }
 
-const { user } = useAuth()
+const { can, user } = useAuth()
 const { $api } = useNuxtApp()
+const config = useRuntimeConfig()
 
-definePageMeta({ alias: ['/modul/evaluasi-dosen'] })
+definePageMeta({ middleware: 'auth', alias: ['/modul/evaluasi-dosen'] })
 useHead({ title: 'Evaluasi Dosen' })
 
 const activeRole = computed(() => user.value?.activeRole)
 const isStudent = computed(() => activeRole.value === 'student')
-const canConfigure = computed(() => ['administrator', 'academic_staff'].includes(activeRole.value || ''))
-const canReport = computed(() => ['administrator', 'academic_staff', 'leader', 'lecturer', 'advisor'].includes(activeRole.value || ''))
-const programStudyId = ref(user.value?.programStudyId || 'management-s1')
+const canConfigure = computed(() => can('evaluation.configure'))
+const canReport = computed(() => can('evaluation.read') && ['academic_staff', 'leader', 'lecturer', 'advisor'].includes(activeRole.value || ''))
+const programStudyId = ref(user.value?.programStudyId || '')
+const academicPrograms = ref<AcademicProgramStudy[]>([])
+const academicPeriods = ref<AcademicPeriodDefinition[]>([])
 
 const activeTab = ref<'setup' | 'report'>(canConfigure.value ? 'setup' : 'report')
 const loading = ref(true)
@@ -123,20 +131,22 @@ const periodError = ref('')
 
 const editingForm = ref<EvaluationForm | null>(null)
 const formDraft = reactive({
-  name: 'Evaluasi Mutu Pembelajaran',
-  description: 'Umpan balik terstruktur untuk peningkatan mutu pembelajaran.',
-  questions: [
-    { id: 'clarity', label: 'Dosen menyampaikan materi secara jelas dan terstruktur.', type: 'LIKERT_1_5' as QuestionType, required: true },
-    { id: 'feedback', label: 'Dosen memberikan umpan balik yang membantu proses belajar.', type: 'LIKERT_1_5' as QuestionType, required: true },
-    { id: 'comment', label: 'Saran perbaikan untuk pembelajaran berikutnya.', type: 'TEXT' as QuestionType, required: false },
-  ] as Question[],
+  name: config.public.demoMode ? 'Evaluasi Mutu Pembelajaran' : '',
+  description: config.public.demoMode ? 'Umpan balik terstruktur untuk peningkatan mutu pembelajaran.' : '',
+  questions: (config.public.demoMode
+    ? [
+        { id: 'clarity', label: 'Dosen menyampaikan materi secara jelas dan terstruktur.', type: 'LIKERT_1_5' as QuestionType, required: true },
+        { id: 'feedback', label: 'Dosen memberikan umpan balik yang membantu proses belajar.', type: 'LIKERT_1_5' as QuestionType, required: true },
+        { id: 'comment', label: 'Saran perbaikan untuk pembelajaran berikutnya.', type: 'TEXT' as QuestionType, required: false },
+      ]
+    : [{ id: 'question_1', label: '', type: 'LIKERT_1_5' as QuestionType, required: true }]) as Question[],
 })
 const formSaveKey = ref('')
 
 const editingPeriod = ref<EvaluationPeriod | null>(null)
 const periodDraft = reactive({
-  name: 'Evaluasi Semester Aktif',
-  academicPeriodId: '2025-2026-2',
+  name: config.public.demoMode ? 'Evaluasi Semester Aktif' : '',
+  academicPeriodId: '',
   formId: '',
   opensAt: '',
   closesAt: '',
@@ -195,10 +205,22 @@ async function loadStudentAssignments() {
   assignments.value = data.assignments
 }
 
+async function loadAcademicCatalog() {
+  const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
+  academicPrograms.value = data.programs.filter(program => program.active)
+  academicPeriods.value = data.periods.filter(period => period.active)
+  if (!academicPrograms.value.some(program => program.id === programStudyId.value)) {
+    const scopedProgram = user.value?.programStudyId
+    programStudyId.value = academicPrograms.value.find(program => program.id === scopedProgram)?.id
+      || (academicPrograms.value.length === 1 ? academicPrograms.value[0]!.id : '')
+  }
+  if (!academicPeriods.value.some(period => period.id === periodDraft.academicPeriodId)) {
+    periodDraft.academicPeriodId = academicPeriods.value[0]?.id || ''
+  }
+}
+
 async function loadManagementData() {
-  const params = activeRole.value === 'administrator' || activeRole.value === 'leader' || activeRole.value === 'lecturer' || activeRole.value === 'advisor'
-    ? {}
-    : { programStudyId: programStudyId.value }
+  const params = programStudyId.value ? { programStudyId: programStudyId.value } : {}
   const requests: Promise<unknown>[] = []
   if (canConfigure.value) {
     requests.push($api.get<{ forms: EvaluationForm[] }>('/evaluations/forms', { params: { programStudyId: programStudyId.value } })
@@ -216,7 +238,10 @@ async function initialize() {
   pageError.value = ''
   try {
     if (isStudent.value) await loadStudentAssignments()
-    else await loadManagementData()
+    else {
+      await loadAcademicCatalog()
+      await loadManagementData()
+    }
   } catch (error) {
     pageError.value = errorMessage(error)
   } finally {
@@ -283,13 +308,15 @@ function addQuestion() {
 
 function resetFormDraft() {
   editingForm.value = null
-  formDraft.name = 'Evaluasi Mutu Pembelajaran'
-  formDraft.description = 'Umpan balik terstruktur untuk peningkatan mutu pembelajaran.'
-  formDraft.questions = [
-    { id: 'clarity', label: 'Dosen menyampaikan materi secara jelas dan terstruktur.', type: 'LIKERT_1_5', required: true },
-    { id: 'feedback', label: 'Dosen memberikan umpan balik yang membantu proses belajar.', type: 'LIKERT_1_5', required: true },
-    { id: 'comment', label: 'Saran perbaikan untuk pembelajaran berikutnya.', type: 'TEXT', required: false },
-  ]
+  formDraft.name = config.public.demoMode ? 'Evaluasi Mutu Pembelajaran' : ''
+  formDraft.description = config.public.demoMode ? 'Umpan balik terstruktur untuk peningkatan mutu pembelajaran.' : ''
+  formDraft.questions = config.public.demoMode
+    ? [
+        { id: 'clarity', label: 'Dosen menyampaikan materi secara jelas dan terstruktur.', type: 'LIKERT_1_5', required: true },
+        { id: 'feedback', label: 'Dosen memberikan umpan balik yang membantu proses belajar.', type: 'LIKERT_1_5', required: true },
+        { id: 'comment', label: 'Saran perbaikan untuk pembelajaran berikutnya.', type: 'TEXT', required: false },
+      ]
+    : [{ id: 'question_1', label: '', type: 'LIKERT_1_5', required: true }]
   formSaveKey.value = requestKey('evaluation-form')
 }
 
@@ -310,6 +337,10 @@ async function editForm(form: EvaluationForm) {
 
 async function saveForm() {
   if (savingForm.value) return
+  if (!programStudyId.value || !formDraft.name.trim() || formDraft.questions.some(question => !question.label.trim())) {
+    formError.value = 'Pilih program studi serta lengkapi nama dan seluruh pertanyaan formulir.'
+    return
+  }
   savingForm.value = true
   formError.value = ''
   try {
@@ -351,8 +382,8 @@ function editPeriod(period: EvaluationPeriod) {
 
 function resetPeriodDraft() {
   editingPeriod.value = null
-  periodDraft.name = 'Evaluasi Semester Aktif'
-  periodDraft.academicPeriodId = '2025-2026-2'
+  periodDraft.name = config.public.demoMode ? 'Evaluasi Semester Aktif' : ''
+  periodDraft.academicPeriodId = academicPeriods.value[0]?.id || ''
   periodDraft.formId = forms.value[0]?.id || ''
   periodDraft.minimumResponses = 5
   defaultPeriodWindow()
@@ -361,6 +392,10 @@ function resetPeriodDraft() {
 
 async function savePeriod() {
   if (savingPeriod.value) return
+  if (!programStudyId.value || !periodDraft.academicPeriodId || !periodDraft.name.trim()) {
+    periodError.value = 'Pilih program studi dan semester akademik serta isi nama periode.'
+    return
+  }
   const form = forms.value.find(item => item.id === periodDraft.formId)
   if (!form) {
     periodError.value = 'Pilih formulir yang akan digunakan.'
@@ -521,7 +556,7 @@ onMounted(() => {
         <article class="config-surface form-builder">
           <header><div><span class="section-kicker">Definisi berversi</span><h2>{{ editingForm ? `Buat revisi · v${editingForm.currentVersion + 1}` : 'Formulir evaluasi baru' }}</h2><p>Periode lama tetap terikat pada versi pertanyaan yang digunakan saat dibuat.</p></div><button v-if="editingForm" class="btn btn-sm btn-outline-secondary" type="button" @click="resetFormDraft">Batal edit</button></header>
           <div class="config-body">
-            <div class="row g-3"><label class="col-12 col-md-8"><span>Nama formulir</span><input v-model="formDraft.name" class="form-control form-control-sm" maxlength="160"></label><label class="col-12 col-md-4"><span>Program studi</span><input v-model="programStudyId" class="form-control form-control-sm" maxlength="100" :disabled="activeRole !== 'administrator' || Boolean(editingForm)" @change="loadManagementData"></label><label class="col-12"><span>Deskripsi</span><textarea v-model="formDraft.description" class="form-control form-control-sm" rows="2" maxlength="1000" /></label></div>
+            <div class="row g-3"><label class="col-12 col-md-8"><span>Nama formulir</span><input v-model="formDraft.name" class="form-control form-control-sm" maxlength="160"></label><label class="col-12 col-md-4"><span>Program studi</span><select v-model="programStudyId" class="form-select form-select-sm" required :disabled="Boolean(editingForm)" @change="loadManagementData"><option value="" disabled>Pilih program resmi</option><option v-for="program in academicPrograms" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label><label class="col-12"><span>Deskripsi</span><textarea v-model="formDraft.description" class="form-control form-control-sm" rows="2" maxlength="1000" /></label></div>
             <div class="question-builder-header"><div><span class="section-kicker">Pertanyaan</span><strong>{{ formDraft.questions.length }} butir</strong></div><button class="btn btn-sm btn-outline-secondary" type="button" @click="addQuestion"><i class="uil uil-plus me-1" />Tambah</button></div>
             <ol class="question-builder">
               <li v-for="(question, index) in formDraft.questions" :key="question.id">
@@ -532,13 +567,13 @@ onMounted(() => {
             </ol>
             <p v-if="formError" class="form-error" role="alert"><i class="uil uil-exclamation-triangle" />{{ formError }}</p>
           </div>
-          <footer><span><i class="uil uil-history" />Penyimpanan memakai optimistic concurrency</span><button class="btn btn-sm btn-primary" type="button" :disabled="savingForm || !formDraft.name || !formDraft.questions.length" @click="saveForm"><span v-if="savingForm" class="spinner-border spinner-border-sm me-2" />{{ editingForm ? 'Simpan sebagai versi baru' : 'Buat formulir' }}</button></footer>
+          <footer><span><i class="uil uil-history" />Penyimpanan memakai optimistic concurrency</span><button class="btn btn-sm btn-primary" type="button" :disabled="savingForm || !programStudyId || !formDraft.name || !formDraft.questions.length || formDraft.questions.some(question => !question.label.trim())" @click="saveForm"><span v-if="savingForm" class="spinner-border spinner-border-sm me-2" />{{ editingForm ? 'Simpan sebagai versi baru' : 'Buat formulir' }}</button></footer>
         </article>
 
         <aside class="setup-aside">
           <article class="config-surface">
             <header><div><span class="section-kicker">Periode pengisian</span><h2>{{ editingPeriod ? 'Ubah periode' : 'Jadwalkan periode' }}</h2></div><button v-if="editingPeriod" class="btn btn-sm btn-outline-secondary" type="button" @click="resetPeriodDraft">Batal</button></header>
-            <div class="config-body period-form"><label><span>Nama periode</span><input v-model="periodDraft.name" class="form-control form-control-sm"></label><label><span>Semester akademik</span><input v-model="periodDraft.academicPeriodId" class="form-control form-control-sm" :disabled="Boolean(editingPeriod)"></label><label><span>Formulir</span><select v-model="periodDraft.formId" class="form-select form-select-sm" :disabled="Boolean(editingPeriod)"><option v-for="form in forms" :key="form.id" :value="form.id">{{ form.name }} · v{{ form.currentVersion }}</option></select></label><div class="row g-2"><label class="col-6"><span>Dibuka</span><input v-model="periodDraft.opensAt" class="form-control form-control-sm" type="datetime-local"></label><label class="col-6"><span>Ditutup</span><input v-model="periodDraft.closesAt" class="form-control form-control-sm" type="datetime-local"></label></div><label><span>Ambang kerahasiaan</span><div class="threshold-control"><input v-model.number="periodDraft.minimumResponses" type="range" min="3" max="20"><strong>{{ periodDraft.minimumResponses }} respons</strong></div><small>Agregat kelompok di bawah angka ini tidak ditampilkan.</small></label><p v-if="periodError" class="form-error" role="alert"><i class="uil uil-exclamation-triangle" />{{ periodError }}</p><button class="btn btn-sm btn-primary w-100" type="button" :disabled="savingPeriod || !forms.length" @click="savePeriod"><span v-if="savingPeriod" class="spinner-border spinner-border-sm me-2" />{{ editingPeriod ? 'Perbarui periode' : 'Jadwalkan periode' }}</button></div>
+            <div class="config-body period-form"><label><span>Nama periode</span><input v-model="periodDraft.name" class="form-control form-control-sm"></label><label><span>Semester akademik</span><select v-model="periodDraft.academicPeriodId" class="form-select form-select-sm" required :disabled="Boolean(editingPeriod)"><option value="" disabled>Pilih periode resmi</option><option v-for="period in academicPeriods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ period.term }}</option></select></label><label><span>Formulir</span><select v-model="periodDraft.formId" class="form-select form-select-sm" :disabled="Boolean(editingPeriod)"><option v-for="form in forms" :key="form.id" :value="form.id">{{ form.name }} · v{{ form.currentVersion }}</option></select></label><div class="row g-2"><label class="col-6"><span>Dibuka</span><input v-model="periodDraft.opensAt" class="form-control form-control-sm" type="datetime-local"></label><label class="col-6"><span>Ditutup</span><input v-model="periodDraft.closesAt" class="form-control form-control-sm" type="datetime-local"></label></div><label><span>Ambang kerahasiaan</span><div class="threshold-control"><input v-model.number="periodDraft.minimumResponses" type="range" min="3" max="20"><strong>{{ periodDraft.minimumResponses }} respons</strong></div><small>Agregat kelompok di bawah angka ini tidak ditampilkan.</small></label><p v-if="periodError" class="form-error" role="alert"><i class="uil uil-exclamation-triangle" />{{ periodError }}</p><button class="btn btn-sm btn-primary w-100" type="button" :disabled="savingPeriod || !programStudyId || !periodDraft.academicPeriodId || !periodDraft.name || !forms.length" @click="savePeriod"><span v-if="savingPeriod" class="spinner-border spinner-border-sm me-2" />{{ editingPeriod ? 'Perbarui periode' : 'Jadwalkan periode' }}</button></div>
           </article>
 
           <article class="config-surface compact-list">

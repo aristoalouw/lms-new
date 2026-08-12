@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { AdmissionProgram, AdmissionWave } from '~/server/types/admissions'
+
 definePageMeta({ layout: 'auth' })
 useHead({ title: 'Formulir Pendaftaran PMB' })
 
@@ -8,24 +10,20 @@ const step = ref(1)
 const selectedFiles = ref<string[]>([])
 const submitting = ref(false)
 const submitError = ref('')
+const catalogLoading = ref(true)
+const catalogError = ref('')
 const submittedApplication = ref<{ id: string; registrationNumber: string } | null>(null)
 const idempotencyKey = ref(`admission-web-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`)
 
-const programs = [
-  { id: 'management-s1', label: 'S1 Manajemen' },
-  { id: 'accounting-s1', label: 'S1 Akuntansi' },
-  { id: 'informatics-s1', label: 'S1 Informatika' },
-  { id: 'information-systems-s1', label: 'S1 Sistem Informasi' },
-  { id: 'communication-science-s1', label: 'S1 Ilmu Komunikasi' },
-]
+const programs = ref<AdmissionProgram[]>([])
+const waves = ref<AdmissionWave[]>([])
 const queryProgram = typeof route.query.program === 'string' ? route.query.program : ''
-const initialProgram = programs.find(item => item.id === queryProgram || item.label === queryProgram)?.id || ''
 const form = reactive({
   name: '',
   email: '',
   phone: '',
   identityNumber: '',
-  program: initialProgram,
+  program: '',
   path: 'regular',
   studyMode: 'hybrid',
   school: '',
@@ -34,14 +32,21 @@ const form = reactive({
   consent: false,
 })
 
-const programLabel = computed(() => programs.find(item => item.id === form.program)?.label || 'Belum dipilih')
+const activeWave = computed(() => {
+  const now = Date.now()
+  return waves.value.find(wave => wave.active && now >= Date.parse(wave.opensAt) && now <= Date.parse(wave.closesAt)) || null
+})
+const availablePrograms = computed(() => programs.value.filter(program => (
+  !activeWave.value?.programStudyIds.length || activeWave.value.programStudyIds.includes(program.id)
+)))
+const programLabel = computed(() => programs.value.find(item => item.id === form.program)?.name || 'Belum dipilih')
 const pathLabels: Record<string, string> = { regular: 'Reguler', 'kip-college': 'KIP Kuliah', transfer: 'Pindahan', rpl: 'RPL' }
 const modeLabels: Record<string, string> = { hybrid: 'Hybrid', evening: 'Kelas malam', weekend: 'Kelas akhir pekan' }
 
 const canContinue = computed(() => step.value === 1
   ? Boolean(form.name && form.email && form.phone && /^\d{16}$/.test(form.identityNumber))
   : step.value === 2
-    ? Boolean(form.program && form.path && form.school)
+    ? Boolean(activeWave.value && form.program && form.path && form.school)
     : form.consent)
 
 const next = () => { if (canContinue.value && step.value < 3) step.value++ }
@@ -50,7 +55,7 @@ const onFiles = (event: Event) => {
   selectedFiles.value = Array.from(input.files || []).map(file => file.name)
 }
 const submit = async () => {
-  if (!canContinue.value || submitting.value) return
+  if (!canContinue.value || submitting.value || !activeWave.value) return
   submitting.value = true
   submitError.value = ''
   try {
@@ -62,7 +67,7 @@ const submit = async () => {
       programStudyId: form.program,
       admissionPathId: form.path,
       studyModeId: form.studyMode,
-      waveId: '2026-wave-3',
+      waveId: activeWave.value.id,
       priorInstitution: form.school,
       graduationYear: Number(form.graduationYear),
       ...(form.sourceInformation ? { sourceInformation: form.sourceInformation } : {}),
@@ -76,6 +81,25 @@ const submit = async () => {
     submitting.value = false
   }
 }
+
+const loadCatalog = async () => {
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const { data } = await $api.get<{ programs: AdmissionProgram[]; waves: AdmissionWave[] }>('/admissions/catalog')
+    programs.value = data.programs
+    waves.value = data.waves
+    const requested = programs.value.find(item => item.id === queryProgram || item.name === queryProgram)?.id
+    if (requested && availablePrograms.value.some(item => item.id === requested)) form.program = requested
+    else if (availablePrograms.value.length === 1) form.program = availablePrograms.value[0]!.id
+  } catch {
+    catalogError.value = 'Katalog penerimaan belum dapat dimuat. Silakan coba kembali.'
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+onMounted(loadCatalog)
 </script>
 
 <template>
@@ -97,7 +121,7 @@ const submit = async () => {
 
     <div v-else class="registration-layout">
       <aside class="registration-summary">
-        <p class="eyebrow">Pendaftaran 2026/2027</p>
+        <p class="eyebrow">{{ activeWave ? `Pendaftaran ${activeWave.academicYear}` : 'Pendaftaran belum dibuka' }}</p>
         <h1>Mulai pendaftaranmu.</h1>
         <p>Progres tersimpan setelah akun diaktifkan. Pastikan data sesuai dokumen resmi.</p>
         <ol class="registration-steps">
@@ -110,6 +134,9 @@ const submit = async () => {
       </aside>
 
       <section class="registration-form-card" data-clarity-mask="true">
+        <div v-if="catalogLoading" class="alert alert-info" role="status">Memuat gelombang dan program studi aktif…</div>
+        <div v-else-if="catalogError" class="alert alert-danger" role="alert">{{ catalogError }} <button class="btn btn-sm btn-link" type="button" @click="loadCatalog">Coba lagi</button></div>
+        <div v-else-if="!activeWave" class="alert alert-warning" role="alert">Belum ada gelombang PMB aktif. Formulir tidak menerima pendaftaran sampai panitia membuka gelombang resmi.</div>
         <div class="registration-form-card__head">
           <div><span>Langkah {{ step }} dari 3</span><h2>{{ step === 1 ? 'Data calon mahasiswa' : step === 2 ? 'Pilihan studi' : 'Dokumen & persetujuan' }}</h2></div>
           <strong>{{ Math.round(step / 3 * 100) }}%</strong>
@@ -129,7 +156,7 @@ const submit = async () => {
 
           <fieldset v-else-if="step === 2">
             <legend class="visually-hidden">Pilihan studi</legend>
-            <div class="mb-3"><label class="form-label" for="program">Program studi pilihan</label><select id="program" v-model="form.program" class="form-select" required><option value="" disabled>Pilih program studi</option><option v-for="program in programs" :key="program.id" :value="program.id">{{ program.label }}</option></select></div>
+            <div class="mb-3"><label class="form-label" for="program">Program studi pilihan</label><select id="program" v-model="form.program" class="form-select" required :disabled="!activeWave"><option value="" disabled>Pilih program studi</option><option v-for="program in availablePrograms" :key="program.id" :value="program.id">{{ program.name }}</option></select></div>
             <div class="row g-3">
               <div class="col-md-6"><label class="form-label" for="path">Jalur pendaftaran</label><select id="path" v-model="form.path" class="form-select"><option value="regular">Reguler</option><option value="kip-college">KIP Kuliah</option><option value="transfer">Pindahan</option><option value="rpl">RPL</option></select></div>
               <div class="col-md-6"><label class="form-label" for="mode">Sistem perkuliahan</label><select id="mode" v-model="form.studyMode" class="form-select"><option value="hybrid">Hybrid</option><option value="evening">Kelas malam</option><option value="weekend">Kelas akhir pekan</option></select></div>

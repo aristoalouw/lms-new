@@ -6,6 +6,7 @@ import type {
 import type { AuthContext, UserRole } from '../types/auth'
 import { forbidden, invalidInput } from '../utils/errors'
 import { fileUploadsEnabled } from '../utils/capabilities'
+import { can } from '../utils/rbac'
 
 const MEBIBYTE = 1024 * 1024
 
@@ -57,19 +58,6 @@ const TYPE_POLICIES: readonly TypePolicy[] = [
       && bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a,
   },
 ] as const
-
-const SCOPED_UPLOAD_ROLES: UserRole[] = [
-  'applicant',
-  'student',
-  'lecturer',
-  'advisor',
-  'academic_staff',
-  'finance_staff',
-  'student_affairs_staff',
-  'admissions_staff',
-  'leader',
-  'administrator',
-]
 
 function configuredQuota(): number {
   const parsed = Number(process.env.FILE_QUOTA_BYTES)
@@ -169,7 +157,7 @@ export function normalizeFileAccess(
     learningSpaceIds: [],
   }
   if (visibility === 'OWNER') return empty
-  if (!context.roles.some(role => SCOPED_UPLOAD_ROLES.includes(role))) {
+  if (!can(context, 'files:write')) {
     forbidden('Akun Anda tidak dapat membuat file berlingkup bersama.')
   }
 
@@ -185,11 +173,9 @@ export function normalizeFileAccess(
   const studentIds = uniqueStrings(requested?.studentIds, 'studentIds')
   const learningSpaceIds = uniqueStrings(requested?.learningSpaceIds, 'learningSpaceIds')
 
-  if (!context.roles.includes('administrator')) {
-    requireSubset(unitIds, context.scope.unitIds, 'Unit')
-    requireSubset(programStudyIds, context.scope.programStudyIds, 'Program studi')
-    requireSubset(studentIds, context.scope.studentIds, 'Mahasiswa')
-  }
+  requireSubset(unitIds, context.scope.unitIds, 'Unit')
+  requireSubset(programStudyIds, context.scope.programStudyIds, 'Program studi')
+  requireSubset(studentIds, context.scope.studentIds, 'Mahasiswa')
   if (![allowedRoles, allowedUserIds, unitIds, programStudyIds, studentIds, learningSpaceIds].some(items => items.length)) {
     invalidInput('File bersama wajib memiliki penerima atau lingkup akses.')
   }

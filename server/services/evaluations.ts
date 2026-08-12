@@ -1,6 +1,7 @@
 import type { QueryDocumentSnapshot } from 'firebase-admin/firestore'
 import type { H3Event } from 'h3'
 import type { AuthContext } from '../types/auth'
+import type { AcademicClassRecord, ClassEnrollment } from '../types/academic-classes'
 import type {
   AnonymousEvaluationResponse,
   EvaluationAnswer,
@@ -548,11 +549,67 @@ async function listEvaluationPeriodsForLecturer(context: AuthContext): Promise<E
   }
   const db = firestoreAdmin()
   if (!db) serviceUnavailable('Penyimpanan evaluasi tidak tersedia.')
-  const enrollments = await db.collection('classEnrollments').where('lecturerId', '==', context.uid).limit(500).get()
-  const programIds = [...new Set(enrollments.docs.map(doc => String(doc.data().programStudyId)))]
+  const classes = await db.collection('academicClasses').where('lecturerIds', 'array-contains', context.uid).limit(500).get()
+  const programIds = [...new Set(classes.docs.map(doc => String(doc.data().programStudyId)).filter(Boolean))]
   if (!programIds.length) return []
   const periods = await db.collection('evaluationPeriods').where('programStudyId', 'in', programIds.slice(0, 30)).limit(100).get()
   return periods.docs.map(doc => ({ ...doc.data(), id: doc.id } as EvaluationPeriodRecord)).sort((a, b) => b.opensAt.localeCompare(a.opensAt))
+}
+
+function evaluationTargetId(enrollmentId: string, lecturerId: string): string {
+  return `evaltarget.${Buffer.from(enrollmentId, 'utf8').toString('base64url')}.${Buffer.from(lecturerId, 'utf8').toString('base64url')}`
+}
+
+function parseEvaluationTargetId(value: string): { enrollmentId: string; lecturerId: string } | undefined {
+  const match = /^evaltarget\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(value)
+  if (!match) return undefined
+  try {
+    const enrollmentId = normalizeEvaluationId(Buffer.from(match[1]!, 'base64url').toString('utf8'), 'enrollmentId')
+    const lecturerId = normalizeEvaluationId(Buffer.from(match[2]!, 'base64url').toString('utf8'), 'lecturerId')
+    return { enrollmentId, lecturerId }
+  } catch {
+    return undefined
+  }
+}
+
+function canonicalEvaluationEnrollment(
+  enrollmentId: string,
+  value: Record<string, unknown>,
+  classRecord: AcademicClassRecord,
+  lecturerId: string,
+): EvaluationEnrollment {
+  const lecturerIndex = classRecord.lecturerIds.indexOf(lecturerId)
+  if (lecturerIndex < 0) notFound('Penugasan dosen')
+  return {
+    id: evaluationTargetId(enrollmentId, lecturerId),
+    sourceEnrollmentId: enrollmentId,
+    studentUid: String(value.studentUid || ''),
+    studentId: String(value.studentId || ''),
+    lecturerId,
+    lecturerName: classRecord.lecturerNames[lecturerIndex] || lecturerId,
+    courseId: classRecord.courseVersionId || classRecord.courseCode,
+    courseCode: classRecord.courseCode,
+    courseName: classRecord.courseName,
+    classId: classRecord.id,
+    className: `${classRecord.courseCode}-${classRecord.section}`,
+    programStudyId: classRecord.programStudyId,
+    academicPeriodId: classRecord.periodId,
+    status: value.status === 'ACTIVE' ? 'ENROLLED' : 'DROPPED',
+  }
+}
+
+async function canonicalEvaluationTargets(snapshot: FirebaseFirestore.QuerySnapshot): Promise<EvaluationEnrollment[]> {
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan akademik tidak tersedia.')
+  const classIds = [...new Set(snapshot.docs.map(document => String(document.data().classId)).filter(Boolean))]
+  const classSnapshots = await Promise.all(classIds.map(classId => db.collection('academicClasses').doc(classId).get()))
+  const classes = new Map(classSnapshots.filter(item => item.exists).map(item => [item.id, { ...item.data(), id: item.id } as AcademicClassRecord]))
+  return snapshot.docs.flatMap(document => {
+    const value = document.data() as unknown as ClassEnrollment
+    const classRecord = classes.get(value.classId)
+    if (!classRecord || classRecord.status !== 'ACTIVE') return []
+    return classRecord.lecturerIds.map(lecturerId => canonicalEvaluationEnrollment(document.id, document.data(), classRecord, lecturerId))
+  })
 }
 
 async function getEnrollment(enrollmentId: string): Promise<EvaluationEnrollment> {
@@ -563,9 +620,15 @@ async function getEnrollment(enrollmentId: string): Promise<EvaluationEnrollment
   }
   const db = firestoreAdmin()
   if (!db) serviceUnavailable('Penyimpanan akademik tidak tersedia.')
-  const snapshot = await db.collection('classEnrollments').doc(enrollmentId).get()
+  const target = parseEvaluationTargetId(enrollmentId)
+  if (!target) notFound('Target evaluasi kelas')
+  const snapshot = await db.collection('classEnrollments').doc(target.enrollmentId).get()
   if (!snapshot.exists) notFound('Kepesertaan kelas')
-  return { ...snapshot.data(), id: snapshot.id } as EvaluationEnrollment
+  const classId = String(snapshot.data()?.classId || '')
+  const classSnapshot = await db.collection('academicClasses').doc(classId).get()
+  if (!classSnapshot.exists) notFound('Kelas akademik')
+  const classRecord = { ...classSnapshot.data(), id: classSnapshot.id } as AcademicClassRecord
+  return canonicalEvaluationEnrollment(snapshot.id, snapshot.data() || {}, classRecord, target.lecturerId)
 }
 
 function respondentIdentityId(periodId: string, enrollment: EvaluationEnrollment): string {
@@ -600,10 +663,10 @@ export async function listStudentEvaluationAssignments(
     if (!db) serviceUnavailable('Penyimpanan evaluasi tidak tersedia.')
     const enrollmentSnapshot = await db.collection('classEnrollments')
       .where('studentUid', '==', context.uid)
-      .where('status', '==', 'ENROLLED')
+      .where('status', '==', 'ACTIVE')
       .limit(100)
       .get()
-    enrollments = enrollmentSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as EvaluationEnrollment))
+    enrollments = await canonicalEvaluationTargets(enrollmentSnapshot)
     if (!enrollments.length) return []
     const academicPeriodIds = [...new Set(enrollments.map(item => item.academicPeriodId))].slice(0, 30)
     const periodSnapshot = await db.collection('evaluationPeriods').where('academicPeriodId', 'in', academicPeriodIds).limit(100).get()
@@ -651,7 +714,7 @@ export async function submitStudentEvaluation(
 ): Promise<EvaluationSubmissionReceipt> {
   requireStudentEvaluationAccess(context)
   const evaluationPeriodId = normalizeEvaluationId(rawInput.evaluationPeriodId, 'evaluationPeriodId', /^evalperiod_[a-f0-9]{24}$/)
-  const enrollmentId = normalizeEvaluationId(rawInput.enrollmentId, 'enrollmentId')
+  const enrollmentId = normalizeEvaluationId(rawInput.enrollmentId, 'enrollmentId', /^[A-Za-z0-9][A-Za-z0-9._:-]{0,299}$/)
   const [period, enrollment] = await Promise.all([
     getEvaluationPeriodRecord(evaluationPeriodId),
     getEnrollment(enrollmentId),
@@ -711,11 +774,14 @@ export async function submitStudentEvaluation(
     const identityRef = db.collection('evaluationRespondentIdentities').doc(identityId)
     const responseRef = db.collection('evaluationResponses').doc(responseId)
     const idemRef = db.collection('evaluationIdempotency').doc(idemId)
-    const enrollmentRef = db.collection('classEnrollments').doc(enrollmentId)
+    const sourceEnrollmentId = enrollment.sourceEnrollmentId
+    if (!sourceEnrollmentId) conflict('EVALUATION_CONTEXT_CHANGED', 'Referensi kepesertaan kelas tidak tersedia.')
+    const enrollmentRef = db.collection('classEnrollments').doc(sourceEnrollmentId)
+    const classRef = db.collection('academicClasses').doc(enrollment.classId)
     const periodRef = db.collection('evaluationPeriods').doc(evaluationPeriodId)
     receipt = await db.runTransaction(async (transaction) => {
-      const [previous, identitySnapshot, enrollmentSnapshot, periodSnapshot] = await Promise.all([
-        transaction.get(idemRef), transaction.get(identityRef), transaction.get(enrollmentRef), transaction.get(periodRef),
+      const [previous, identitySnapshot, enrollmentSnapshot, classSnapshot, periodSnapshot] = await Promise.all([
+        transaction.get(idemRef), transaction.get(identityRef), transaction.get(enrollmentRef), transaction.get(classRef), transaction.get(periodRef),
       ])
       if (previous.exists) {
         const stored = previous.data() as { requestHash: string; response: EvaluationSubmissionReceipt }
@@ -723,8 +789,9 @@ export async function submitStudentEvaluation(
         return { ...stored.response, replayed: true, auditId: undefined }
       }
       if (identitySnapshot.exists) conflict('EVALUATION_ALREADY_SUBMITTED', 'Evaluasi untuk dosen, mata kuliah, kelas, dan periode ini sudah diisi.')
-      if (!enrollmentSnapshot.exists || !periodSnapshot.exists) conflict('EVALUATION_CONTEXT_CHANGED', 'Data kelas atau periode berubah. Muat ulang evaluasi.')
-      const currentEnrollment = { ...enrollmentSnapshot.data(), id: enrollmentSnapshot.id } as EvaluationEnrollment
+      if (!enrollmentSnapshot.exists || !classSnapshot.exists || !periodSnapshot.exists) conflict('EVALUATION_CONTEXT_CHANGED', 'Data kelas atau periode berubah. Muat ulang evaluasi.')
+      const currentClass = { ...classSnapshot.data(), id: classSnapshot.id } as AcademicClassRecord
+      const currentEnrollment = canonicalEvaluationEnrollment(enrollmentSnapshot.id, enrollmentSnapshot.data() || {}, currentClass, enrollment.lecturerId)
       const currentPeriod = { ...periodSnapshot.data(), id: periodSnapshot.id } as EvaluationPeriodRecord
       if (currentEnrollment.studentUid !== context.uid || currentEnrollment.status !== 'ENROLLED') forbidden('Anda tidak terdaftar aktif pada kelas ini.')
       if (currentPeriod.academicPeriodId !== currentEnrollment.academicPeriodId || currentPeriod.programStudyId !== currentEnrollment.programStudyId) forbidden('Kelas tidak termasuk dalam periode evaluasi ini.')

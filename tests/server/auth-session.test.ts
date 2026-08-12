@@ -290,4 +290,27 @@ describe('Firebase application sessions', () => {
       },
     })
   })
+
+  it.each([
+    {
+      roles: ['student', 'finance_staff'],
+      scope: { unitIds: [], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: ['student-001'] },
+    },
+    {
+      roles: ['student'],
+      scope: { unitIds: [], programStudyIds: ['management-s1'], cohortYears: [2026], studentIds: ['student-001', 'student-002'] },
+    },
+    {
+      roles: ['advisor'],
+      scope: { unitIds: [], programStudyIds: ['management-s1'], cohortYears: [], studentIds: [] },
+    },
+  ])('menolak invariant role dan identitas yang rusak pada full-campus', async ({ roles, scope }) => {
+    process.env.APP_FEATURE_PROFILE = 'full-campus'
+    firebase.state.account = { ...firebase.state.account, roles, scope }
+
+    await expect(createFirebaseSession('full-campus-invalid-authorization')).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'ACCOUNT_AUTHORIZATION_INVALID',
+    })
+  })
 })

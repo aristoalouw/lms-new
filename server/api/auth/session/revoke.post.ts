@@ -1,7 +1,8 @@
 import { FieldValue } from 'firebase-admin/firestore'
 import { clearSessionCookie, requireAuth } from '../../../utils/auth'
+import { appendAudit } from '../../../utils/audit'
 import { serviceUnavailable } from '../../../utils/errors'
-import { firestoreAdmin } from '../../../utils/firebase-admin'
+import { authAdmin, firestoreAdmin } from '../../../utils/firebase-admin'
 import { defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../../utils/security'
 
 export default defineCampusHandler(async (event) => {
@@ -18,7 +19,11 @@ export default defineCampusHandler(async (event) => {
       updatedAt: new Date(now).toISOString(),
       updatedBy: context.uid,
     })
+    const authentication = authAdmin()
+    if (!authentication) serviceUnavailable('Layanan autentikasi tidak tersedia.')
+    await authentication.revokeRefreshTokens(context.uid)
   }
   clearSessionCookie(event)
+  await appendAudit({ actor: context, action: 'AUTH_SESSIONS_REVOKED', resourceType: 'session', resourceId: context.uid, event })
   return { revoked: true, scope: context.provider === 'firebase' ? 'all-application-sessions' : 'current-demo-session' }
 })

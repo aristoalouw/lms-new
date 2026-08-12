@@ -24,7 +24,7 @@ import { appendAudit } from '../utils/audit'
 import { CampusError, conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { FIRESTORE_TTL_RETENTION_MS, withFirestorePurgeAfter } from '../utils/firestore-ttl'
-import { hasRole } from '../utils/rbac'
+import { can, hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { getAcademicClassDetail, listActiveClassRecipientUids } from './academic-classes'
 import { getPrivateFileDetail } from './files'
@@ -149,13 +149,11 @@ function cleanOptionalText(value: unknown, label: string, maximum: number): stri
 }
 
 function assignedClassManager(context: AuthContext, record: AcademicClassRecord): boolean {
-  return hasRole(context, 'lecturer', 'advisor') && record.lecturerIds.includes(context.uid)
+  return hasRole(context, 'lecturer') && record.lecturerIds.includes(context.uid)
 }
 
 function generalManager(context: AuthContext, space: LearningSpace): boolean {
-  return hasRole(context, 'administrator')
-    || (hasRole(context, 'academic_staff') && Boolean(space.programStudyId) && context.scope.programStudyIds.includes(space.programStudyId!))
-    || (hasRole(context, 'lecturer', 'advisor') && space.lecturerIds.includes(context.uid))
+  return hasRole(context, 'lecturer') && space.lecturerIds.includes(context.uid)
 }
 
 export async function learningSpaceAccess(context: AuthContext, space: LearningSpace): Promise<LearningSpaceAccess> {
@@ -172,20 +170,26 @@ export async function learningSpaceAccess(context: AuthContext, space: LearningS
     }
   }
   const canManage = generalManager(context, space)
+  const scopedAcademicReader = hasRole(context, 'academic_staff')
+    && Boolean(space.programStudyId)
+    && context.scope.programStudyIds.includes(space.programStudyId!)
+  const assignedAdvisor = hasRole(context, 'advisor') && space.lecturerIds.includes(context.uid)
   const participant = space.participantUserIds.includes(context.uid)
     || context.scope.studentIds.some(studentId => space.participantUserIds.includes(studentId))
-  const canRead = canManage || hasRole(context, 'leader')
+  const canRead = canManage || scopedAcademicReader || assignedAdvisor
     || (hasRole(context, 'student', 'lecturer', 'advisor') && participant)
   return { canRead, canManage, ...(hasRole(context, 'student') && participant ? { studentId: context.scope.studentIds[0] || context.uid } : {}) }
 }
 
 export async function requireLearningSpaceRead(context: AuthContext, space: LearningSpace): Promise<LearningSpaceAccess> {
+  requirePermission(context, 'learning.read')
   const access = await learningSpaceAccess(context, space)
   if (!access.canRead) forbidden('Ruang pembelajaran berada di luar lingkup akses Anda.')
   return access
 }
 
 export async function requireLearningSpaceManage(context: AuthContext, space: LearningSpace): Promise<LearningSpaceAccess> {
+  requirePermission(context, 'learning.write')
   const access = await learningSpaceAccess(context, space)
   if (!access.canManage) forbidden('Anda tidak berwenang mengelola ruang pembelajaran ini.')
   return access
@@ -326,6 +330,7 @@ export async function createLearningSpace(
   idempotencyKey: string,
   event?: H3Event,
 ): Promise<{ space: LearningSpace; replayed: boolean; auditId?: string }> {
+  if (!can(context, 'learning.write') && !can(context, 'academic.configure')) forbidden('Anda tidak memiliki izin membuat ruang pembelajaran.')
   requireIdempotencyKey(idempotencyKey)
   if (!['ACADEMIC_CLASS', 'GENERAL', 'MOOC'].includes(input.kind)) invalidInput('Jenis ruang pembelajaran tidak valid.')
   const normalized = {
@@ -428,6 +433,7 @@ export async function listLearningSpacesPage(
   context: AuthContext,
   options: { limit?: number; cursor?: string } = {},
 ): Promise<LearningPage<LearningSpace>> {
+  requirePermission(context, 'learning.read')
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 50)
   const cursor = decodeSpaceCursor(options.cursor)
   let spaces: LearningSpace[]
@@ -465,7 +471,7 @@ export async function listLearningSpacesPage(
     } else if (hasRole(context, 'academic_staff') && context.scope.programStudyIds.length) {
       const snapshots = await Promise.all(context.scope.programStudyIds.slice(0, 10).map(programStudyId => pageSpaceQuery(db.collection('learningSpaces').where('programStudyId', '==', programStudyId)).get()))
       spaces = snapshots.flatMap(snapshot => snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as LearningSpace))
-    } else if (hasRole(context, 'administrator', 'leader')) {
+    } else if (serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator')) {
       const snapshot = await pageSpaceQuery(db.collection('learningSpaces')).get()
       spaces = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as LearningSpace)
     } else spaces = []

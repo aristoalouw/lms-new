@@ -120,18 +120,17 @@ function isScopedFinance(context: AuthContext, programStudyId: string): boolean 
 }
 
 function requireFinanceManage(context: AuthContext, programStudyId: string): void {
-  if (!hasRole(context, 'administrator') && !isScopedFinance(context, programStudyId)) {
+  if (!isScopedFinance(context, programStudyId)) {
     forbidden('Data keuangan berada di luar lingkup program studi Anda.')
   }
 }
 
 function requireFinanceRole(context: AuthContext): void {
-  if (!hasRole(context, 'administrator', 'finance_staff')) forbidden('Tindakan ini hanya tersedia untuk pengelola keuangan.')
+  if (!hasRole(context, 'finance_staff')) forbidden('Tindakan ini hanya tersedia untuk pengelola keuangan.')
 }
 
 function canReadInvoice(context: AuthContext, invoice: Pick<InvoiceRecord, 'studentId' | 'programStudyId'>): boolean {
-  return hasRole(context, 'administrator', 'leader')
-    || isScopedFinance(context, invoice.programStudyId)
+  return isScopedFinance(context, invoice.programStudyId)
     || (hasRole(context, 'student') && studentCandidates(context).includes(invoice.studentId))
 }
 
@@ -340,7 +339,7 @@ export async function createTariffPlanVersion(
 ): Promise<BillingWriteResult<TariffPlanVersion>> {
   requireFinanceRole(context)
   const input = parseTariffPlan(value)
-  if (!hasRole(context, 'administrator') && input.applicability.programStudyIds.some(id => !context.scope.programStudyIds.includes(id))) forbidden('Tarif mencakup program studi di luar lingkup Anda.')
+  if (input.applicability.programStudyIds.some(id => !context.scope.programStudyIds.includes(id))) forbidden('Tarif mencakup program studi di luar lingkup Anda.')
   const hash = requestHash(input)
   const namespace = `billing:tariff-version:${context.uid}:${idempotencyKey}`
   const now = clock.toISOString()
@@ -392,10 +391,10 @@ export async function createTariffPlanVersion(
 }
 
 export async function listTariffPlans(context: AuthContext, query: BillingListQuery): Promise<BillingListResult<TariffPlanVersion>> {
-  if (!hasRole(context, 'administrator', 'leader', 'finance_staff')) forbidden('Anda tidak memiliki akses ke tarif billing.')
+  if (!hasRole(context, 'finance_staff')) forbidden('Anda tidak memiliki akses ke tarif billing.')
   const rows = dataMode() === 'mock' ? [...billingModuleState().tariffPlans.values()].map(clone) : await loadCollection<TariffPlanVersion>('billingTariffPlans')
   const filtered = rows.filter(plan => {
-    const scoped = hasRole(context, 'administrator', 'leader') || plan.applicability.programStudyIds.some(id => context.scope.programStudyIds.includes(id))
+    const scoped = plan.applicability.programStudyIds.some(id => context.scope.programStudyIds.includes(id))
     return scoped
       && (!query.programStudyId || plan.applicability.programStudyIds.includes(query.programStudyId))
       && (!query.periodId || plan.applicability.periodIds.includes(query.periodId))
@@ -689,9 +688,9 @@ function invoiceView(invoice: BillingInvoice, related: RelatedBillingRecords, cl
 }
 
 async function scopedInvoiceViews(context: AuthContext, query: BillingListQuery, clock: Date): Promise<BillingInvoiceView[]> {
-  if (!hasRole(context, 'student', 'finance_staff', 'leader', 'administrator')) return []
+  if (!hasRole(context, 'student', 'finance_staff')) forbidden('Anda tidak memiliki akses ke data tagihan.')
   if (query.studentId && hasRole(context, 'student') && !studentCandidates(context).includes(query.studentId)) forbidden('Mahasiswa hanya dapat melihat tagihan miliknya.')
-  if (query.programStudyId && !hasRole(context, 'administrator', 'leader') && !context.scope.programStudyIds.includes(query.programStudyId)) forbidden('Program studi berada di luar lingkup Anda.')
+  if (query.programStudyId && !context.scope.programStudyIds.includes(query.programStudyId)) forbidden('Program studi berada di luar lingkup Anda.')
   const [invoices, related] = await Promise.all([loadAllInvoices(), loadRelatedBillingRecords()])
   const needle = query.search?.toLocaleLowerCase('id-ID')
   return invoices
@@ -1000,7 +999,7 @@ export async function applyStudentDeposit(
   const hash = requestHash({ invoiceId: id, ...input }), namespace = `billing:deposit-apply:${context.uid}:${idempotencyKey}`, now = clock.toISOString()
   let result: BillingWriteResult<{ invoice: BillingInvoice; account: DepositAccount; transaction: DepositTransaction; adjustment: InvoiceAdjustment }>
   const transition = (current: BillingInvoice, account: DepositAccount) => {
-    if (!canReadInvoice(context, current) || (!hasRole(context, 'student') && !hasRole(context, 'administrator', 'finance_staff'))) forbidden('Anda tidak dapat memakai deposit untuk tagihan ini.')
+    if (!canReadInvoice(context, current) || !hasRole(context, 'student', 'finance_staff')) forbidden('Anda tidak dapat memakai deposit untuk tagihan ini.')
     if (hasRole(context, 'finance_staff')) requireFinanceManage(context, current.programStudyId)
     if (current.status === 'VOID' || current.status === 'PAID') conflict('INVOICE_NOT_PAYABLE', 'Tagihan tidak dapat dibayar dengan deposit.')
     if (current.version !== input.expectedInvoiceVersion) conflict('VERSION_CONFLICT', 'Tagihan telah berubah.', { currentVersion: current.version })
@@ -1060,7 +1059,7 @@ export async function redeemBillingVoucher(
   const hash = requestHash({ invoiceId: id, codeHash, expectedInvoiceVersion: input.expectedInvoiceVersion }), namespace = `billing:voucher:${context.uid}:${idempotencyKey}`, now = clock.toISOString()
   let result: BillingWriteResult<{ invoice: BillingInvoice; voucher: BillingVoucher; redemption: VoucherRedemption; adjustment: InvoiceAdjustment }>
   const transition = (current: BillingInvoice, voucher: BillingVoucher) => {
-    if (!canReadInvoice(context, current) || (!hasRole(context, 'student') && !hasRole(context, 'administrator', 'finance_staff'))) forbidden('Anda tidak dapat memakai voucher untuk tagihan ini.')
+    if (!canReadInvoice(context, current) || !hasRole(context, 'student', 'finance_staff')) forbidden('Anda tidak dapat memakai voucher untuk tagihan ini.')
     if (hasRole(context, 'finance_staff')) requireFinanceManage(context, current.programStudyId)
     if (current.version !== input.expectedInvoiceVersion) conflict('VERSION_CONFLICT', 'Tagihan telah berubah.', { currentVersion: current.version })
     if (current.status === 'VOID' || current.status === 'PAID') conflict('INVOICE_NOT_PAYABLE', 'Tagihan tidak dapat menerima voucher.')

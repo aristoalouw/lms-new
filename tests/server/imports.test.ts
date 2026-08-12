@@ -24,7 +24,7 @@ const source = [
 ].join('\n')
 
 const academic = authContext('academic-creator', ['academic_staff'])
-const administrator = authContext('admin-approver', ['administrator'])
+const academicApprover = authContext('academic-approver', ['academic_staff'])
 
 function target(id: string, data: ImportTargetRecord['data'], version = 1): ImportTargetRecord {
   return {
@@ -56,7 +56,7 @@ async function preparedRun() {
     dataset: 'students', sourceName: 'mahasiswa-2026.csv', format: 'csv', content: source,
     programStudyId: 'management-s1',
   }, 'preview-import-0001')
-  const approval = await approveImport(administrator, preview.run.id, {
+  const approval = await approveImport(academicApprover, preview.run.id, {
     expectedVersion: preview.run.version, expectedChecksum: preview.run.checksum,
   }, 'approve-import-0001')
   return { preview, approval }
@@ -111,14 +111,17 @@ describe('staged spreadsheet import', () => {
       programStudyId: 'management-s1',
     }, 'preview-scope-0001')).rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
 
-    const creatorAdmin = authContext('admin-creator', ['administrator'])
-    const preview = await createImportPreview(creatorAdmin, {
+    const preview = await createImportPreview(academic, {
       dataset: 'students', sourceName: 'mahasiswa.csv', format: 'csv', content: source,
       programStudyId: 'management-s1',
     }, 'preview-self-0001')
-    await expect(approveImport(creatorAdmin, preview.run.id, {
+    await expect(approveImport(academic, preview.run.id, {
       expectedVersion: preview.run.version, expectedChecksum: preview.run.checksum,
     }, 'approve-self-0001')).rejects.toMatchObject({ code: 'SECOND_APPROVER_REQUIRED' } satisfies Partial<CampusError>)
+    await expect(createImportPreview(authContext('admin-technical', ['administrator']), {
+      dataset: 'students', sourceName: 'mahasiswa.csv', format: 'csv', content: source,
+      programStudyId: 'management-s1',
+    }, 'preview-admin-denied')).rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
   })
 
   it('blocks approval while preview errors remain', async () => {
@@ -128,14 +131,14 @@ describe('staged spreadsheet import', () => {
       programStudyId: 'management-s1',
     }, 'preview-invalid-001')
     expect(preview.run.counts.errors).toBeGreaterThan(0)
-    await expect(approveImport(administrator, preview.run.id, {
+    await expect(approveImport(academicApprover, preview.run.id, {
       expectedVersion: preview.run.version, expectedChecksum: preview.run.checksum,
     }, 'approve-invalid-001')).rejects.toMatchObject({ code: 'IMPORT_HAS_ERRORS' } satisfies Partial<CampusError>)
   })
 
   it('commits atomically in mock mode and replays an idempotency key', async () => {
     const { approval } = await preparedRun()
-    const committed = await commitImport(administrator, approval.run.id, {
+    const committed = await commitImport(academicApprover, approval.run.id, {
       expectedVersion: approval.run.version,
     }, 'commit-import-0001')
     expect(committed.run).toMatchObject({ status: 'COMMITTED', counts: { committed: 2 } })
@@ -143,7 +146,7 @@ describe('staged spreadsheet import', () => {
     expect(importTargetForTests('students', '261011002')).toMatchObject({ version: 2 })
     expect(importTargetForTests('students', '261011003')).toMatchObject({ version: 1 })
 
-    const replay = await commitImport(administrator, approval.run.id, {
+    const replay = await commitImport(academicApprover, approval.run.id, {
       expectedVersion: approval.run.version,
     }, 'commit-import-0001')
     expect(replay.replayed).toBe(true)
@@ -154,7 +157,7 @@ describe('staged spreadsheet import', () => {
     const { approval } = await preparedRun()
     const changed = { ...unchangedBima, fullName: 'Diubah Setelah Preview' }
     seedImportTargetForTests(target('261011002', changed, 3))
-    await expect(commitImport(administrator, approval.run.id, {
+    await expect(commitImport(academicApprover, approval.run.id, {
       expectedVersion: approval.run.version,
     }, 'commit-stale-0001')).rejects.toMatchObject({ code: 'IMPORT_TARGET_CHANGED' } satisfies Partial<CampusError>)
     expect(importTargetForTests('students', '261011001')?.data.fullName).toBe('Nadia Lama')
@@ -163,10 +166,10 @@ describe('staged spreadsheet import', () => {
 
   it('compensates created and updated records without overwriting later changes', async () => {
     const { approval } = await preparedRun()
-    const committed = await commitImport(administrator, approval.run.id, {
+    const committed = await commitImport(academicApprover, approval.run.id, {
       expectedVersion: approval.run.version,
     }, 'commit-compensate-0001')
-    const compensated = await compensateImport(administrator, committed.run.id, {
+    const compensated = await compensateImport(academicApprover, committed.run.id, {
       expectedVersion: committed.run.version, reason: 'Dataset sumber salah periode dan harus dipulihkan.',
     }, 'compensate-import-0001')
     expect(compensated.run).toMatchObject({ status: 'COMPENSATED', counts: { compensated: 2, compensationConflicts: 0 } })
@@ -176,7 +179,7 @@ describe('staged spreadsheet import', () => {
 
   it('reports a partial compensation when a target changed after commit', async () => {
     const { approval } = await preparedRun()
-    const committed = await commitImport(administrator, approval.run.id, {
+    const committed = await commitImport(academicApprover, approval.run.id, {
       expectedVersion: approval.run.version,
     }, 'commit-conflict-0001')
     const laterData = {
@@ -184,7 +187,7 @@ describe('staged spreadsheet import', () => {
       programStudyId: 'management-s1', cohortYear: 2026, status: 'ACTIVE',
     }
     seedImportTargetForTests(target('261011001', laterData, 6))
-    const compensated = await compensateImport(administrator, committed.run.id, {
+    const compensated = await compensateImport(academicApprover, committed.run.id, {
       expectedVersion: committed.run.version, reason: 'Batalkan bagian impor yang masih aman untuk dipulihkan.',
     }, 'compensate-conflict-0001')
     expect(compensated.run.status).toBe('PARTIALLY_COMPENSATED')

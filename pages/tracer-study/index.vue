@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AxiosError } from 'axios'
+import type { AcademicAdministrationWorkspace, AcademicProgramStudy } from '~/server/types/academic-administration'
 import type {
   TracerAccessView,
   TracerAnswer,
@@ -22,13 +23,15 @@ useHead({
 })
 
 const route = useRoute()
-const { user } = useAuth()
+const { user, can } = useAuth()
 const { $api } = useNuxtApp()
+const config = useRuntimeConfig()
 
 const activeRole = computed(() => user.value?.activeRole || '')
 const isStudent = computed(() => activeRole.value === 'student')
-const canManage = computed(() => ['student_affairs_staff', 'administrator'].includes(activeRole.value))
-const canReport = computed(() => ['student_affairs_staff', 'leader', 'administrator'].includes(activeRole.value))
+const canManage = computed(() => can('tracer.manage'))
+const canConfigure = computed(() => can('tracer.configure'))
+const canReport = computed(() => can('tracer.report'))
 const publicToken = ref('')
 const publicView = ref<TracerAccessView | null>(null)
 const loading = ref(true)
@@ -41,6 +44,7 @@ const assignments = ref<TracerOwnAssignment[]>([])
 const selectedAssignment = ref<TracerOwnAssignment | null>(null)
 const periods = ref<TracerDistributionPeriod[]>([])
 const questionnaires = ref<TracerQuestionnaire[]>([])
+const academicPrograms = ref<AcademicProgramStudy[]>([])
 const respondents = ref<TracerRespondentMonitorItem[]>([])
 const report = ref<TracerOutcomeReport | null>(null)
 const selectedPeriodId = ref('')
@@ -48,29 +52,35 @@ const groupBy = ref<'program' | 'graduation_year'>('program')
 
 const answerValues = reactive<Record<string, string | number | boolean | string[] | undefined>>({})
 const consentAccepted = ref(false)
-const career = reactive<TracerCareerData>({ employmentStatus: 'EMPLOYED', waitMonths: 0, fieldAlignment: 4, incomeRange: '3M_TO_6M' })
+type TracerCareerDraft = Omit<TracerCareerData, 'employmentStatus'> & { employmentStatus: TracerCareerData['employmentStatus'] | '' }
+const career = reactive<TracerCareerDraft>({
+  employmentStatus: config.public.demoMode ? 'EMPLOYED' : '',
+  ...(config.public.demoMode ? { waitMonths: 0, fieldAlignment: 4, incomeRange: '3M_TO_6M' as const } : {}),
+})
 const submissionReceipt = ref<TracerSubmissionReceipt | null>(null)
 const withdrawalToken = ref('')
 
 const questionnaireDraft = reactive({
-  name: 'Tracer Study Outcome Lulusan',
-  description: 'Kuesioner terstruktur untuk outcome pekerjaan, karier, kewirausahaan, dan studi lanjut.',
-  programStudyId: user.value?.programStudyId || 'management-s1',
-  questions: [
-    { id: 'competency_fit', label: 'Seberapa sesuai kompetensi kuliah dengan kegiatan Anda saat ini?', type: 'SINGLE_CHOICE', required: true, options: [
-      { value: 'LOW', label: 'Rendah' }, { value: 'MEDIUM', label: 'Sedang' }, { value: 'HIGH', label: 'Tinggi' },
-    ] },
-    { id: 'career_note', label: 'Catatan untuk peningkatan layanan karier kampus', type: 'TEXT', required: false },
-  ] as TracerQuestionDefinition[],
+  name: config.public.demoMode ? 'Tracer Study Outcome Lulusan' : '',
+  description: config.public.demoMode ? 'Kuesioner terstruktur untuk outcome pekerjaan, karier, kewirausahaan, dan studi lanjut.' : '',
+  programStudyId: user.value?.programStudyId || '',
+  questions: (config.public.demoMode
+    ? [
+        { id: 'competency_fit', label: 'Seberapa sesuai kompetensi kuliah dengan kegiatan Anda saat ini?', type: 'SINGLE_CHOICE', required: true, options: [
+          { value: 'LOW', label: 'Rendah' }, { value: 'MEDIUM', label: 'Sedang' }, { value: 'HIGH', label: 'Tinggi' },
+        ] },
+        { id: 'career_note', label: 'Catatan untuk peningkatan layanan karier kampus', type: 'TEXT', required: false },
+      ]
+    : [{ id: 'question_1', label: '', type: 'TEXT', required: false }]) as TracerQuestionDefinition[],
 })
 
 const now = new Date()
 const periodDraft = reactive({
-  name: 'Tracer Study Alumni', questionnaireId: '', programStudyIds: [user.value?.programStudyId || 'management-s1'],
+  name: config.public.demoMode ? 'Tracer Study Alumni' : '', questionnaireId: '', programStudyIds: user.value?.programStudyId ? [user.value.programStudyId] : [],
   graduationYearFrom: now.getFullYear() - 2, graduationYearTo: now.getFullYear() - 1,
   opensAt: '', closesAt: '', accessTokenTtlHours: 168, minimumCellSize: 3,
-  consentVersion: `TRACER-CONSENT-${now.getFullYear()}-01`,
-  consentNotice: 'Saya bersedia memberikan data outcome karier untuk statistik agregat kampus. Saya dapat menarik persetujuan dan data saya tidak lagi disertakan dalam pelaporan.',
+  consentVersion: config.public.demoMode ? `TRACER-CONSENT-${now.getFullYear()}-01` : '',
+  consentNotice: config.public.demoMode ? 'Saya bersedia memberikan data outcome karier untuk statistik agregat kampus. Saya dapat menarik persetujuan dan data saya tidak lagi disertakan dalam pelaporan.' : '',
 })
 
 const activeAccess = computed<TracerAccessView | TracerOwnAssignment | null>(() => publicView.value || selectedAssignment.value)
@@ -153,11 +163,10 @@ function selectAssignment(item: TracerOwnAssignment) {
 }
 
 async function resolvePublicAccess() {
-  const queryToken = typeof route.query.access_token === 'string' ? route.query.access_token : ''
   const fragmentToken = import.meta.client
     ? new URLSearchParams(window.location.hash.replace(/^#/, '')).get('access_token') || ''
     : ''
-  const token = fragmentToken || queryToken
+  const token = fragmentToken
   if (!token) return false
   publicToken.value = token
   if (import.meta.client) window.history.replaceState(window.history.state, '', route.path)
@@ -166,17 +175,33 @@ async function resolvePublicAccess() {
   return true
 }
 
+async function loadAcademicCatalog() {
+  const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
+  academicPrograms.value = data.programs.filter(program => program.active)
+  if (!academicPrograms.value.some(program => program.id === questionnaireDraft.programStudyId)) {
+    const scopedProgram = user.value?.programStudyId
+    questionnaireDraft.programStudyId = academicPrograms.value.find(program => program.id === scopedProgram)?.id
+      || (academicPrograms.value.length === 1 ? academicPrograms.value[0]!.id : '')
+  }
+  periodDraft.programStudyIds = periodDraft.programStudyIds.filter(id => academicPrograms.value.some(program => program.id === id))
+  if (!periodDraft.programStudyIds.length && questionnaireDraft.programStudyId) {
+    periodDraft.programStudyIds = [questionnaireDraft.programStudyId]
+  }
+}
+
 async function loadManagement() {
+  if (canManage.value || canConfigure.value) await loadAcademicCatalog()
   const requests: Promise<unknown>[] = []
   requests.push($api.get<{ periods: TracerDistributionPeriod[] }>('/tracer-study/periods').then(({ data }) => {
     periods.value = data.periods
     if (!periods.value.some(period => period.id === selectedPeriodId.value)) selectedPeriodId.value = periods.value[0]?.id || ''
   }))
-  if (canManage.value) requests.push($api.get<{ questionnaires: TracerQuestionnaire[] }>('/tracer-study/questionnaires').then(({ data }) => {
+  if (canManage.value || canConfigure.value) requests.push($api.get<{ questionnaires: TracerQuestionnaire[] }>('/tracer-study/questionnaires').then(({ data }) => {
     questionnaires.value = data.questionnaires
     if (!questionnaires.value.some(item => item.id === periodDraft.questionnaireId)) periodDraft.questionnaireId = questionnaires.value[0]?.id || ''
   }))
   await Promise.all(requests)
+  if (canConfigure.value && !canReport.value && !canManage.value) activeTab.value = 'setup'
   await refreshPeriodData()
 }
 
@@ -196,7 +221,7 @@ async function initialize() {
     if (isStudent.value) {
       const { data } = await $api.get<{ assignments: TracerOwnAssignment[] }>('/tracer-study/assignments')
       assignments.value = data.assignments
-    } else if (canReport.value) await loadManagement()
+    } else if (canReport.value || canManage.value || canConfigure.value) await loadManagement()
   } catch (error) {
     errorMessage.value = getError(error)
   } finally {
@@ -207,6 +232,10 @@ async function initialize() {
 async function submitResponse() {
   const access = activeAccess.value
   if (!access || busy.value) return
+  if (!career.employmentStatus) {
+    errorMessage.value = 'Pilih status kegiatan alumni sebelum mengirim respons.'
+    return
+  }
   const answers: TracerAnswer[] = activeQuestions.value.flatMap((question) => {
     const value = answerValues[question.id]
     return value === undefined || value === '' || (Array.isArray(value) && !value.length) ? [] : [{ questionId: question.id, value }]
@@ -217,7 +246,7 @@ async function submitResponse() {
     const payload = {
       ...(publicToken.value ? { accessToken: publicToken.value } : { recipientId: selectedAssignment.value?.recipientId }),
       consentAccepted: consentAccepted.value, consentVersion: access.period.consentVersion,
-      career: { ...career }, answers,
+      career: { ...career, employmentStatus: career.employmentStatus }, answers,
     }
     const { data } = await $api.post<TracerSubmissionReceipt>('/tracer-study/responses', payload, { headers: { 'Idempotency-Key': requestKey('tracer-submit') } })
     submissionReceipt.value = data
@@ -250,6 +279,10 @@ async function withdrawSubmission() {
 
 async function saveQuestionnaire() {
   if (busy.value) return
+  if (!questionnaireDraft.programStudyId || !questionnaireDraft.name.trim() || questionnaireDraft.questions.some(question => !question.label.trim())) {
+    errorMessage.value = 'Pilih program studi serta lengkapi nama dan seluruh pertanyaan kuesioner.'
+    return
+  }
   busy.value = true
   try {
     await $api.post('/tracer-study/questionnaires', questionnaireDraft, { headers: { 'Idempotency-Key': requestKey('tracer-questionnaire') } })
@@ -266,6 +299,10 @@ function addQuestion() {
 async function savePeriod() {
   const questionnaire = questionnaires.value.find(item => item.id === periodDraft.questionnaireId)
   if (!questionnaire || busy.value) return
+  if (!periodDraft.name.trim() || !periodDraft.programStudyIds.length || !periodDraft.consentVersion.trim() || !periodDraft.consentNotice.trim()) {
+    errorMessage.value = 'Lengkapi nama, program studi, versi, dan pemberitahuan persetujuan periode.'
+    return
+  }
   busy.value = true
   try {
     await $api.post('/tracer-study/periods', {
@@ -321,7 +358,7 @@ onMounted(initialize)
   <div class="tracer-page">
     <AppPageHeader eyebrow="Alumni & outcome" title="Tracer Study" description="Kelola distribusi aman, persetujuan alumni, outcome karier, dan statistik deskriptif yang menjaga privasi.">
       <template #actions>
-        <button v-if="canManage && !publicView" class="btn btn-outline-secondary" type="button" @click="activeTab = 'setup'"><i class="uil uil-setting me-2" />Konfigurasi</button>
+        <button v-if="(canManage || canConfigure) && !publicView" class="btn btn-outline-secondary" type="button" @click="activeTab = 'setup'"><i class="uil uil-setting me-2" />Konfigurasi</button>
         <button v-if="canReport && !publicView" class="btn btn-primary" type="button" @click="downloadReport"><i class="uil uil-file-download me-2" />Ekspor agregat</button>
       </template>
     </AppPageHeader>
@@ -347,7 +384,7 @@ onMounted(initialize)
         <section class="response-card career-card">
           <header><span>01</span><div><h3>Outcome pekerjaan & karier</h3><p>Kolom terstruktur dipakai untuk statistik deskriptif.</p></div></header>
           <div class="career-fields">
-            <label><span>Status saat ini *</span><select v-model="career.employmentStatus" class="form-select" required><option value="EMPLOYED">Bekerja</option><option value="ENTREPRENEUR">Berwirausaha</option><option value="FURTHER_STUDY">Studi lanjut</option><option value="SEEKING_WORK">Mencari kerja</option><option value="NOT_WORKING">Belum bekerja</option></select></label>
+            <label><span>Status saat ini *</span><select v-model="career.employmentStatus" class="form-select" required><option value="" disabled>Pilih status saat ini</option><option value="EMPLOYED">Bekerja</option><option value="ENTREPRENEUR">Berwirausaha</option><option value="FURTHER_STUDY">Studi lanjut</option><option value="SEEKING_WORK">Mencari kerja</option><option value="NOT_WORKING">Belum bekerja</option></select></label>
             <label v-if="['EMPLOYED','ENTREPRENEUR'].includes(career.employmentStatus)"><span>Masa tunggu (bulan) *</span><input v-model.number="career.waitMonths" class="form-control" type="number" min="0" max="120" required></label>
             <label><span>Kesesuaian bidang (1–5)</span><input v-model.number="career.fieldAlignment" class="form-control" type="number" min="1" max="5"></label>
             <label><span>Rentang pendapatan</span><select v-model="career.incomeRange" class="form-select"><option value="UNDISCLOSED">Tidak menyebutkan</option><option value="BELOW_3M">Di bawah Rp3 juta</option><option value="3M_TO_6M">Rp3–6 juta</option><option value="6M_TO_10M">Rp6–10 juta</option><option value="ABOVE_10M">Di atas Rp10 juta</option></select></label>
@@ -374,7 +411,7 @@ onMounted(initialize)
           <i class="uil uil-shield-check" /><div><strong>Persetujuan penggunaan data</strong><p>{{ activeAccess.period.consentNotice }}</p><small>Versi {{ activeAccess.period.consentVersion }}</small></div>
           <label class="form-check"><input v-model="consentAccepted" class="form-check-input" type="checkbox" required><span class="form-check-label">Saya memahami dan memberikan persetujuan secara sukarela.</span></label>
         </section>
-        <div class="response-actions"><button v-if="selectedAssignment" class="btn btn-outline-secondary" type="button" @click="selectedAssignment = null">Kembali</button><button class="btn btn-primary" type="submit" :disabled="busy || !consentAccepted"><span v-if="busy" class="spinner-border spinner-border-sm me-2" />Kirim respons</button></div>
+        <div class="response-actions"><button v-if="selectedAssignment" class="btn btn-outline-secondary" type="button" @click="selectedAssignment = null">Kembali</button><button class="btn btn-primary" type="submit" :disabled="busy || !consentAccepted || !career.employmentStatus"><span v-if="busy" class="spinner-border spinner-border-sm me-2" />Kirim respons</button></div>
       </form>
     </template>
 
@@ -391,11 +428,11 @@ onMounted(initialize)
       </section>
     </template>
 
-    <template v-else-if="canReport">
-      <nav class="tracer-tabs"><button :class="{ active: activeTab === 'dashboard' }" @click="activeTab = 'dashboard'"><i class="uil uil-chart-pie" />Outcome</button><button v-if="canManage" :class="{ active: activeTab === 'respondents' }" @click="activeTab = 'respondents'"><i class="uil uil-users-alt" />Responden</button><button v-if="canManage" :class="{ active: activeTab === 'setup' }" @click="activeTab = 'setup'"><i class="uil uil-setting" />Konfigurasi</button></nav>
+    <template v-else-if="canReport || canManage || canConfigure">
+      <nav class="tracer-tabs"><button v-if="canReport" :class="{ active: activeTab === 'dashboard' }" @click="activeTab = 'dashboard'"><i class="uil uil-chart-pie" />Outcome</button><button v-if="canManage" :class="{ active: activeTab === 'respondents' }" @click="activeTab = 'respondents'"><i class="uil uil-users-alt" />Responden</button><button v-if="canManage || canConfigure" :class="{ active: activeTab === 'setup' }" @click="activeTab = 'setup'"><i class="uil uil-setting" />Konfigurasi</button></nav>
       <div class="management-toolbar"><label><span>Periode</span><select v-model="selectedPeriodId" class="form-select"><option v-for="period in periods" :key="period.id" :value="period.id">{{ period.name }}</option></select></label><label v-if="activeTab === 'dashboard'"><span>Kelompok</span><select v-model="groupBy" class="form-select"><option value="program">Program studi</option><option value="graduation_year">Tahun lulus</option></select></label><div v-if="canManage && selectedPeriod"><button class="btn btn-outline-secondary" :disabled="busy || selectedPeriod.status !== 'ACTIVE'" @click="sendCampaign('REMINDER')"><i class="uil uil-bell me-2" />Reminder</button><button class="btn btn-primary" :disabled="busy || selectedPeriod.status !== 'ACTIVE'" @click="sendCampaign('INITIAL')"><i class="uil uil-envelope-send me-2" />Kirim undangan</button></div></div>
 
-      <template v-if="activeTab === 'dashboard'">
+      <template v-if="activeTab === 'dashboard' && canReport">
         <section class="metric-grid"><article><i class="uil uil-users-alt" /><span>Terpantau</span><strong>{{ responseTotals.total }}</strong><small>identitas hanya untuk staf</small></article><article><i class="uil uil-check-circle" /><span>Merespons</span><strong>{{ responseTotals.responded }}</strong><small>persetujuan aktif</small></article><article><i class="uil uil-shield-slash" /><span>Ditarik</span><strong>{{ responseTotals.withdrawn }}</strong><small>dikeluarkan dari agregat</small></article><article><i class="uil uil-layer-group" /><span>Batas sel</span><strong>{{ report?.confidentiality.minimumCellSize || selectedPeriod?.minimumCellSize || 3 }}</strong><small>kelompok kecil disamarkan</small></article></section>
         <section class="outcome-panel"><header><div><span class="section-kicker">Statistik deskriptif</span><h2>Outcome lulusan</h2><p>Tanpa prediksi, klasifikasi, AI, atau isi jawaban bebas.</p></div><span class="method-chip">DESCRIPTIVE ONLY</span></header><div class="outcome-groups"><article v-for="group in report?.groups" :key="group.key" :class="{ suppressed: group.suppressed }"><header><div><small>{{ report?.groupBy === 'program' ? 'Program studi' : 'Tahun lulus' }}</small><h3>{{ group.label }}</h3></div><strong>{{ group.responseCount ?? '—' }}</strong></header><div v-if="group.suppressed" class="suppression"><i class="uil uil-lock" /><p>Sel disamarkan karena belum memenuhi batas minimum.</p></div><div v-else class="outcome-detail"><div><span>Rata-rata masa tunggu</span><strong>{{ group.averageWaitMonths ?? '—' }} bulan</strong></div><div><span>Kesesuaian bidang</span><strong>{{ group.averageFieldAlignment ?? '—' }} / 5</strong></div><ul><li v-for="(value,key) in group.employmentStatus" :key="key"><span>{{ key }}</span><strong>{{ value?.percent }}%</strong></li></ul></div></article><div v-if="!report?.groups.length" class="empty-state"><i class="uil uil-chart" /><strong>Belum ada sel agregat</strong><p>Outcome muncul setelah respons memenuhi batas minimum.</p></div></div></section>
       </template>
@@ -403,8 +440,8 @@ onMounted(initialize)
       <section v-else-if="activeTab === 'respondents'" class="respondent-panel"><header><div><span class="section-kicker">Status operasional</span><h2>Monitoring responden</h2><p>Tidak ada jawaban atau data karier individual pada tabel ini.</p></div></header><div class="table-responsive"><table><thead><tr><th>Alumni</th><th>Program / lulus</th><th>Status</th><th>Kontak terakhir</th><th>Persetujuan</th><th>SKPI</th></tr></thead><tbody><tr v-for="item in respondents" :key="item.recipientId"><td><strong>{{ item.displayName }}</strong><small>{{ item.studentNumber }} · {{ item.maskedEmail }}</small></td><td>{{ item.programStudyName }}<small>{{ item.graduationYear }}</small></td><td><span class="status-pill">{{ item.status }}</span></td><td>{{ item.lastContactAt ? formatDate(item.lastContactAt) : 'Belum dihubungi' }}</td><td>{{ item.consentStatus }}</td><td>{{ item.skpiReferences.length ? `${item.skpiReferences.length} terbit` : '—' }}</td></tr></tbody></table></div></section>
 
       <div v-else class="setup-layout">
-        <section class="setup-card"><header><span class="section-kicker">Versi kuesioner</span><h2>Buat kuesioner</h2><p>Setiap perubahan menghasilkan definisi versi baru yang tidak mengubah periode lama.</p></header><div class="setup-body"><label><span>Nama</span><input v-model="questionnaireDraft.name" class="form-control"></label><label><span>Deskripsi</span><textarea v-model="questionnaireDraft.description" class="form-control" rows="2" /></label><div class="question-builder"><article v-for="(question,index) in questionnaireDraft.questions" :key="question.id"><span>{{ index + 1 }}</span><div><input v-model="question.label" class="form-control"><select v-model="question.type" class="form-select"><option value="TEXT">Teks</option><option value="NUMBER">Angka</option><option value="BOOLEAN">Ya/tidak</option><option value="SINGLE_CHOICE">Pilihan tunggal</option><option value="MULTI_CHOICE">Pilihan jamak</option></select><label class="form-check"><input v-model="question.required" class="form-check-input" type="checkbox">Wajib</label></div></article><button class="btn btn-sm btn-outline-secondary" type="button" @click="addQuestion">Tambah pertanyaan</button></div></div><footer><span>{{ questionnaireDraft.questions.length }} pertanyaan</span><button class="btn btn-primary" :disabled="busy" @click="saveQuestionnaire">Simpan versi</button></footer></section>
-        <section class="setup-card"><header><span class="section-kicker">Distribusi & privasi</span><h2>Buat periode</h2><p>Target alumni diverifikasi kembali di server sebelum email dikirim.</p></header><div class="setup-body period-fields"><label><span>Nama periode</span><input v-model="periodDraft.name" class="form-control"></label><label><span>Kuesioner</span><select v-model="periodDraft.questionnaireId" class="form-select"><option v-for="item in questionnaires" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.currentVersion }}</option></select></label><label><span>Dibuka</span><input v-model="periodDraft.opensAt" class="form-control" type="datetime-local"></label><label><span>Ditutup</span><input v-model="periodDraft.closesAt" class="form-control" type="datetime-local"></label><label><span>Tahun lulus awal</span><input v-model.number="periodDraft.graduationYearFrom" class="form-control" type="number"></label><label><span>Tahun lulus akhir</span><input v-model.number="periodDraft.graduationYearTo" class="form-control" type="number"></label><label><span>TTL tautan (jam)</span><input v-model.number="periodDraft.accessTokenTtlHours" class="form-control" type="number" min="1" max="720"></label><label><span>Batas minimum sel</span><input v-model.number="periodDraft.minimumCellSize" class="form-control" type="number" min="3" max="50"></label><label class="full"><span>Pemberitahuan persetujuan</span><textarea v-model="periodDraft.consentNotice" class="form-control" rows="4" /></label></div><footer><span>Token mentah tidak disimpan</span><button class="btn btn-primary" :disabled="busy || !periodDraft.questionnaireId" @click="savePeriod">Simpan draf</button></footer></section>
+        <section class="setup-card"><header><span class="section-kicker">Versi kuesioner</span><h2>Buat kuesioner</h2><p>Setiap perubahan menghasilkan definisi versi baru yang tidak mengubah periode lama.</p></header><div class="setup-body"><label><span>Program studi</span><select v-model="questionnaireDraft.programStudyId" class="form-select" required><option value="" disabled>Pilih program resmi</option><option v-for="program in academicPrograms" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label><label><span>Nama</span><input v-model="questionnaireDraft.name" class="form-control"></label><label><span>Deskripsi</span><textarea v-model="questionnaireDraft.description" class="form-control" rows="2" /></label><div class="question-builder"><article v-for="(question,index) in questionnaireDraft.questions" :key="question.id"><span>{{ index + 1 }}</span><div><input v-model="question.label" class="form-control"><select v-model="question.type" class="form-select"><option value="TEXT">Teks</option><option value="NUMBER">Angka</option><option value="BOOLEAN">Ya/tidak</option><option value="SINGLE_CHOICE">Pilihan tunggal</option><option value="MULTI_CHOICE">Pilihan jamak</option></select><label class="form-check"><input v-model="question.required" class="form-check-input" type="checkbox">Wajib</label></div></article><button class="btn btn-sm btn-outline-secondary" type="button" @click="addQuestion">Tambah pertanyaan</button></div></div><footer><span>{{ questionnaireDraft.questions.length }} pertanyaan</span><button class="btn btn-primary" :disabled="busy || !questionnaireDraft.programStudyId || !questionnaireDraft.name || questionnaireDraft.questions.some(question => !question.label.trim())" @click="saveQuestionnaire">Simpan versi</button></footer></section>
+        <section class="setup-card"><header><span class="section-kicker">Distribusi & privasi</span><h2>Buat periode</h2><p>Target alumni diverifikasi kembali di server sebelum email dikirim.</p></header><div class="setup-body period-fields"><label><span>Nama periode</span><input v-model="periodDraft.name" class="form-control"></label><label><span>Kuesioner</span><select v-model="periodDraft.questionnaireId" class="form-select"><option value="" disabled>Pilih kuesioner</option><option v-for="item in questionnaires" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.currentVersion }}</option></select></label><label class="full"><span>Program studi target</span><select v-model="periodDraft.programStudyIds" class="form-select" multiple required><option v-for="program in academicPrograms" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label><label><span>Dibuka</span><input v-model="periodDraft.opensAt" class="form-control" type="datetime-local"></label><label><span>Ditutup</span><input v-model="periodDraft.closesAt" class="form-control" type="datetime-local"></label><label><span>Tahun lulus awal</span><input v-model.number="periodDraft.graduationYearFrom" class="form-control" type="number"></label><label><span>Tahun lulus akhir</span><input v-model.number="periodDraft.graduationYearTo" class="form-control" type="number"></label><label><span>TTL tautan (jam)</span><input v-model.number="periodDraft.accessTokenTtlHours" class="form-control" type="number" min="1" max="720"></label><label><span>Batas minimum sel</span><input v-model.number="periodDraft.minimumCellSize" class="form-control" type="number" min="3" max="50"></label><label><span>Versi persetujuan</span><input v-model="periodDraft.consentVersion" class="form-control" maxlength="80"></label><label class="full"><span>Pemberitahuan persetujuan</span><textarea v-model="periodDraft.consentNotice" class="form-control" rows="4" /></label></div><footer><span>Token mentah tidak disimpan</span><button class="btn btn-primary" :disabled="busy || !periodDraft.questionnaireId || !periodDraft.name || !periodDraft.programStudyIds.length || !periodDraft.consentVersion || !periodDraft.consentNotice" @click="savePeriod">Simpan draf</button></footer></section>
         <section class="setup-card period-list"><header><span class="section-kicker">Periode tersimpan</span><h2>Aktivasi & penutupan</h2></header><div class="period-rows"><article v-for="period in periods" :key="period.id"><div><span>{{ periodStatus(period) }}</span><strong>{{ period.name }}</strong><small>{{ formatDate(period.opensAt) }} – {{ formatDate(period.closesAt) }} · v{{ period.version }}</small></div><button v-if="period.status === 'DRAFT'" class="btn btn-sm btn-outline-success" :disabled="busy" @click="transitionPeriod(period, 'ACTIVE')">Aktifkan</button><button v-else-if="period.status === 'ACTIVE'" class="btn btn-sm btn-outline-secondary" :disabled="busy" @click="transitionPeriod(period, 'CLOSED')">Tutup</button></article></div></section>
       </div>
     </template>

@@ -7,21 +7,24 @@ useHead({ title: 'Detail Tiket Layanan' })
 const route = useRoute()
 const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
-const loading = ref(false)
+const loading = ref(!config.public.demoMode)
 const sending = ref(false)
 const errorMessage = ref('')
 const reply = ref('')
 
-const ticket = ref<ServiceTicket>({ id: String(route.params.id), ticketNumber: 'LYN-202607-1042', requesterId: 'student-001', requesterName: 'Nabila Putri', programStudyId: 'management-s1', category: 'ACADEMIC', priority: 'NORMAL', subject: 'Permohonan koreksi data KHS semester ganjil', status: 'IN_REVIEW', assignedUnit: 'Biro Akademik', slaHours: 24, dueAt: '2026-07-22T03:15:00.000Z', createdAt: '2026-07-21T03:15:00.000Z', updatedAt: '2026-07-21T04:10:00.000Z', version: 2, messageCount: 2 })
-const messages = ref<TicketMessage[]>([
+const demoTicket: ServiceTicket = { id: String(route.params.id), ticketNumber: 'LYN-202607-1042', requesterId: 'student-001', requesterName: 'Nabila Putri', programStudyId: 'management-s1', category: 'ACADEMIC', priority: 'NORMAL', subject: 'Permohonan koreksi data KHS semester ganjil', status: 'IN_REVIEW', assignedUnit: 'Biro Akademik', slaHours: 24, dueAt: '2026-07-22T03:15:00.000Z', createdAt: '2026-07-21T03:15:00.000Z', updatedAt: '2026-07-21T04:10:00.000Z', version: 2, messageCount: 2 }
+const demoMessages: TicketMessage[] = [
   { id: 'message-1', ticketId: String(route.params.id), authorId: 'student-001', authorName: 'Nabila Putri', authorKind: 'REQUESTER', body: 'Nilai mata kuliah MGT301 pada KHS berbeda dengan hasil akhir yang diumumkan dosen. Mohon dibantu melakukan pemeriksaan.', attachments: [{ fileId: 'private-file-001', fileName: 'khs-semester-ganjil.pdf', contentType: 'application/pdf', sizeBytes: 842_000 }], createdAt: '2026-07-21T03:15:00.000Z' },
   { id: 'message-2', ticketId: String(route.params.id), authorId: 'academic-001', authorName: 'Rina Wijaya', authorKind: 'STAFF', body: 'Laporan sudah diterima dan sedang kami cocokkan dengan berita acara nilai dari dosen pengampu.', attachments: [], createdAt: '2026-07-21T04:10:00.000Z' },
-])
+]
+const ticket = ref<ServiceTicket | null>(config.public.demoMode ? demoTicket : null)
+const messages = ref<TicketMessage[]>(config.public.demoMode ? demoMessages : [])
 
-const statusLabel = computed(() => ({ OPEN: 'Baru', IN_REVIEW: 'Sedang ditinjau', WAITING_FOR_REQUESTER: 'Menunggu jawaban Anda', RESOLVED: 'Selesai', CLOSED: 'Ditutup', CANCELLED: 'Dibatalkan' })[ticket.value.status])
-const statusTone = computed(() => ({ OPEN: 'pending', IN_REVIEW: 'processing', WAITING_FOR_REQUESTER: 'review', RESOLVED: 'success', CLOSED: 'inactive', CANCELLED: 'blocked' })[ticket.value.status])
-const canReply = computed(() => !['CLOSED', 'CANCELLED'].includes(ticket.value.status))
+const statusLabel = computed(() => ticket.value ? ({ OPEN: 'Baru', IN_REVIEW: 'Sedang ditinjau', WAITING_FOR_REQUESTER: 'Menunggu jawaban Anda', RESOLVED: 'Selesai', CLOSED: 'Ditutup', CANCELLED: 'Dibatalkan' })[ticket.value.status] : '')
+const statusTone = computed(() => ticket.value ? ({ OPEN: 'pending', IN_REVIEW: 'processing', WAITING_FOR_REQUESTER: 'review', RESOLVED: 'success', CLOSED: 'inactive', CANCELLED: 'blocked' })[ticket.value.status] : 'inactive')
+const canReply = computed(() => Boolean(ticket.value && !['CLOSED', 'CANCELLED'].includes(ticket.value.status)))
 const slaPercent = computed(() => {
+  if (!ticket.value) return 0
   const start = new Date(ticket.value.createdAt).getTime()
   const due = new Date(ticket.value.dueAt).getTime()
   const now = Math.min(Date.now(), due)
@@ -45,7 +48,7 @@ const loadDetail = async () => {
 }
 
 const sendReply = async () => {
-  if (!reply.value.trim() || !canReply.value) return
+  if (!reply.value.trim() || !canReply.value || !ticket.value) return
   sending.value = true
   try {
     if (config.public.demoMode) {
@@ -70,14 +73,14 @@ onMounted(loadDetail)
 
 <template>
   <div class="page-stack ticket-detail-page">
-    <nav class="detail-breadcrumb" aria-label="Breadcrumb"><NuxtLink to="/layanan"><i class="uil uil-arrow-left" /> Pusat layanan</NuxtLink><span>/</span><span>{{ ticket.ticketNumber }}</span></nav>
-    <AppPageHeader eyebrow="Detail permintaan" :title="ticket.subject" :description="`${ticket.ticketNumber} - ${ticket.assignedUnit}`" :status="statusTone" :status-label="statusLabel">
+    <nav class="detail-breadcrumb" aria-label="Breadcrumb"><NuxtLink to="/layanan"><i class="uil uil-arrow-left" /> Pusat layanan</NuxtLink><span v-if="ticket">/</span><span v-if="ticket">{{ ticket.ticketNumber }}</span></nav>
+    <AppPageHeader eyebrow="Detail permintaan" :title="ticket?.subject || 'Detail tiket layanan'" :description="ticket ? `${ticket.ticketNumber} - ${ticket.assignedUnit}` : 'Memuat data tiket dari sistem kampus.'" :status="statusTone" :status-label="statusLabel">
       <template #actions><button class="btn btn-outline-secondary" type="button"><i class="uil uil-print me-2" />Cetak ringkasan</button></template>
     </AppPageHeader>
 
     <div v-if="errorMessage" class="alert alert-warning">{{ errorMessage }}</div>
     <div v-if="loading" class="detail-loading"><span class="spinner-border spinner-border-sm" /> Memuat percakapan...</div>
-    <section v-else class="detail-layout">
+    <section v-else-if="ticket" class="detail-layout">
       <div class="conversation-panel">
         <header><div><span class="section-kicker">Percakapan</span><h2>{{ messages.length }} pesan dalam tiket ini</h2></div><span class="secure-label"><i class="uil uil-lock" /> Privat</span></header>
         <div class="conversation-stream" aria-live="polite">
@@ -96,6 +99,7 @@ onMounted(loadDetail)
         <article class="fact-card handler-card"><span class="handler-card__icon"><i class="uil uil-building" /></span><div><span class="section-kicker">Unit penanggung jawab</span><h3>{{ ticket.assignedUnit }}</h3><p>Balasan petugas akan tercatat pada percakapan dan pusat notifikasi.</p></div></article>
       </aside>
     </section>
+    <EmptyState v-else title="Tiket tidak tersedia" description="Data tiket tidak ditemukan atau tidak dapat Anda akses." />
   </div>
 </template>
 

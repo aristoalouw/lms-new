@@ -3,6 +3,7 @@ import { createFirebaseSession, publicSession, setSessionCookie } from '../../ut
 import { enforceAuthIpBurst, enforceAuthUserLimit } from '../../utils/auth-rate-limit'
 import { clientAddress, defineCampusHandler, enforceCsrf, markPrivateResponse } from '../../utils/security'
 import { requireRecord, requireString } from '../../utils/validation'
+import { appendAudit } from '../../utils/audit'
 
 export default defineCampusHandler(async (event) => {
   markPrivateResponse(event)
@@ -13,6 +14,7 @@ export default defineCampusHandler(async (event) => {
   const { context, token } = await createFirebaseSession(idToken, {
     onVerified: verifiedContext => enforceAuthUserLimit('firebase', verifiedContext.uid),
   })
+  await appendAudit({ actor: context, action: 'AUTH_LOGIN_SUCCEEDED', resourceType: 'session', resourceId: context.uid, event })
   setSessionCookie(event, token)
   return { session: publicSession(context) }
 })

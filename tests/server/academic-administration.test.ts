@@ -51,6 +51,8 @@ describe('academic administration workflows', () => {
     const input = { periodId: '2025-2026-2', reason: 'Saya memerlukan cuti akademik karena pemulihan kesehatan keluarga yang memerlukan pendampingan.' }
     const first = await submitLeaveRequest(learner(), input, 'academic-leave-key-0001', undefined, clock)
     expect((await submitLeaveRequest(learner(), input, 'academic-leave-key-0001', undefined, clock)).replayed).toBe(true)
+    await expect(reviewLeaveRequest(authContext('admin-001', ['administrator'], []), first.request.id, { decision: 'APPROVED', reviewNote: 'Administrator tidak boleh menyetujui proses bisnis.', expectedVersion: 1 }, undefined, clock))
+      .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
     const reviewed = await reviewLeaveRequest(academic(), first.request.id, { decision: 'APPROVED', reviewNote: 'Dokumen dan konsultasi dosen wali telah lengkap.', expectedVersion: 1 }, undefined, clock)
     expect(reviewed).toMatchObject({ request: { status: 'APPROVED', version: 2 }, profile: { status: 'LEAVE', version: 2 } })
     expect(reviewed.profile.statusHistory.at(-1)).toMatchObject({ status: 'LEAVE', periodId: '2025-2026-2' })

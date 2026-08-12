@@ -25,6 +25,7 @@ export interface AdmissionProgram {
   name: string
   unitId: string
   active: boolean
+  version?: number
 }
 
 export interface AdmissionWave {
@@ -36,6 +37,25 @@ export interface AdmissionWave {
   registrationFee: number
   currency: 'IDR'
   active: boolean
+  programStudyIds: string[]
+  capacity: number
+  version: number
+  createdAt?: string
+  createdBy?: string
+  updatedAt?: string
+  updatedBy?: string
+}
+
+export interface AdmissionWaveInput {
+  id: string
+  academicYear: string
+  label: string
+  opensAt: string
+  closesAt: string
+  registrationFee: number
+  active: boolean
+  programStudyIds: string[]
+  capacity: number
 }
 
 export interface AdmissionApplicationRecord {

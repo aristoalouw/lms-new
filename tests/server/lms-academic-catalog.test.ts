@@ -13,6 +13,7 @@ import { resetLearningMockState } from '../../server/services/learning-mock'
 import { authContext } from './fixtures'
 
 const administrator = () => authContext('admin-001', ['administrator'], [])
+const academicStaff = () => authContext('academic-001', ['academic_staff'], ['management-s1'])
 const lecturer = () => authContext('advisor-001', ['lecturer'], ['management-s1'])
 const classSchedule = {
   section: 'C',
@@ -191,7 +192,7 @@ describe('LMS administrator academic catalog', () => {
 
   it('keeps the legacy full-campus class request compatible', async () => {
     process.env.APP_FEATURE_PROFILE = 'full-campus'
-    const result = await createAcademicClass(administrator(), {
+    const result = await createAcademicClass(academicStaff(), {
       courseCode: 'MGT499',
       courseName: 'Praktik Strategi',
       credits: 3,

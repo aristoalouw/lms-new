@@ -15,7 +15,7 @@ import {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId } from '../utils/security'
 import { ticketModuleState } from './tickets-state'
 
@@ -106,13 +106,11 @@ function programAllowed(context: AuthContext, ticket: ServiceTicket): boolean {
 }
 
 function canManageTicket(context: AuthContext, ticket: ServiceTicket): boolean {
-  if (hasRole(context, 'administrator')) return true
   return CATEGORY_ROLES[ticket.category].some(role => hasRole(context, role)) && programAllowed(context, ticket)
 }
 
 function canViewTicket(context: AuthContext, ticket: ServiceTicket): boolean {
   return ticket.requesterId === context.uid
-    || hasRole(context, 'administrator', 'leader')
     || canManageTicket(context, ticket)
 }
 
@@ -121,7 +119,6 @@ function requireView(context: AuthContext, ticket: ServiceTicket): void {
 }
 
 function normalizeProgram(context: AuthContext, requested?: string): string | undefined {
-  if (hasRole(context, 'administrator')) return requested
   if (requested && !context.scope.programStudyIds.includes(requested)) forbidden('Program studi berada di luar lingkup akses Anda.')
   if (requested) return requested
   return context.scope.programStudyIds.length === 1 ? context.scope.programStudyIds[0] : undefined
@@ -146,6 +143,7 @@ export async function createTicket(
   event?: H3Event,
   now = new Date(),
 ): Promise<TicketDetail & { auditId: string }> {
+  requirePermission(context, 'service.read')
   validateCreateInput(input)
   const id = ticketId(context, now)
   const priority = input.priority ?? 'NORMAL'
@@ -218,6 +216,7 @@ async function loadTicket(ticketId: string): Promise<ServiceTicket> {
 }
 
 export async function getTicketDetail(context: AuthContext, ticketId: string): Promise<TicketDetail> {
+  requirePermission(context, 'service.read')
   const ticket = await loadTicket(ticketId)
   requireView(context, ticket)
   if (dataMode() === 'mock') {
@@ -230,6 +229,7 @@ export async function getTicketDetail(context: AuthContext, ticketId: string): P
 }
 
 export async function listTickets(context: AuthContext, options: ListTicketOptions = {}): Promise<ServiceTicket[]> {
+  requirePermission(context, 'service.read')
   if (options.status && !TICKET_STATUSES.includes(options.status)) invalidInput('Status tiket tidak valid.')
   if (options.category && !TICKET_CATEGORIES.includes(options.category)) invalidInput('Kategori tiket tidak valid.')
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 100)
@@ -238,12 +238,10 @@ export async function listTickets(context: AuthContext, options: ListTicketOptio
   else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan tiket tidak tersedia.')
-    const query = hasRole(context, 'administrator', 'leader')
-      ? db.collection('serviceTickets').limit(200)
-      : db.collection('serviceTickets').where('requesterId', '==', context.uid).limit(100)
+    const query = db.collection('serviceTickets').where('requesterId', '==', context.uid).limit(100)
     const snapshot = await query.get()
     tickets = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as ServiceTicket)
-    if (!hasRole(context, 'administrator', 'leader') && context.roles.some(role => ['academic_staff', 'finance_staff', 'student_affairs_staff', 'admissions_staff'].includes(role))) {
+    if (context.roles.some(role => ['academic_staff', 'finance_staff', 'student_affairs_staff', 'admissions_staff'].includes(role))) {
       const scopedQueries = context.scope.programStudyIds.slice(0, 30).map(programStudyId =>
         db.collection('serviceTickets').where('programStudyId', '==', programStudyId).limit(100).get(),
       )
@@ -291,6 +289,7 @@ export async function changeTicketStatus(
   input: ChangeTicketStatusInput,
   event?: H3Event,
 ): Promise<{ ticket: ServiceTicket; auditId: string }> {
+  requirePermission(context, 'service.read')
   const now = new Date().toISOString()
   let before: ServiceTicket
   let after: ServiceTicket
@@ -330,6 +329,7 @@ export async function addTicketMessage(
   input: { message: string; attachments?: AttachmentReference[] },
   event?: H3Event,
 ): Promise<{ ticket: ServiceTicket; message: TicketMessage; auditId: string }> {
+  requirePermission(context, 'service.read')
   const current = await loadTicket(ticketIdValue)
   requireView(context, current)
   if (['CLOSED', 'CANCELLED'].includes(current.status)) conflict('TICKET_NOT_REPLYABLE', 'Tiket yang sudah ditutup tidak dapat menerima pesan.')

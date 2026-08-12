@@ -16,6 +16,7 @@ interface AdmissionCatalogResponse {
 }
 
 const { $api } = useNuxtApp()
+const { can } = useAuth()
 const applications = ref<AdmissionApplicationView[]>([])
 const programs = ref<AdmissionProgram[]>([])
 const waves = ref<AdmissionWave[]>([])
@@ -194,6 +195,7 @@ onMounted(initializeDashboard)
       :status-label="selectedWave?.label || 'Belum ada gelombang aktif'"
     >
       <template #actions>
+        <NuxtLink v-if="can('pmb.configure')" class="btn btn-outline-secondary" to="/pmb/pengaturan"><i class="uil uil-setting me-2" aria-hidden="true" />Pengaturan gelombang</NuxtLink>
         <NuxtLink class="btn btn-outline-secondary" to="/pmb/status"><i class="uil uil-search me-2" aria-hidden="true" />Status saya</NuxtLink>
         <NuxtLink class="btn btn-outline-secondary" to="/pmb/dokumen"><i class="uil uil-file-check-alt me-2" aria-hidden="true" />Dokumen saya</NuxtLink>
         <NuxtLink class="btn btn-outline-primary" to="/pmb/seleksi"><i class="uil uil-calendar-alt me-2" aria-hidden="true" />Seleksi & LoA</NuxtLink>

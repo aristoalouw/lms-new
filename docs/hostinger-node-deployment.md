@@ -80,6 +80,19 @@ credentials. The production validator accepts blank payment, tracer, and
 PDDIKTI integration values for this pilot, but validates the complete bundle as
 soon as any payment or PDDIKTI integration value is supplied.
 
+Before role UAT or after importing institutional data, run the aggregate-only
+readiness audit from the trusted operator workstation:
+
+```powershell
+npm run audit:campus-readiness -- --env=.env.hostinger.production
+```
+
+The command prints collection counts, capability switches, and stable blocker
+codes without reading or printing names, email addresses, student numbers,
+grades, or document contents. Exit code `2` means the application is reachable
+but master data, canonical student onboarding, an active class, or enrolment is
+still incomplete. Do not work around those blockers with production demo data.
+
 Spark does not include Firestore TTL deletion. Prepare and deploy the
 Spark-safe index contract, which preserves every composite index and indexing
 exemption but omits the six TTL policy flags:

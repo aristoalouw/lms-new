@@ -66,6 +66,10 @@ environment nyata.
 - `npm run build`: lulus, menghasilkan Nitro `node-server`.
 - `scripts/validate-env.ps1 -Path .env.hostinger.production`: lulus tanpa
   mencetak secret.
+- `npm run audit:campus-readiness`: audit agregat tanpa PII untuk membedakan
+  kerusakan aplikasi dari master data/onboarding/enrolment atau integrasi yang
+  memang belum dikonfigurasi. Exit `2` dipakai secara sengaja sampai prasyarat
+  data nyata lengkap.
 
 ## Bukti environment yang masih wajib
 

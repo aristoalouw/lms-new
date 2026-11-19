@@ -14,6 +14,8 @@ interface RenderResponse {
 
 const route = useRoute()
 const config = useRuntimeConfig()
+const appName = computed(() => String(config.public.appName || 'Kampus').trim())
+const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'K')
 const { $api } = useNuxtApp()
 const loading = ref(true)
 const errorMessage = ref('')
@@ -24,7 +26,7 @@ const demoRender: RenderResponse = {
   contentHash: '9f65d95517b7c960682b80bff4b31cb8f742640d959e5e18c07cb7808f173182',
   renderPayload: {
     documentType: 'DECREE', documentNumber: 'SK-YUD/MANAGEMENT-S1/2026/00001', verificationCode: '8A2F0C19B5549D1267CE',
-    issuedAt: '2026-07-20T09:00:00.000Z', title: 'Keputusan Yudisium', subtitle: 'Universitas Siber Nusantara',
+    issuedAt: '2026-07-20T09:00:00.000Z', title: 'Keputusan Yudisium', subtitle: appName.value,
     subject: { studentName: 'Nabila Putri', studentNumber: '23011001', programStudyName: 'S1 Manajemen', periodName: 'Yudisium Semester Genap 2025/2026' },
     fields: [
       { key: 'student_name', label: 'Nama', value: 'Nabila Putri' },
@@ -83,8 +85,8 @@ onMounted(loadRender)
       <article class="credential-sheet" :class="{ revoked: render.status === 'REVOKED' }">
         <span v-if="render.status === 'REVOKED'" class="revoked-watermark">DICABUT</span>
         <header class="credential-head">
-          <div class="campus-mark">N</div>
-          <div><span>UNIVERSITAS SIBER NUSANTARA</span><small>Akademik · Integritas · Akuntabilitas</small></div>
+          <div class="campus-mark">{{ appInitial }}</div>
+          <div><span>{{ appName }}</span><small>Akademik · Integritas · Akuntabilitas</small></div>
         </header>
         <div class="credential-title">
           <small>{{ render.renderPayload.documentType }}</small>

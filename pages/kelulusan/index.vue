@@ -13,6 +13,7 @@ useHead({ title: 'Kelulusan & Yudisium' })
 
 const { $api } = useNuxtApp()
 const config = useRuntimeConfig()
+const appName = computed(() => String(config.public.appName || 'Kampus').trim())
 const { user, can } = useAuth()
 const loading = ref(false)
 const mutating = ref(false)
@@ -77,12 +78,12 @@ const demoDocument: IssuedGraduationDocument = {
   verificationCode: '8A2F0C19B5549D1267CE', status: 'ISSUED', version: 1,
   templateSnapshot: {
     id: 'template-decree-default', type: 'DECREE', name: 'Keputusan Yudisium standar', version: 1, status: 'ACTIVE',
-    layout: { title: 'Keputusan Yudisium', subtitle: 'Universitas Siber Nusantara', fields: [], footerText: 'Verifikasi dengan kode resmi kampus.' },
+    layout: { title: 'Keputusan Yudisium', subtitle: appName.value, fields: [], footerText: 'Verifikasi dengan kode resmi kampus.' },
     createdAt: '2026-06-01T00:00:00.000Z', updatedAt: '2026-06-01T00:00:00.000Z', updatedBy: 'admin-001',
   },
   renderPayload: {
     documentType: 'DECREE', documentNumber: 'SK-YUD/MANAGEMENT-S1/2026/00001', verificationCode: '8A2F0C19B5549D1267CE',
-    issuedAt: '2026-07-20T09:00:00.000Z', title: 'Keputusan Yudisium', subtitle: 'Universitas Siber Nusantara',
+    issuedAt: '2026-07-20T09:00:00.000Z', title: 'Keputusan Yudisium', subtitle: appName.value,
     subject: { studentName: 'Nabila Putri', studentNumber: '23011001', programStudyName: 'S1 Manajemen', periodName: demoPeriod.name },
     fields: [], footerText: 'Verifikasi dengan kode resmi kampus.', limitation: 'DETERMINISTIC_RENDER_PAYLOAD_ONLY_NO_CREDENTIAL_PDF',
   },

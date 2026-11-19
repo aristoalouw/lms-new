@@ -27,6 +27,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "verify:hostinger": "node scripts/verify-hostinger-release.mjs",
+    "audit:firebase-identities": "node scripts/audit-firebase-identities.mjs",
     "seed:lms-mvp": "node scripts/seed-lms-mvp.mjs",
     "bootstrap:lms-admin": "node scripts/bootstrap-lms-admin.mjs"
   },

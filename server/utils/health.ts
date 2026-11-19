@@ -1,4 +1,7 @@
-export function publicHealthPayload(now = new Date()): {
+export function publicHealthPayload(
+  now = new Date(),
+  version = process.env.APP_VERSION || 'development',
+): {
   status: 'ok'
   timestamp: string
   version: string
@@ -6,7 +9,7 @@ export function publicHealthPayload(now = new Date()): {
   return {
     status: 'ok',
     timestamp: now.toISOString(),
-    version: process.env.APP_VERSION || 'development',
+    version,
   }
 }
 

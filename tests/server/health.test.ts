@@ -3,11 +3,11 @@ import { publicHealthPayload, publicReadinessPayload } from '../../server/utils/
 
 describe('public health payload privacy', () => {
   it('returns only generic liveness fields', () => {
-    const payload = publicHealthPayload(new Date('2026-07-21T00:00:00.000Z'))
+    const payload = publicHealthPayload(new Date('2026-07-21T00:00:00.000Z'), 'c8f3c6e')
     expect(payload).toEqual({
       status: 'ok',
       timestamp: '2026-07-21T00:00:00.000Z',
-      version: process.env.APP_VERSION || 'development',
+      version: 'c8f3c6e',
     })
     expect(JSON.stringify(payload)).not.toMatch(/firebase|credential|pddikti|datastore|project/i)
   })

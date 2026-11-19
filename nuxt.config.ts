@@ -43,6 +43,7 @@ export default defineNuxtConfig({
     },
   },
   runtimeConfig: {
+    appVersion: process.env.APP_VERSION || process.env.SENTRY_RELEASE || 'development',
     featureProfile: serverFeatureProfile,
     sessionSecret: process.env.NUXT_SESSION_SECRET || '',
     firebaseProjectId: process.env.FIREBASE_PROJECT_ID || '',

@@ -23,6 +23,8 @@ describe('production public identity and contact invariants', () => {
       source('pages/login.vue'),
       source('pages/pmb/daftar.vue'),
       source('pages/pmb/informasi.vue'),
+      source('pages/kelulusan/index.vue'),
+      source('pages/kelulusan/dokumen/[id].vue'),
     ].join('\n')
 
     expect(nuxtConfig).toContain('NUXT_PUBLIC_SUPPORT_EMAIL')
@@ -31,5 +33,6 @@ describe('production public identity and contact invariants', () => {
     expect(publicSurfaces).toContain('config.public.appName')
     expect(publicSurfaces).toContain('config.public.supportEmail')
     expect(publicSurfaces).toContain('config.public.admissionsEmail')
+    expect(publicSurfaces).not.toContain('Universitas Siber Nusantara')
   })
 })

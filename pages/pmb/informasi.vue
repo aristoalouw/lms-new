@@ -4,7 +4,16 @@ import type { AdmissionProgram, AdmissionWave } from '~/server/types/admissions'
 definePageMeta({ layout: 'auth' })
 useHead({ title: 'Penerimaan Mahasiswa Baru' })
 
+const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
+const appName = computed(() => String(config.public.appName || 'Nusa Campus').trim())
+const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'N')
+const admissionsEmail = computed(() => String(config.public.admissionsEmail || '').trim())
+const privacyUrl = computed(() => {
+  const value = String(config.public.privacyUrl || '').trim()
+  return value.startsWith('/') || /^https:\/\//i.test(value) ? value : ''
+})
+const currentYear = new Date().getFullYear()
 const programs = ref<AdmissionProgram[]>([])
 const waves = ref<AdmissionWave[]>([])
 const catalogLoading = ref(true)
@@ -52,9 +61,9 @@ const faqs = [
 <template>
   <main class="admission-public">
     <nav class="admission-nav" aria-label="Navigasi penerimaan">
-      <NuxtLink to="/pmb/informasi" class="public-brand" aria-label="Nusa Campus PMB">
-        <span class="public-brand__mark">N</span>
-        <span><strong>Nusa Campus</strong><small>Penerimaan mahasiswa baru</small></span>
+      <NuxtLink to="/pmb/informasi" class="public-brand" :aria-label="`${appName} PMB`">
+        <span class="public-brand__mark">{{ appInitial }}</span>
+        <span><strong>{{ appName }}</strong><small>Penerimaan mahasiswa baru</small></span>
       </NuxtLink>
       <div class="admission-nav__links d-none d-md-flex">
         <a href="#program">Program studi</a>
@@ -179,9 +188,9 @@ const faqs = [
     </section>
 
     <footer class="public-footer">
-      <div class="public-brand"><span class="public-brand__mark">N</span><span><strong>Nusa Campus</strong><small>Sistem informasi terpadu</small></span></div>
-      <p>© 2026 Nusa Campus · Informasi penerimaan dapat berubah sesuai kebijakan kampus.</p>
-      <div><a href="#">Kebijakan privasi</a><a href="#">Kontak PMB</a></div>
+      <div class="public-brand"><span class="public-brand__mark">{{ appInitial }}</span><span><strong>{{ appName }}</strong><small>Sistem informasi terpadu</small></span></div>
+      <p>© {{ currentYear }} {{ appName }} · Informasi penerimaan dapat berubah sesuai kebijakan kampus.</p>
+      <div v-if="privacyUrl || admissionsEmail"><a v-if="privacyUrl" :href="privacyUrl">Kebijakan privasi</a><a v-if="admissionsEmail" :href="`mailto:${admissionsEmail}`">Kontak PMB</a></div>
     </footer>
   </main>
 </template>

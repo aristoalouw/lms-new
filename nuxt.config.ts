@@ -11,6 +11,7 @@ const resolveFeatureProfile = (value: string | undefined) => value === 'full-cam
   : featureProfileFallback
 const serverFeatureProfile = resolveFeatureProfile(process.env.APP_FEATURE_PROFILE)
 const publicFeatureProfile = resolveFeatureProfile(process.env.NUXT_PUBLIC_FEATURE_PROFILE || serverFeatureProfile)
+const publicAppName = process.env.NUXT_PUBLIC_APP_NAME || 'Nusa Campus'
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-01-15',
@@ -28,7 +29,7 @@ export default defineNuxtConfig({
   app: {
     head: {
       htmlAttrs: { lang: 'id' },
-      titleTemplate: '%s · Nusa Campus',
+      titleTemplate: `%s · ${publicAppName}`,
       meta: [
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
@@ -55,8 +56,12 @@ export default defineNuxtConfig({
     sentryRelease: process.env.SENTRY_RELEASE || process.env.APP_VERSION || '',
     public: {
       featureProfile: publicFeatureProfile,
-      appName: process.env.NUXT_PUBLIC_APP_NAME || 'Nusa Campus',
+      appName: publicAppName,
       appEnvironment: process.env.NUXT_PUBLIC_APP_ENVIRONMENT || (process.env.NODE_ENV === 'production' ? 'production' : 'development'),
+      supportEmail: process.env.NUXT_PUBLIC_SUPPORT_EMAIL || '',
+      supportPhone: process.env.NUXT_PUBLIC_SUPPORT_PHONE || '',
+      admissionsEmail: process.env.NUXT_PUBLIC_ADMISSIONS_EMAIL || '',
+      privacyUrl: process.env.NUXT_PUBLIC_PRIVACY_URL || '',
       demoMode: process.env.NODE_ENV !== 'production' && process.env.NUXT_PUBLIC_DEMO_MODE !== 'false',
       apiBaseUrl: process.env.NUXT_PUBLIC_API_BASE_URL || '/api',
       firebaseApiKey: process.env.NUXT_PUBLIC_FIREBASE_API_KEY || '',

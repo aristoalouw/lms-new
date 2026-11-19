@@ -5,6 +5,7 @@ definePageMeta({ layout: 'auth' })
 useHead({ title: 'Formulir Pendaftaran PMB' })
 
 const route = useRoute()
+const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
 const step = ref(1)
 const selectedFiles = ref<string[]>([])
@@ -14,6 +15,9 @@ const catalogLoading = ref(true)
 const catalogError = ref('')
 const submittedApplication = ref<{ id: string; registrationNumber: string } | null>(null)
 const idempotencyKey = ref(`admission-web-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`)
+const appName = computed(() => String(config.public.appName || 'Nusa Campus').trim())
+const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'N')
+const admissionsEmail = computed(() => String(config.public.admissionsEmail || '').trim())
 
 const programs = ref<AdmissionProgram[]>([])
 const waves = ref<AdmissionWave[]>([])
@@ -105,8 +109,8 @@ onMounted(loadCatalog)
 <template>
   <main class="registration-page">
     <header class="registration-header">
-      <NuxtLink to="/pmb/informasi" class="registration-brand"><span>N</span><div><strong>Nusa Campus</strong><small>Portal pendaftaran</small></div></NuxtLink>
-      <div class="registration-help"><span class="d-none d-sm-inline">Butuh bantuan?</span><a href="mailto:pmb@kampus.ac.id"><i class="uil uil-envelope" /> pmb@kampus.ac.id</a></div>
+      <NuxtLink to="/pmb/informasi" class="registration-brand"><span>{{ appInitial }}</span><div><strong>{{ appName }}</strong><small>Portal pendaftaran</small></div></NuxtLink>
+      <div v-if="admissionsEmail" class="registration-help"><span class="d-none d-sm-inline">Butuh bantuan?</span><a :href="`mailto:${admissionsEmail}`"><i class="uil uil-envelope" /> {{ admissionsEmail }}</a></div>
     </header>
 
     <section v-if="submittedApplication" class="registration-success">

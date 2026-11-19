@@ -20,6 +20,14 @@ const resetEmail = ref('')
 const resetPending = ref(false)
 const resetMessage = ref('')
 const resetError = ref('')
+const appName = computed(() => String(config.public.appName || 'Nusa Campus').trim())
+const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'N')
+const supportEmail = computed(() => String(config.public.supportEmail || '').trim())
+const supportPhone = computed(() => String(config.public.supportPhone || '').trim())
+const supportPhoneHref = computed(() => {
+  const normalized = supportPhone.value.replace(/[\s().-]/g, '')
+  return /^\+?\d{6,20}$/.test(normalized) ? `tel:${normalized}` : ''
+})
 let resetIdempotencyKey = ''
 const {
   available: passwordResetAvailable,
@@ -83,10 +91,10 @@ watch(resetEmail, () => { resetIdempotencyKey = '' })
       <div class="login-story__glow login-story__glow--two" aria-hidden="true" />
 
       <div class="login-story__content">
-        <NuxtLink class="brand-lockup" to="/" aria-label="Nusa Campus, beranda">
-          <span class="brand-lockup__mark" aria-hidden="true">N</span>
+        <NuxtLink class="brand-lockup" to="/" :aria-label="`${appName}, beranda`">
+          <span class="brand-lockup__mark" aria-hidden="true">{{ appInitial }}</span>
           <span>
-            <strong>Nusa Campus</strong>
+            <strong>{{ appName }}</strong>
             <small>Sistem informasi terpadu</small>
           </span>
         </NuxtLink>
@@ -127,8 +135,8 @@ watch(resetEmail, () => { resetIdempotencyKey = '' })
     <section class="login-panel" aria-labelledby="login-title">
       <div id="login-form" class="login-card">
         <div class="login-card__mobile-brand">
-          <span class="brand-lockup__mark" aria-hidden="true">N</span>
-          <strong>Nusa Campus</strong>
+          <span class="brand-lockup__mark" aria-hidden="true">{{ appInitial }}</span>
+          <strong>{{ appName }}</strong>
         </div>
 
         <div class="login-card__heading">
@@ -197,7 +205,7 @@ watch(resetEmail, () => { resetIdempotencyKey = '' })
 
           <button class="btn btn-primary login-submit" type="submit" :disabled="pending">
             <span v-if="pending" class="spinner-border spinner-border-sm" aria-hidden="true" />
-            <span>{{ pending ? 'Memeriksa akun…' : 'Masuk ke Nusa Campus' }}</span>
+            <span>{{ pending ? 'Memeriksa akun…' : `Masuk ke ${appName}` }}</span>
             <i v-if="!pending" class="uil uil-arrow-right" aria-hidden="true" />
           </button>
         </form>
@@ -224,11 +232,11 @@ watch(resetEmail, () => { resetIdempotencyKey = '' })
           <p><strong>Mode demonstrasi</strong><br>Email dan kata sandi di atas sudah diisi untuk melihat prototipe.</p>
         </div>
 
-        <footer class="login-card__footer">
+        <footer v-if="supportEmail || supportPhoneHref" class="login-card__footer">
           <span>Butuh bantuan?</span>
-          <a href="mailto:helpdesk@kampus.ac.id">helpdesk@kampus.ac.id</a>
-          <span aria-hidden="true">•</span>
-          <a href="tel:+62215550124">(021) 555-0124</a>
+          <a v-if="supportEmail" :href="`mailto:${supportEmail}`">{{ supportEmail }}</a>
+          <span v-if="supportEmail && supportPhoneHref" aria-hidden="true">•</span>
+          <a v-if="supportPhoneHref" :href="supportPhoneHref">{{ supportPhone }}</a>
         </footer>
       </div>
     </section>

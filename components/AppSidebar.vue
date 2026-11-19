@@ -3,10 +3,10 @@
     <div v-if="sidebarOpen" class="sidebar-backdrop" aria-hidden="true" @click="closeSidebar" />
     <aside class="app-sidebar" :class="{ 'app-sidebar--open': sidebarOpen }" aria-label="Navigasi utama">
       <div class="app-sidebar__brand">
-        <NuxtLink to="/" class="brand-lockup" aria-label="Nusa Campus — beranda" @click="closeSidebar">
-          <span class="brand-mark" aria-hidden="true">N</span>
+        <NuxtLink to="/" class="brand-lockup" :aria-label="`${appName} — beranda`" @click="closeSidebar">
+          <span class="brand-mark" aria-hidden="true">{{ appInitial }}</span>
           <span class="brand-copy">
-            <strong>Nusa Campus</strong>
+            <strong>{{ appName }}</strong>
             <small>Sistem terpadu</small>
           </span>
         </NuxtLink>
@@ -65,6 +65,9 @@ import { navigation } from '~/config/navigation'
 const { sidebarOpen, sidebarCompact, closeSidebar, toggleCompact } = useAppShell()
 const { can } = useAuth()
 const { enabled, pageEnabled, isLmsMvp } = useFeatureFlags()
+const config = useRuntimeConfig()
+const appName = computed(() => String(config.public.appName || 'Nusa Campus').trim())
+const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'N')
 
 const visibleNavigation = computed(() => navigation
   .map(group => ({ ...group, items: group.items.filter(item => enabled(item.feature) && pageEnabled(item.to) && can(item.permission)) }))

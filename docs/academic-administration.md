@@ -42,9 +42,10 @@ Daftar lengkap permission dan scope ada di [matriks role](./role-matrix.md). Men
 - `POST /api/academic/master/courses` dan `/curricula`: pembuatan snapshot versi imutabel melalui head atomik.
 - `POST /api/academic/master/calendar`: agenda/deadline berversi dan scoped.
 - `POST /api/academic/students/onboard`: membuat atau memperbarui tiga proyeksi operasional mahasiswa dengan idempotency dan optimistic version.
+- `POST /api/academic/students/onboard-bulk`: onboarding awal maksimal 100 mahasiswa dari CSV/TSV; memerlukan gabungan role administrator dan staf akademik, membuat akun student yang belum ada tanpa password, lalu memakai transaksi onboarding kanonik per baris. Hasil hanya mengembalikan nomor baris dan kode aman, sehingga email/NIM tidak disalin ke log atau laporan kegagalan.
 - `GET /api/academic/students/:studentId/onboarding`: membaca hasil onboarding lengkap dalam scope staf untuk koreksi berikutnya.
 
-Halaman `/akademik/administrasi` menggunakan endpoint tersebut dan menyesuaikan aksi dengan peran aktif. Staf mengelola program, status akreditasi, periode/kebijakan KRS, mata kuliah, prasyarat, ekuivalensi, kurikulum, serta kalender melalui `/akademik/master`. Akun mahasiswa yang telah dibuat administrator dihubungkan ke state akademik, KRS, dan billing melalui `/akademik/mahasiswa`. `/akademik/krs` dan `/akademik/kelas` tetap menjadi ruang kerja terpisah untuk enrollment dan delivery kelas.
+Halaman `/akademik/administrasi` menggunakan endpoint tersebut dan menyesuaikan aksi dengan peran aktif. Staf mengelola program, status akreditasi, periode/kebijakan KRS, mata kuliah, prasyarat, ekuivalensi, kurikulum, serta kalender melalui `/akademik/master`. Akun mahasiswa yang telah dibuat administrator dihubungkan ke state akademik, KRS, dan billing melalui `/akademik/mahasiswa`. Operator dengan dua role yang diperlukan dapat mengunduh template bulk kosong dari halaman yang sama; sumber tidak dipersistenkan, maksimal 1 MB/100 baris, dan retry memakai idempotency key yang sama. Batch ini hanya untuk onboarding awal (`expectedVersion=0`); koreksi profil tetap dilakukan satu per satu dengan optimistic version. `/akademik/krs` dan `/akademik/kelas` tetap menjadi ruang kerja terpisah untuk enrollment dan delivery kelas.
 
 ## Firestore dan operasi
 

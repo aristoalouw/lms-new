@@ -15,7 +15,9 @@ Neo Feeder tidak boleh dijadikan alasan untuk menimpa data internal otomatis. La
 
 Endpoint privat `/api/imports` mengimplementasikan staging CSV/TSV untuk master mahasiswa, mata kuliah, dan nilai. XLSX harus dikonversi menjadi CSV UTF-8 atau TSV sebelum diproses; parser XLSX langsung belum dianggap selesai. UI operator tersedia di `/impor`.
 
-Dataset `students` pada workflow ini adalah registry migrasi beserta provenance dan kompensasinya; commit tidak membuat akun Firebase atau menebak dosen wali, kurikulum, batas SKS, IPK, dan state billing. Setelah akun student serta master nyata tersedia, staf memakai `/akademik/mahasiswa` untuk materialisasi atomik ke profil akademik, state KRS, dan profil billing. Pemisahan ini mencegah CSV enam kolom menghasilkan data operasional palsu. Bulk onboarding baru boleh dilakukan dengan template operasional lengkap dan mekanisme kompensasi untuk seluruh proyeksi.
+Dataset `students` pada workflow ini adalah registry migrasi beserta provenance dan kompensasinya; commit tidak membuat akun Firebase atau menebak dosen wali, kurikulum, batas SKS, IPK, dan state billing. Setelah master nyata tersedia, staf memakai `/akademik/mahasiswa` untuk materialisasi atomik ke profil akademik, state KRS, dan profil billing. Pemisahan ini mencegah CSV enam kolom menghasilkan data operasional palsu.
+
+Bulk onboarding operasional tersedia terpisah pada halaman tersebut untuk maksimal 100 baris. Template lengkap mewajibkan email/nama akun, ID mahasiswa, NIM, prodi, angkatan, dosen wali, periode, versi kurikulum, status/jalur, batas dan capaian SKS, IPK, mata kuliah lulus, serta alasan sumber. Endpoint membuat akun Firebase tanpa password bila belum ada dan kemudian menjalankan transaksi onboarding kanonik per mahasiswa. Kegagalan setelah pembuatan akun tidak dihapus secara diam-diam: akun tetap dapat dipakai ulang pada retry setelah master diperbaiki, sementara hasil batch hanya menampilkan nomor baris dan kode aman. Jalur ini memerlukan operator dengan role `administrator` dan `academic_staff`; pemutakhiran profil yang sudah ada tetap memakai form tunggal dan optimistic version.
 
 Alur yang tersedia adalah:
 

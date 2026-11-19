@@ -19,3 +19,49 @@ export interface StudentOnboardingResult extends StudentOnboardingRecord {
   replayed: boolean
   auditId?: string
 }
+
+export interface BulkStudentOnboardingInput {
+  sourceName: string
+  format: 'csv' | 'tsv'
+  content: string
+}
+
+export interface BulkStudentOnboardingRow {
+  rowNumber: number
+  email: string
+  displayName: string
+  studentId: string
+  studentNumber: string
+  programStudyId: string
+  cohortYear: number
+  advisorEmail: string
+  currentPeriodId: string
+  curriculumVersionId: string
+  status: StudentAcademicProfileRecord['status']
+  pathway: StudentAcademicProfileRecord['pathway']
+  originInstitution?: string
+  partnerInstitution?: string
+  maximumCredits: number
+  registeredCredits: number
+  totalEarnedCredits: number
+  cumulativeGpa: number
+  completedCourseCodes: string[]
+  reason: string
+}
+
+export interface BulkStudentOnboardingResultRow {
+  rowNumber: number
+  status: 'ONBOARDED' | 'REPLAYED' | 'FAILED'
+  accountCreated: boolean
+  code?: string
+  message?: string
+}
+
+export interface BulkStudentOnboardingResult {
+  sourceName: string
+  total: number
+  onboarded: number
+  replayed: number
+  failed: number
+  rows: BulkStudentOnboardingResultRow[]
+}

@@ -101,6 +101,7 @@ describe('Firebase security rule invariants', () => {
     expect(hasIndex('academicLeaveRequests', ['programStudyId', 'status', 'submittedAt'])).toBe(true)
     expect(hasIndex('academicAdvisingSessions', ['advisorId', 'status', 'requestedAt'])).toBe(true)
     expect(hasIndex('academicGradeRecords', ['studentId', 'periodId', 'courseCode'])).toBe(true)
+    expect(hasIndex('academicPeriodDefinitions', ['active', 'startsAt'])).toBe(true)
     expect(hasIndex('academicClasses', ['lecturerIds', 'periodId', 'programStudyId', '__name__'])).toBe(true)
     expect(hasIndex('classEnrollments', ['studentUid', 'status', 'periodId', 'programStudyId', 'classId'])).toBe(true)
     expect(hasIndex('learningSpaces', ['updatedAt', '__name__'])).toBe(true)

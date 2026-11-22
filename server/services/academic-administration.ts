@@ -122,12 +122,18 @@ async function profileById(studentId: string): Promise<StudentAcademicProfileRec
   return { studentId: snapshot.id, ...snapshot.data() } as StudentAcademicProfileRecord
 }
 
-async function ownProfile(context: AuthContext): Promise<StudentAcademicProfileRecord> {
+async function optionalOwnProfile(context: AuthContext): Promise<StudentAcademicProfileRecord | undefined> {
   const matches: StudentAcademicProfileRecord[] = []
   for (const candidate of studentCandidates(context)) { try { matches.push(await profileById(candidate)) } catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'NOT_FOUND')) throw error } }
   const unique = [...new Map(matches.map(item => [item.studentId, item])).values()]
-  if (unique.length !== 1) forbidden('Identitas mahasiswa tidak dapat ditentukan secara unik.')
-  return unique[0]!
+  if (unique.length > 1) forbidden('Identitas mahasiswa tidak dapat ditentukan secara unik.')
+  return unique[0]
+}
+
+async function ownProfile(context: AuthContext): Promise<StudentAcademicProfileRecord> {
+  const profile = await optionalOwnProfile(context)
+  if (!profile) forbidden('Profil akademik mahasiswa belum tersedia.')
+  return profile
 }
 
 function canReadProfile(context: AuthContext, profile: StudentAcademicProfileRecord): boolean {
@@ -136,7 +142,11 @@ function canReadProfile(context: AuthContext, profile: StudentAcademicProfileRec
 }
 
 async function visibleProfile(context: AuthContext, requested?: string): Promise<StudentAcademicProfileRecord | undefined> {
-  if (hasRole(context, 'student')) return ownProfile(context)
+  // An account may be activated before the academic onboarding transaction is
+  // completed. Read-only workspace access must still return the scoped master
+  // data so the UI can explain what is missing instead of failing with 403.
+  // Mutating student workflows continue to call ownProfile() and fail closed.
+  if (hasRole(context, 'student')) return optionalOwnProfile(context)
   if (!requested) return undefined
   const profile = await profileById(requested); if (!canReadProfile(context, profile)) forbidden('Profil mahasiswa berada di luar lingkup akses Anda.')
   return profile
@@ -162,7 +172,9 @@ export async function getAcademicAdministrationWorkspace(context: AuthContext, r
     all<MbkmActivity>('academicMbkmActivities', () => [...academicAdministrationState().mbkmActivities.values()]),
   ])
   const programFilter = (programStudyId?: string) => !programStudyId || canProgram(context, programStudyId)
-  const studentFilter = (studentId: string, programStudyId: string) => profile ? studentId === profile.studentId : canProgram(context, programStudyId)
+  const studentFilter = (studentId: string, programStudyId: string) => profile
+    ? studentId === profile.studentId
+    : (hasRole(context, 'student', 'guardian') ? false : canProgram(context, programStudyId))
   if (hasRole(context, 'administrator', 'leader')) {
     return {
       programs: programs.filter(item => programFilter(item.id)), periods: periods.filter(item => item.active),

@@ -35,7 +35,13 @@ describe('academic administration workflows', () => {
     expect(workspace.profile).toMatchObject({ studentId: 'student-001', pathway: 'REGULAR', curriculumVersionId: 'curriculum-mgt-2023_v1' })
     expect(workspace.courses[0]).toMatchObject({ code: 'MGT401', prerequisiteCourseCodes: ['MGT301'], immutable: true })
     expect(workspace.calendar).toHaveLength(2)
-    await expect(getAcademicAdministrationWorkspace(authContext('student-003', ['student'], ['informatics-s1']))).rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+    const pendingOnboarding = await getAcademicAdministrationWorkspace(authContext('student-003', ['student'], ['management-s1']))
+    expect(pendingOnboarding.profile).toBeUndefined()
+    expect(pendingOnboarding.programs.every(item => item.id === 'management-s1')).toBe(true)
+    expect(pendingOnboarding.leaveRequests).toEqual([])
+    expect(pendingOnboarding.advisingSessions).toEqual([])
+    expect(pendingOnboarding.theses).toEqual([])
+    expect(pendingOnboarding.mbkmActivities).toEqual([])
   })
 
   it('derives KHS and provisional transcript only from immutable published grade records', async () => {

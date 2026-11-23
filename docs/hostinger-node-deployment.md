@@ -161,6 +161,32 @@ npm run verify:hostinger -- --base-url=https://staging.example.ac.id --expected-
 
 The command fails unless health and readiness are `200`, health reports the exact expected version, the rendered Nuxt public config reports the expected feature profile, all four responses carry the required security and `no-store` headers, and anonymous `GET /api/accounts` returns `401`. Use `--private-api-path=/api/<another-private-route>` only when that endpoint is guaranteed to reject anonymous `GET` with `401`. Response bodies are validated but never printed.
 
+### Build a portable cPanel artifact
+
+When cPanel deployment uses an uploaded Nitro archive instead of a repository
+build, never compress `.output` with a generic Windows archive command. Nitro
+may contain directory links whose targets point to the local workstation; those
+links extract as broken dependencies on Linux and can make Firebase requests
+hang. Build and package with the reviewed command:
+
+```powershell
+$env:APP_VERSION = '<immutable-release-id>'
+npm run build
+npm run package:hostinger -- --output-dir="$env:TEMP"
+```
+
+The packager follows every link (`tar -h`), writes the archive atomically, and
+then rejects the result if it contains symbolic/hard-link entries, an absolute
+Windows/local link target, path traversal, or anything outside `.output`. It
+also refuses to overwrite an existing artifact. Use `--output=<absolute-path>`
+when an explicit filename is required.
+
+Upload only the generated
+`lms-output-<release>-production-portable.tar.gz` to the approved LMS application
+root, extract it there, restart only the `lms.sttsaintpaul.ac.id` Node.js
+application, and repeat the release verifier. Do not use an archive that has not
+printed `link entries: 0`.
+
 8. Confirm responses contain CSP, HSTS, frame/content-type/referrer/permissions/cross-origin policies, private cache controls, and an application-generated `X-Request-ID`.
 9. Complete the documented role, upload/scan, email-worker, Sentry, backup, and isolated restore checks before production approval.
 

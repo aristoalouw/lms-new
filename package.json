@@ -26,6 +26,7 @@
     "test:e2e:full-campus": "playwright test --config playwright.full-campus.config.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "package:hostinger": "node scripts/package-hostinger-release.mjs",
     "verify:hostinger": "node scripts/verify-hostinger-release.mjs",
     "audit:firebase-identities": "node scripts/audit-firebase-identities.mjs",
     "audit:campus-readiness": "node scripts/audit-campus-readiness.mjs",

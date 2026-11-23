@@ -357,7 +357,7 @@ function firebaseAccountContext(
 
 async function contextForFirebaseAppSession(payload: FirebaseAppSessionPayload): Promise<AuthContext | null> {
   const account = await firebaseSessionAccount(payload.uid)
-  if (!account || account.version !== payload.accountVersion) return null
+  if (!account || account.version !== payload.accountVersion || payload.issuedAt < account.sessionValidAfter) return null
   return firebaseAccountContext(account, payload)
 }
 

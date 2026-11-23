@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import type { H3Event } from 'h3'
 import type { AuthContext } from '../types/auth'
 import type { AuditEntry } from '../types/domain'
@@ -20,7 +21,7 @@ interface AuditInput {
 
 export async function appendAudit(input: AuditInput): Promise<AuditEntry> {
   const occurredAt = new Date().toISOString()
-  const id = opaqueId('audit', `${occurredAt}:${input.actor.uid}:${input.action}:${input.resourceId}:${Math.random()}`)
+  const id = opaqueId('audit', `${occurredAt}:${input.actor.uid}:${input.action}:${input.resourceId}:${randomUUID()}`)
   const entry: AuditEntry = {
     id,
     occurredAt,

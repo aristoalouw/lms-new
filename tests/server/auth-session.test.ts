@@ -125,6 +125,9 @@ describe('Firebase application sessions', () => {
     firebase.state.account = { ...firebase.state.account, version: 7, status: 'disabled' }
     await expect(authenticate(requestWithCookie(token))).resolves.toBeNull()
 
+    firebase.state.account = { ...firebase.state.account, version: 7, status: 'active', sessionValidAfter: Date.now() + 1_000 }
+    await expect(authenticate(requestWithCookie(token))).resolves.toBeNull()
+
     vi.advanceTimersByTime(8 * 60 * 60 * 1000 + 1)
     expect(verifyFirebaseAppSessionToken(token)).toBeNull()
   })

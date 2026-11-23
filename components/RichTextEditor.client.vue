@@ -16,6 +16,7 @@ onMounted(async () => {
   quill = new Quill(editorElement.value, {
     theme: 'snow',
     placeholder: props.placeholder || 'Tulis konten…',
+    formats: ['bold', 'italic', 'underline', 'list', 'link'],
     modules: { toolbar: [['bold', 'italic', 'underline'], [{ list: 'ordered' }, { list: 'bullet' }], ['link'], ['clean']] },
   })
   quill.root.setAttribute('aria-label', props.ariaLabel || 'Editor teks berformat')

@@ -49,3 +49,10 @@ Desktop.ini
 .eslintcache
 playwright-report/
 test-results/
+
+# Local release bundles, patches, and verification screenshots
+lms-output-*.tar.gz
+lms-release-*
+lms-hotfix-*
+lms-source-*
+production-login-*.png

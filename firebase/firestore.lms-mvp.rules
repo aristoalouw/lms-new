@@ -8,6 +8,7 @@ service cloud.firestore {
 
     function isAdministrator() {
       return signedIn()
+        && 'roles' in request.auth.token
         && request.auth.token.roles is list
         && 'administrator' in request.auth.token.roles;
     }

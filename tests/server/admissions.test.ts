@@ -12,7 +12,7 @@ import {
   submitAdmissionApplication,
 } from '../../server/services/admissions'
 import { admissionModuleState, resetAdmissionModuleState } from '../../server/services/admissions-state'
-import { createAdmissionWave, updateAdmissionWave } from '../../server/services/admissions-catalog'
+import { createAdmissionWave, updateAdmissionPathPolicy, updateAdmissionWave } from '../../server/services/admissions-catalog'
 import { accountRuntimeForTests, createAccount, resetAccountStateForTests } from '../../server/services/accounts'
 import type { AuthContext } from '../../server/types/auth'
 import { CampusError } from '../../server/utils/errors'
@@ -104,6 +104,30 @@ describe('admission workflow', () => {
     const catalog = await admissionCatalog()
     expect(catalog.programs.map(item => item.id)).toContain('management-s1')
     expect(catalog.waves[0]).toMatchObject({ id: '2026-wave-3', currency: 'IDR', registrationFee: 500_000 })
+    expect(catalog.pathPolicies.find(item => item.id === 'regular')).toMatchObject({ active: true, registrationFee: 500_000, version: 1 })
+  })
+
+  it('mengelola jalur, syarat, biaya, dan tanggal efektif dengan snapshot pada pendaftaran', async () => {
+    const updated = await updateAdmissionPathPolicy(admissions(), 'regular', {
+      id: 'regular', label: 'Reguler Prioritas', description: 'Jalur reguler periode prioritas.', active: true,
+      programStudyIds: ['management-s1'], studyModeIds: ['hybrid'],
+      requiredDocumentTypes: ['IDENTITY', 'DIPLOMA', 'TRANSCRIPT'], registrationFee: 625_000,
+      effectiveFrom: '2026-07-01T00:00:00+07:00', effectiveUntil: '2026-08-31T23:59:59+07:00', expectedVersion: 1,
+    })
+    expect(updated.pathPolicy).toMatchObject({ version: 2, registrationFee: 625_000, requiredDocumentTypes: ['IDENTITY', 'DIPLOMA', 'TRANSCRIPT'] })
+
+    const submitted = await submitAdmissionApplication(
+      submission(), 'admission-submit-path-policy-0001', null, undefined, new Date('2026-07-21T02:00:00.000Z'),
+    )
+    expect(submitted.application).toMatchObject({
+      registrationFeeAmount: 625_000,
+      admissionPathPolicyVersion: 2,
+      requiredDocumentTypes: ['IDENTITY', 'DIPLOMA', 'TRANSCRIPT'],
+    })
+
+    await expect(updateAdmissionPathPolicy(admissions(), 'regular', {
+      ...updated.pathPolicy, expectedVersion: 1,
+    })).rejects.toMatchObject({ code: 'VERSION_CONFLICT' })
   })
 
   it('mengelola gelombang Firebase-ready secara scoped, idempotent, dan versioned', async () => {

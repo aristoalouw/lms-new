@@ -21,6 +21,7 @@ import { CampusError } from '../../server/utils/errors'
 import { resetMockState } from '../../server/utils/mock-store'
 import { recordPayment, reversePayment } from '../../server/services/payments'
 import { billingModuleState } from '../../server/services/billing-state'
+import { getDepositAccount, listDepositRefunds, requestDepositRefund, reviewDepositRefund } from '../../server/services/billing-refunds'
 import { authContext } from './fixtures'
 
 const finance = () => authContext('finance-001', ['finance_staff'], ['management-s1'])
@@ -100,6 +101,74 @@ describe('student billing and account receivable', () => {
     expect(krsModuleState().students.get('student-010')?.holds.find(item => item.type === 'FINANCE')).toMatchObject({ active: false })
     await reversePayment(finance(), settled.payment.id, { externalReference: 'REV/HOLD/0001', reversedAt: '2026-07-22T02:00:00.000Z', reason: 'Settlement dibatalkan provider.' }, 'reversal-hold-key-01')
     expect(krsModuleState().students.get('student-010')?.holds.find(item => item.type === 'FINANCE')).toMatchObject({ active: true })
+  })
+
+  it('reserves and disburses overpayment refunds with segregation of duties and idempotency', async () => {
+    const overpaid = await recordPayment(finance(), {
+      invoiceId: 'invoice-2026-0001', amount: 5_000_000, channel: 'virtual_account',
+      externalReference: 'VA/OVERPAY/0001', receivedAt: '2026-07-21T03:00:00.000Z',
+    }, 'overpayment-key-0001')
+    expect(overpaid).toMatchObject({
+      invoice: { status: 'PAID' },
+      payment: { appliedAmountIdr: 2_500_000, overpaymentAmountIdr: 2_500_000 },
+      depositAccount: { balanceIdr: 2_750_000, reservedRefundAmountIdr: 0, version: 2 },
+    })
+    expect(await getDepositAccount(finance(), 'student-001')).toMatchObject({ balanceIdr: 2_750_000, version: 2 })
+    expect(await getDepositAccount(student(), 'student-001')).toMatchObject({ balanceIdr: 2_750_000, version: 2 })
+    await expect(getDepositAccount(authContext('student-002', ['student'], ['management-s1']), 'student-001'))
+      .rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+
+    const requested = await requestDepositRefund(finance(), {
+      studentId: 'student-001', amountIdr: 2_000_000,
+      reason: 'Kelebihan pembayaran harus dikembalikan ke rekening terverifikasi.', expectedDepositVersion: 2,
+    }, 'refund-request-0001', undefined, clock)
+    expect(requested.value).toMatchObject({
+      refund: { status: 'PENDING', requestedBy: 'finance-001', version: 1 },
+      account: { balanceIdr: 2_750_000, reservedRefundAmountIdr: 2_000_000, version: 3 },
+    })
+    await expect(reviewDepositRefund(finance(), requested.value.refund.id, {
+      status: 'DISBURSED', expectedVersion: 1, externalReference: 'BANK/REFUND/0001',
+    }, 'refund-self-review', undefined, clock)).rejects.toMatchObject({ statusCode: 403 } satisfies Partial<CampusError>)
+
+    const reviewer = authContext('finance-002', ['finance_staff'], ['management-s1'])
+    const reviewed = await reviewDepositRefund(reviewer, requested.value.refund.id, {
+      status: 'DISBURSED', expectedVersion: 1, externalReference: 'BANK/REFUND/0001',
+    }, 'refund-review-0001', undefined, clock)
+    const replay = await reviewDepositRefund(reviewer, requested.value.refund.id, {
+      status: 'DISBURSED', expectedVersion: 1, externalReference: 'BANK/REFUND/0001',
+    }, 'refund-review-0001', undefined, clock)
+    expect(reviewed.value).toMatchObject({
+      refund: { status: 'DISBURSED', reviewedBy: 'finance-002', version: 2 },
+      account: { balanceIdr: 750_000, reservedRefundAmountIdr: 0, version: 4 },
+      transaction: { amountIdr: 2_000_000, kind: 'REFUND', immutable: true },
+    })
+    expect(replay.replayed).toBe(true)
+    expect(await listDepositRefunds(reviewer, { programStudyId: 'management-s1', status: 'DISBURSED' }))
+      .toHaveLength(1)
+    await expect(reversePayment(finance(), overpaid.payment.id, {
+      externalReference: 'REV/OVERPAY/0001', reversedAt: '2026-07-22T02:00:00.000Z',
+      reason: 'Provider mencoba reversal setelah saldo refund telah dicairkan.',
+    }, 'overpayment-reversal-after-refund')).rejects.toMatchObject({ code: 'OVERPAYMENT_ALREADY_CONSUMED' })
+  })
+
+  it('releases a reserved refund balance when a second finance officer rejects it', async () => {
+    await recordPayment(finance(), {
+      invoiceId: 'invoice-2026-0001', amount: 3_000_000, channel: 'bank_transfer',
+      externalReference: 'BANK/OVERPAY/0002', receivedAt: '2026-07-21T03:00:00.000Z',
+    }, 'overpayment-key-0002')
+    const requested = await requestDepositRefund(finance(), {
+      studentId: 'student-001', amountIdr: 300_000,
+      reason: 'Permintaan pengembalian kelebihan pembayaran oleh mahasiswa.', expectedDepositVersion: 2,
+    }, 'refund-request-0002', undefined, clock)
+    const reviewer = authContext('finance-002', ['finance_staff'], ['management-s1'])
+    const rejected = await reviewDepositRefund(reviewer, requested.value.refund.id, {
+      status: 'REJECTED', expectedVersion: 1, reviewReason: 'Identitas rekening penerima belum tervalidasi.',
+    }, 'refund-review-0002', undefined, clock)
+    expect(rejected.value).toMatchObject({
+      refund: { status: 'REJECTED', reviewReason: 'Identitas rekening penerima belum tervalidasi.' },
+      account: { balanceIdr: 750_000, reservedRefundAmountIdr: 0 },
+    })
+    expect(rejected.value.transaction).toBeUndefined()
   })
 
   it('records immutable adjustments without reducing total below settled payments', async () => {

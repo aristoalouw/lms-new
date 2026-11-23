@@ -4,6 +4,7 @@ import type {
   BatchInvoiceResult,
   BillingInvoiceView,
   BillingListResult,
+  BillingRefundRequest,
   BillingSummary,
   BillingWriteResult,
   DepositAccount,
@@ -31,6 +32,9 @@ const issueDraft = reactive({ tariffPlanVersionId: 'ukt-standard_v1', studentIds
 const adjustmentDraft = reactive({ type: 'SCHOLARSHIP' as 'SCHOLARSHIP' | 'DISCOUNT' | 'PENALTY', amountIdr: 0, reason: '', reference: '' })
 const installmentText = ref('')
 const depositCredit = reactive({ studentId: '', amountIdr: 0, sourceReference: '', expectedVersion: 0 })
+const depositAccount = ref<DepositAccount | null>(null)
+const refunds = ref<BillingRefundRequest[]>([])
+const refundDraft = reactive({ amountIdr: 0, reason: '' })
 
 const isFinance = computed(() => user.value?.roles.includes('finance_staff') || false)
 const selected = computed(() => invoices.value.find(item => item.id === selectedId.value) || invoices.value[0])
@@ -63,8 +67,23 @@ async function loadBilling(message?: string) {
     })
     invoices.value = data.invoices.items; summary.value = data.summary
     if (!invoices.value.some(item => item.id === selectedId.value)) selectedId.value = invoices.value[0]?.id || ''
+    if (isFinance.value) await loadFinanceRefunds()
     if (message) notice.value = message
   } catch (error) { errorMessage.value = errorText(error) } finally { loading.value = false }
+}
+
+async function loadFinanceRefunds() {
+  if (!isFinance.value || !selected.value) {
+    depositAccount.value = null
+    refunds.value = []
+    return
+  }
+  const [{ data: depositData }, { data: refundData }] = await Promise.all([
+    $api.get<{ account: DepositAccount }>(`/billing/deposits/${encodeURIComponent(selected.value.studentId)}`),
+    $api.get<BillingRefundRequest[]>('/billing/refunds', { params: { programStudyId: selected.value.programStudyId, limit: 50 } }),
+  ])
+  depositAccount.value = depositData.account
+  refunds.value = refundData
 }
 
 async function execute(action: () => Promise<unknown>, message: string) {
@@ -111,6 +130,27 @@ function creditDeposit() {
   return execute(() => $api.post<BillingWriteResult<{ account: DepositAccount }>>('/billing/deposits/credit', depositCredit, { headers: { 'Idempotency-Key': requestKey('deposit-credit') } }), 'Saldo deposit mahasiswa dikreditkan.')
 }
 
+function requestRefund() {
+  if (!selected.value || !depositAccount.value || refundDraft.amountIdr < 1) return
+  return execute(() => $api.post('/billing/refunds', {
+    studentId: selected.value!.studentId,
+    amountIdr: Number(refundDraft.amountIdr),
+    reason: refundDraft.reason,
+    expectedDepositVersion: depositAccount.value!.version,
+  }, { headers: { 'Idempotency-Key': requestKey('refund-request') } }), 'Refund diajukan dan saldo terkait dicadangkan.')
+}
+
+function reviewRefund(refund: BillingRefundRequest, status: 'DISBURSED' | 'REJECTED') {
+  const promptText = status === 'DISBURSED' ? 'Referensi pencairan bank:' : 'Alasan penolakan refund:'
+  const detail = window.prompt(promptText)?.trim() || ''
+  if (detail.length < (status === 'DISBURSED' ? 4 : 5)) return
+  return execute(() => $api.post(`/billing/refunds/${encodeURIComponent(refund.id)}/review`, {
+    status,
+    expectedVersion: refund.version,
+    ...(status === 'DISBURSED' ? { externalReference: detail } : { reviewReason: detail }),
+  }, { headers: { 'Idempotency-Key': requestKey('refund-review') } }), status === 'DISBURSED' ? 'Refund dicairkan dan ledger deposit diperbarui.' : 'Refund ditolak dan saldo cadangan dilepas.')
+}
+
 function reviewProof(proof: PaymentProof, status: 'VERIFIED' | 'REJECTED') {
   const reviewNote = status === 'REJECTED' ? window.prompt('Alasan penolakan bukti:') || '' : 'Bukti cocok; lanjutkan pencatatan pembayaran dengan referensi bank yang sama.'
   if (status === 'REJECTED' && !reviewNote.trim()) return
@@ -141,7 +181,9 @@ onMounted(() => {
 
     <section v-if="selected && !isFinance" class="action-grid"><form class="workflow-surface action-card" @submit.prevent="redeemVoucher"><header class="workflow-surface__header"><div><span class="section-kicker">Potongan terkontrol</span><h2>Gunakan voucher</h2></div></header><input v-model="voucherCode" class="form-control" placeholder="Kode voucher" required><button class="btn btn-primary" :disabled="busy">Terapkan</button></form><form class="workflow-surface action-card" @submit.prevent="applyDeposit"><header class="workflow-surface__header"><div><span class="section-kicker">Saldo mahasiswa</span><h2>Gunakan deposit</h2></div></header><input v-model.number="depositAmount" class="form-control" type="number" min="1" :max="selected.outstandingAmountIdr" required><small>Saldo tersedia {{ rupiah(summary?.depositBalanceIdr || 0) }}</small><button class="btn btn-primary" :disabled="busy">Terapkan deposit</button></form><form class="workflow-surface action-card" @submit.prevent="submitProof"><header class="workflow-surface__header"><div><span class="section-kicker">Referensi file privat</span><h2>Ajukan bukti bayar</h2></div></header><input v-model.number="proofDraft.claimedAmountIdr" class="form-control" type="number" min="1" placeholder="Nominal" required><input v-model="proofDraft.paidAt" class="form-control" type="datetime-local" required><input v-model="proofDraft.bankReference" class="form-control" placeholder="Referensi bank" required><input v-model="proofDraft.fileId" class="form-control" placeholder="ID file CLEAN dari menu Berkas" required><button class="btn btn-primary" :disabled="busy">Ajukan bukti</button></form></section>
 
-    <section v-if="isFinance" class="staff-grid"><form class="workflow-surface action-card" @submit.prevent="issueInvoices"><header class="workflow-surface__header"><div><span class="section-kicker">Batch atomik</span><h2>Terbitkan tagihan</h2></div></header><input v-model="issueDraft.tariffPlanVersionId" class="form-control" placeholder="Versi tarif" required><textarea v-model="issueDraft.studentIds" class="form-control" rows="3" placeholder="student-001, student-002" required></textarea><input v-model="issueDraft.dueDate" class="form-control" type="date" required><button class="btn btn-primary" :disabled="busy">Terbitkan batch</button></form><form v-if="selected" class="workflow-surface action-card" @submit.prevent="addAdjustment"><header class="workflow-surface__header"><div><span class="section-kicker">Ledger penyesuaian</span><h2>Potongan / penalti</h2></div></header><select v-model="adjustmentDraft.type" class="form-select"><option>SCHOLARSHIP</option><option>DISCOUNT</option><option>PENALTY</option></select><input v-model.number="adjustmentDraft.amountIdr" class="form-control" type="number" min="1" placeholder="Nominal" required><input v-model="adjustmentDraft.reason" class="form-control" placeholder="Alasan" required><input v-model="adjustmentDraft.reference" class="form-control" placeholder="Nomor keputusan (opsional)"><button class="btn btn-primary" :disabled="busy">Catat penyesuaian</button></form><form v-if="selected" class="workflow-surface action-card" @submit.prevent="createInstallments"><header class="workflow-surface__header"><div><span class="section-kicker">Jadwal immutable</span><h2>Buat cicilan</h2></div></header><textarea v-model="installmentText" class="form-control" rows="5" placeholder="2026-08-31:3750000&#10;2026-09-30:3750000" required></textarea><small>Total baris harus sama dengan total tagihan.</small><button class="btn btn-primary" :disabled="busy">Simpan cicilan</button></form><form class="workflow-surface action-card" @submit.prevent="creditDeposit"><header class="workflow-surface__header"><div><span class="section-kicker">Ledger deposit</span><h2>Kredit saldo</h2></div></header><input v-model="depositCredit.studentId" class="form-control" placeholder="student-001" required><input v-model.number="depositCredit.amountIdr" class="form-control" type="number" min="1" placeholder="Nominal" required><input v-model="depositCredit.sourceReference" class="form-control" placeholder="Referensi unik" required><input v-model.number="depositCredit.expectedVersion" class="form-control" type="number" min="0" placeholder="Versi saldo"><button class="btn btn-primary" :disabled="busy">Kredit deposit</button></form></section>
+    <section v-if="isFinance" class="staff-grid"><form class="workflow-surface action-card" @submit.prevent="issueInvoices"><header class="workflow-surface__header"><div><span class="section-kicker">Batch atomik</span><h2>Terbitkan tagihan</h2></div></header><input v-model="issueDraft.tariffPlanVersionId" class="form-control" placeholder="Versi tarif" required><textarea v-model="issueDraft.studentIds" class="form-control" rows="3" placeholder="student-001, student-002" required></textarea><input v-model="issueDraft.dueDate" class="form-control" type="date" required><button class="btn btn-primary" :disabled="busy">Terbitkan batch</button></form><form v-if="selected" class="workflow-surface action-card" @submit.prevent="addAdjustment"><header class="workflow-surface__header"><div><span class="section-kicker">Ledger penyesuaian</span><h2>Potongan / penalti</h2></div></header><select v-model="adjustmentDraft.type" class="form-select"><option>SCHOLARSHIP</option><option>DISCOUNT</option><option>PENALTY</option></select><input v-model.number="adjustmentDraft.amountIdr" class="form-control" type="number" min="1" placeholder="Nominal" required><input v-model="adjustmentDraft.reason" class="form-control" placeholder="Alasan" required><input v-model="adjustmentDraft.reference" class="form-control" placeholder="Nomor keputusan (opsional)"><button class="btn btn-primary" :disabled="busy">Catat penyesuaian</button></form><form v-if="selected" class="workflow-surface action-card" @submit.prevent="createInstallments"><header class="workflow-surface__header"><div><span class="section-kicker">Jadwal immutable</span><h2>Buat cicilan</h2></div></header><textarea v-model="installmentText" class="form-control" rows="5" placeholder="2026-08-31:3750000&#10;2026-09-30:3750000" required></textarea><small>Total baris harus sama dengan total tagihan.</small><button class="btn btn-primary" :disabled="busy">Simpan cicilan</button></form><form class="workflow-surface action-card" @submit.prevent="creditDeposit"><header class="workflow-surface__header"><div><span class="section-kicker">Ledger deposit</span><h2>Kredit saldo</h2></div></header><input v-model="depositCredit.studentId" class="form-control" placeholder="student-001" required><input v-model.number="depositCredit.amountIdr" class="form-control" type="number" min="1" placeholder="Nominal" required><input v-model="depositCredit.sourceReference" class="form-control" placeholder="Referensi unik" required><input v-model.number="depositCredit.expectedVersion" class="form-control" type="number" min="0" placeholder="Versi saldo"><button class="btn btn-primary" :disabled="busy">Kredit deposit</button></form><form v-if="selected && depositAccount" class="workflow-surface action-card" @submit.prevent="requestRefund"><header class="workflow-surface__header"><div><span class="section-kicker">Segregation of duties</span><h2>Ajukan refund</h2></div></header><small>Saldo {{ rupiah(depositAccount.balanceIdr) }} · dicadangkan {{ rupiah(depositAccount.reservedRefundAmountIdr || 0) }} · v{{ depositAccount.version }}</small><input v-model.number="refundDraft.amountIdr" class="form-control" type="number" min="1" :max="depositAccount.balanceIdr - (depositAccount.reservedRefundAmountIdr || 0)" placeholder="Nominal refund" required><textarea v-model.trim="refundDraft.reason" class="form-control" rows="3" minlength="10" maxlength="500" placeholder="Alasan refund" required /><button class="btn btn-primary" :disabled="busy || depositAccount.version < 1">Ajukan untuk review</button></form></section>
+
+    <section v-if="isFinance && refunds.length" class="workflow-surface"><header class="workflow-surface__header"><div><span class="section-kicker">Refund queue</span><h2>Permintaan pengembalian dana</h2><p>Petugas yang mengajukan tidak dapat menyetujui permintaannya sendiri.</p></div></header><div class="proof-list"><article v-for="refund in refunds" :key="refund.id"><div><strong>{{ refund.studentId }} · {{ rupiah(refund.amountIdr) }}</strong><small>{{ refund.status }} · {{ refund.reason }} · v{{ refund.version }}</small></div><div v-if="refund.status === 'PENDING'"><button class="btn btn-sm btn-outline-danger" :disabled="busy || refund.requestedBy === user?.id" @click="reviewRefund(refund, 'REJECTED')">Tolak</button><button class="btn btn-sm btn-primary" :disabled="busy || refund.requestedBy === user?.id" @click="reviewRefund(refund, 'DISBURSED')">Tandai dicairkan</button></div></article></div></section>
 
     <section v-if="isFinance && selected?.proofs.length" class="workflow-surface"><header class="workflow-surface__header"><div><span class="section-kicker">Dual workflow</span><h2>Bukti pembayaran menunggu review</h2><p>Verifikasi bukti tidak otomatis mencatat pembayaran; gunakan referensi bank pada ledger pembayaran setelah cocok.</p></div></header><div class="proof-list"><article v-for="proof in selected.proofs" :key="proof.id"><div><strong>{{ proof.bankReference }}</strong><small>{{ rupiah(proof.claimedAmountIdr) }} · {{ proof.status }} · file {{ proof.file.fileId }} v{{ proof.file.version }}</small></div><div v-if="proof.status === 'SUBMITTED'"><button class="btn btn-sm btn-outline-danger" @click="reviewProof(proof, 'REJECTED')">Tolak</button><button class="btn btn-sm btn-primary" @click="reviewProof(proof, 'VERIFIED')">Verifikasi</button></div></article></div></section>
   </div>

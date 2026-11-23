@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AdmissionProgram, AdmissionWave } from '~/server/types/admissions'
+import type { AdmissionPathPolicy, AdmissionProgram, AdmissionWave } from '~/server/types/admissions'
 
 definePageMeta({ layout: 'auth' })
 useHead({ title: 'Formulir Pendaftaran PMB' })
@@ -21,6 +21,7 @@ const admissionsEmail = computed(() => String(config.public.admissionsEmail || '
 
 const programs = ref<AdmissionProgram[]>([])
 const waves = ref<AdmissionWave[]>([])
+const pathPolicies = ref<AdmissionPathPolicy[]>([])
 const queryProgram = typeof route.query.program === 'string' ? route.query.program : ''
 const form = reactive({
   name: '',
@@ -43,6 +44,11 @@ const activeWave = computed(() => {
 const availablePrograms = computed(() => programs.value.filter(program => (
   !activeWave.value?.programStudyIds.length || activeWave.value.programStudyIds.includes(program.id)
 )))
+const availablePathPolicies = computed(() => pathPolicies.value.filter(policy => policy.active && (
+  !policy.programStudyIds.length || !form.program || policy.programStudyIds.includes(form.program)
+)))
+const selectedPathPolicy = computed(() => availablePathPolicies.value.find(policy => policy.id === form.path) || null)
+const availableStudyModes = computed(() => selectedPathPolicy.value?.studyModeIds || [])
 const programLabel = computed(() => programs.value.find(item => item.id === form.program)?.name || 'Belum dipilih')
 const pathLabels: Record<string, string> = { regular: 'Reguler', 'kip-college': 'KIP Kuliah', transfer: 'Pindahan', rpl: 'RPL' }
 const modeLabels: Record<string, string> = { hybrid: 'Hybrid', evening: 'Kelas malam', weekend: 'Kelas akhir pekan' }
@@ -90,18 +96,28 @@ const loadCatalog = async () => {
   catalogLoading.value = true
   catalogError.value = ''
   try {
-    const { data } = await $api.get<{ programs: AdmissionProgram[]; waves: AdmissionWave[] }>('/admissions/catalog')
+    const { data } = await $api.get<{ programs: AdmissionProgram[]; waves: AdmissionWave[]; pathPolicies: AdmissionPathPolicy[] }>('/admissions/catalog')
     programs.value = data.programs
     waves.value = data.waves
+    pathPolicies.value = data.pathPolicies
     const requested = programs.value.find(item => item.id === queryProgram || item.name === queryProgram)?.id
     if (requested && availablePrograms.value.some(item => item.id === requested)) form.program = requested
     else if (availablePrograms.value.length === 1) form.program = availablePrograms.value[0]!.id
+    if (!availablePathPolicies.value.some(item => item.id === form.path)) form.path = availablePathPolicies.value[0]?.id || ''
+    if (!availableStudyModes.value.some(mode => mode === form.studyMode)) form.studyMode = availableStudyModes.value[0] || ''
   } catch {
     catalogError.value = 'Katalog penerimaan belum dapat dimuat. Silakan coba kembali.'
   } finally {
     catalogLoading.value = false
   }
 }
+
+watch(() => form.program, () => {
+  if (!availablePathPolicies.value.some(item => item.id === form.path)) form.path = availablePathPolicies.value[0]?.id || ''
+})
+watch(() => form.path, () => {
+  if (!availableStudyModes.value.some(mode => mode === form.studyMode)) form.studyMode = availableStudyModes.value[0] || ''
+})
 
 onMounted(loadCatalog)
 </script>
@@ -162,8 +178,8 @@ onMounted(loadCatalog)
             <legend class="visually-hidden">Pilihan studi</legend>
             <div class="mb-3"><label class="form-label" for="program">Program studi pilihan</label><select id="program" v-model="form.program" class="form-select" required :disabled="!activeWave"><option value="" disabled>Pilih program studi</option><option v-for="program in availablePrograms" :key="program.id" :value="program.id">{{ program.name }}</option></select></div>
             <div class="row g-3">
-              <div class="col-md-6"><label class="form-label" for="path">Jalur pendaftaran</label><select id="path" v-model="form.path" class="form-select"><option value="regular">Reguler</option><option value="kip-college">KIP Kuliah</option><option value="transfer">Pindahan</option><option value="rpl">RPL</option></select></div>
-              <div class="col-md-6"><label class="form-label" for="mode">Sistem perkuliahan</label><select id="mode" v-model="form.studyMode" class="form-select"><option value="hybrid">Hybrid</option><option value="evening">Kelas malam</option><option value="weekend">Kelas akhir pekan</option></select></div>
+              <div class="col-md-6"><label class="form-label" for="path">Jalur pendaftaran</label><select id="path" v-model="form.path" class="form-select" required><option v-for="policy in availablePathPolicies" :key="policy.id" :value="policy.id">{{ policy.label }}</option></select></div>
+              <div class="col-md-6"><label class="form-label" for="mode">Sistem perkuliahan</label><select id="mode" v-model="form.studyMode" class="form-select" required><option v-for="mode in availableStudyModes" :key="mode" :value="mode">{{ modeLabels[mode] || mode }}</option></select></div>
             </div>
             <div class="row g-3 mt-0">
               <div class="col-md-8"><label class="form-label" for="school">Asal sekolah / perguruan tinggi</label><input id="school" v-model.trim="form.school" class="form-control" required placeholder="Nama institusi asal"></div>
@@ -180,7 +196,7 @@ onMounted(loadCatalog)
             </label>
             <ul v-if="selectedFiles.length" class="selected-files"><li v-for="file in selectedFiles" :key="file"><i class="uil uil-file-check-alt" /> {{ file }} <StatusBadge status="pending" label="Belum diunggah" /></li></ul>
             <div class="application-review">
-              <div><span>Program studi</span><strong>{{ programLabel }}</strong></div><div><span>Jalur</span><strong>{{ pathLabels[form.path] }}</strong></div><div><span>Sistem kuliah</span><strong>{{ modeLabels[form.studyMode] }}</strong></div>
+              <div><span>Program studi</span><strong>{{ programLabel }}</strong></div><div><span>Jalur</span><strong>{{ selectedPathPolicy?.label || pathLabels[form.path] }}</strong></div><div><span>Sistem kuliah</span><strong>{{ modeLabels[form.studyMode] }}</strong></div>
             </div>
             <div class="form-check consent-check"><input id="consent" v-model="form.consent" class="form-check-input" type="checkbox" required><label class="form-check-label" for="consent">Saya menyatakan data yang diberikan benar dan menyetujui pemrosesan data untuk proses penerimaan mahasiswa baru sesuai kebijakan privasi kampus.</label></div>
             <div v-if="submitError" class="alert alert-danger mt-3 mb-0" role="alert">{{ submitError }}</div>

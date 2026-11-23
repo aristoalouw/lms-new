@@ -28,6 +28,38 @@ export interface AdmissionProgram {
   version?: number
 }
 
+export interface AdmissionPathPolicy {
+  id: AdmissionPathId
+  label: string
+  description: string
+  active: boolean
+  programStudyIds: string[]
+  studyModeIds: StudyModeId[]
+  requiredDocumentTypes: AdmissionDocumentType[]
+  registrationFee: number
+  currency: 'IDR'
+  effectiveFrom: string
+  effectiveUntil?: string
+  version: number
+  createdAt?: string
+  createdBy?: string
+  updatedAt?: string
+  updatedBy?: string
+}
+
+export interface AdmissionPathPolicyInput {
+  id: AdmissionPathId
+  label: string
+  description: string
+  active: boolean
+  programStudyIds: string[]
+  studyModeIds: StudyModeId[]
+  requiredDocumentTypes: AdmissionDocumentType[]
+  registrationFee: number
+  effectiveFrom: string
+  effectiveUntil?: string
+}
+
 export interface AdmissionWave {
   id: string
   academicYear: string
@@ -70,6 +102,8 @@ export interface AdmissionApplicationRecord {
   programStudyId: string
   unitId: string
   admissionPathId: AdmissionPathId
+  admissionPathPolicyVersion?: number
+  requiredDocumentTypes?: AdmissionDocumentType[]
   studyModeId: StudyModeId
   waveId: string
   academicYear: string

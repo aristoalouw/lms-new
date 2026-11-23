@@ -1,5 +1,6 @@
 import type {
   BillingAcademicHold,
+  BillingRefundRequest,
   BillingInvoice,
   BillingStudentProfile,
   BillingVoucher,
@@ -33,6 +34,7 @@ export interface BillingMockState {
   voucherRedemptions: Map<string, VoucherRedemption>
   paymentProofs: Map<string, PaymentProof>
   academicHolds: Map<string, BillingAcademicHold>
+  refunds: Map<string, BillingRefundRequest>
   invoiceCounters: Map<number, number>
   idempotency: Map<string, BillingIdempotencyRecord>
 }
@@ -115,6 +117,7 @@ function initialState(): BillingMockState {
     voucherRedemptions: new Map(),
     paymentProofs: new Map(),
     academicHolds: new Map(),
+    refunds: new Map(),
     invoiceCounters: new Map([[2026, 2]]),
     idempotency: new Map(),
   }

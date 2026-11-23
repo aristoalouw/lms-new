@@ -55,6 +55,11 @@ export interface PaymentRecord {
   recordedAt: string
   recordedBy: string
   status: 'SETTLED' | 'REVERSED'
+  /** Portion applied to the invoice. Legacy records default to `amount`. */
+  appliedAmountIdr?: number
+  /** Portion credited to the student's deposit ledger. */
+  overpaymentAmountIdr?: number
+  overpaymentDepositTransactionId?: string
   reversedAt?: string
   reversedBy?: string
   reversalExternalReference?: string

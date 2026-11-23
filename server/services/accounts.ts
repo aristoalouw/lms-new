@@ -55,6 +55,39 @@ export interface AccountWriteResult {
   auditId?: string
 }
 
+export const ACCOUNT_ACCESS_REQUEST_STATUSES = ['PENDING', 'APPROVED', 'REJECTED'] as const
+export type AccountAccessRequestStatus = (typeof ACCOUNT_ACCESS_REQUEST_STATUSES)[number]
+
+export interface AccountAccessChangeRequest {
+  id: string
+  accountId: string
+  changes: Pick<AccountUpdateInput, 'roles' | 'scope' | 'status' | 'expectedVersion' | 'explicitScope'>
+  reason: string
+  status: AccountAccessRequestStatus
+  requestedBy: string
+  requestedAt: string
+  expectedAccountVersion: number
+  proposedAuthorizationHash: string
+  proposedRoles: UserRole[]
+  proposedScope: AccessScope
+  version: number
+  approvedBy?: string
+  approvedAt?: string
+  rejectedBy?: string
+  rejectedAt?: string
+  rejectionReason?: string
+}
+
+export interface AccountAccessRequestListResult {
+  items: AccountAccessChangeRequest[]
+  nextCursor?: string
+}
+
+interface AccountUpdateApproval {
+  request: AccountAccessChangeRequest
+  expectedRequestVersion: number
+}
+
 interface AccountCreateInput {
   email: string
   displayName: string
@@ -99,6 +132,8 @@ const SCOPED_STAFF_ROLES = new Set<UserRole>([
 ])
 const ACCOUNT_COLLECTION_LIMIT = 5_000
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000
+const SENSITIVE_ACCOUNT_ROLES = new Set<UserRole>(['administrator', 'finance_staff', 'academic_staff'])
+const ACCESS_REQUEST_COLLECTION = 'accountAccessChangeRequests'
 
 const EMPTY_SCOPE = (): AccessScope => ({ unitIds: [], programStudyIds: [], cohortYears: [], studentIds: [] })
 
@@ -232,6 +267,8 @@ const SEEDED_ACCOUNTS: AccountRecord[] = [
 ]
 
 let mockAccounts = new Map(SEEDED_ACCOUNTS.map((account) => [account.id, cloneValue(account)]))
+let mockAccessRequests = new Map<string, AccountAccessChangeRequest>()
+const mockAccessRequestIdempotency = new Map<string, { requestHash: string; response: unknown }>()
 const mockIdentity = new Map<string, IdentitySnapshot>()
 const revokedSessionUids = new Set<string>()
 
@@ -615,6 +652,56 @@ function rolesOrScopeChanged(before: AccountRecord, after: AccountRecord): boole
   return requestHash({ roles: before.roles, scope: before.scope }) !== requestHash({ roles: after.roles, scope: after.scope })
 }
 
+function authorizationHash(account: Pick<AccountRecord, 'roles' | 'scope'>): string {
+  return requestHash({ roles: account.roles, scope: account.scope, status: 'status' in account ? account.status : undefined })
+}
+
+function dualApprovalRequired(): boolean {
+  return process.env.NODE_ENV === 'production' || process.env.ACCOUNT_REQUIRE_DUAL_APPROVAL === 'true'
+}
+
+function includesSensitiveRole(roles: readonly UserRole[]): boolean {
+  return roles.some(role => SENSITIVE_ACCOUNT_ROLES.has(role))
+}
+
+function isSensitiveAuthorizationChange(before: AccountRecord, after: AccountRecord): boolean {
+  const sensitiveAuthorizationChanged = rolesOrScopeChanged(before, after)
+    && (includesSensitiveRole(before.roles) || includesSensitiveRole(after.roles))
+  const sensitiveAccountActivated = before.status !== 'active'
+    && after.status === 'active'
+    && includesSensitiveRole(after.roles)
+  return sensitiveAuthorizationChanged || sensitiveAccountActivated
+}
+
+function assertSensitiveApproval(
+  before: AccountRecord,
+  after: AccountRecord,
+  approver: AuthContext,
+  approval?: AccountUpdateApproval,
+): void {
+  if (!dualApprovalRequired() || !isSensitiveAuthorizationChange(before, after)) return
+  if (!approval) {
+    conflict(
+      'SECOND_APPROVER_REQUIRED',
+      'Perubahan role atau scope sensitif harus diajukan dan disetujui administrator lain.',
+    )
+  }
+  const request = approval.request
+  if (request.status !== 'PENDING') conflict('ACCESS_REQUEST_NOT_PENDING', 'Permintaan akses tidak lagi menunggu persetujuan.')
+  if (request.version !== approval.expectedRequestVersion) {
+    conflict('VERSION_CONFLICT', 'Permintaan akses telah berubah. Muat ulang sebelum menyetujui.', { currentVersion: request.version })
+  }
+  if (request.requestedBy === approver.uid) {
+    conflict('SECOND_APPROVER_REQUIRED', 'Pengaju tidak dapat menyetujui perubahan aksesnya sendiri.')
+  }
+  if (request.accountId !== before.id || request.expectedAccountVersion !== before.version) {
+    conflict('STALE_ACCESS_REQUEST', 'Akun telah berubah sejak permintaan akses diajukan.')
+  }
+  if (request.proposedAuthorizationHash !== authorizationHash(after)) {
+    conflict('ACCESS_REQUEST_CHANGED', 'Perubahan akses tidak sama dengan proposal yang disetujui.')
+  }
+}
+
 function studentIdentityId(account: AccountRecord): string | undefined {
   return account.roles.includes('student') ? account.scope.studentIds[0] : undefined
 }
@@ -741,6 +828,345 @@ export async function listAccounts(context: AuthContext, query: AccountListQuery
   }
 }
 
+function parseAccessRequestInput(value: unknown): { changes: AccountUpdateInput; reason: string } {
+  const body = requireRecord(value)
+  rejectUnknownFields(body, ['changes', 'reason'])
+  const rawChanges = requireRecord(body.changes, 'changes')
+  rejectUnknownFields(rawChanges, ['roles', 'scope', 'expectedVersion'])
+  if (rawChanges.roles === undefined && rawChanges.scope === undefined) {
+    invalidInput('Permintaan akses wajib mengubah role atau scope.')
+  }
+  return {
+    changes: parseUpdateInput(rawChanges),
+    reason: requireString(body.reason, 'reason', { min: 10, max: 500 }),
+  }
+}
+
+async function accountById(accountId: string): Promise<AccountRecord> {
+  const safeId = requireString(accountId, 'accountId', { max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]*$/ })
+  if (dataMode() === 'mock') {
+    const account = mockAccounts.get(safeId)
+    if (!account) notFound('Akun')
+    return cloneValue(account)
+  }
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan akun tidak tersedia.')
+  const snapshot = await db.collection('accounts').doc(safeId).get()
+  if (!snapshot.exists) notFound('Akun')
+  return { id: snapshot.id, ...snapshot.data() } as AccountRecord
+}
+
+async function accessRequestById(requestId: string): Promise<AccountAccessChangeRequest> {
+  const safeId = requireString(requestId, 'requestId', { max: 128, pattern: /^[A-Za-z0-9_-]+$/ })
+  if (dataMode() === 'mock') {
+    const request = mockAccessRequests.get(safeId)
+    if (!request) notFound('Permintaan akses')
+    return cloneValue(request)
+  }
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan permintaan akses tidak tersedia.')
+  const snapshot = await db.collection(ACCESS_REQUEST_COLLECTION).doc(safeId).get()
+  if (!snapshot.exists) notFound('Permintaan akses')
+  return { id: snapshot.id, ...snapshot.data() } as AccountAccessChangeRequest
+}
+
+function accessRequestAuditView(request: AccountAccessChangeRequest): Record<string, unknown> {
+  return {
+    accountId: request.accountId,
+    status: request.status,
+    requestedBy: request.requestedBy,
+    expectedAccountVersion: request.expectedAccountVersion,
+    proposedRoles: request.proposedRoles,
+    proposedScope: request.proposedScope,
+    version: request.version,
+  }
+}
+
+export async function requestAccountAccessChange(
+  context: AuthContext,
+  accountId: string,
+  value: unknown,
+  idempotencyKey: string,
+  event?: H3Event,
+): Promise<{ request: AccountAccessChangeRequest; replayed: boolean; auditId?: string }> {
+  requireAdministrator(context)
+  const safeId = requireString(accountId, 'accountId', { max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]*$/ })
+  const input = parseAccessRequestInput(value)
+  const namespace = `account:access-request:${context.uid}:${idempotencyKey}`
+  const hash = requestHash({ accountId: safeId, ...input })
+  const now = new Date().toISOString()
+  const requestId = opaqueId('acr', namespace)
+  let request: AccountAccessChangeRequest
+  let replayed = false
+
+  const proposal = (before: AccountRecord): AccountAccessChangeRequest => {
+    const after = buildUpdatedAccount(before, context, input.changes, now)
+    if (!isSensitiveAuthorizationChange(before, after)) {
+      invalidInput('Perubahan ini tidak menyentuh role atau scope sensitif dan dapat disimpan langsung.')
+    }
+    return {
+      id: requestId,
+      accountId: safeId,
+      changes: {
+        ...(input.changes.roles ? { roles: [...input.changes.roles] } : {}),
+        ...(input.changes.scope ? { scope: cloneValue(input.changes.scope) } : {}),
+        expectedVersion: input.changes.expectedVersion,
+        explicitScope: input.changes.explicitScope,
+      },
+      reason: input.reason,
+      status: 'PENDING',
+      requestedBy: context.uid,
+      requestedAt: now,
+      expectedAccountVersion: before.version,
+      proposedAuthorizationHash: authorizationHash(after),
+      proposedRoles: [...after.roles],
+      proposedScope: cloneValue(after.scope),
+      version: 1,
+    }
+  }
+
+  if (dataMode() === 'mock') {
+    const previous = mockAccessRequestIdempotency.get(namespace)
+    if (previous) {
+      if (previous.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key telah digunakan untuk permintaan akses berbeda.')
+      return { request: cloneValue(previous.response as AccountAccessChangeRequest), replayed: true }
+    }
+    const before = await accountById(safeId)
+    request = proposal(before)
+    const proposed = buildUpdatedAccount(before, context, input.changes, now)
+    await validateAccountReferences(proposed, input.changes.explicitScope)
+    mockAccessRequests.set(request.id, cloneValue(request))
+    mockAccessRequestIdempotency.set(namespace, { requestHash: hash, response: cloneValue(request) })
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan permintaan akses tidak tersedia.')
+    const accountRef = db.collection('accounts').doc(safeId)
+    const requestRef = db.collection(ACCESS_REQUEST_COLLECTION).doc(requestId)
+    const idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace))
+    const preliminary = proposal(await accountById(safeId))
+    await validateAccountReferences({ ...(await accountById(safeId)), roles: preliminary.proposedRoles, scope: preliminary.proposedScope }, input.changes.explicitScope)
+    const result = await db.runTransaction(async (transaction) => {
+      const [previous, accountSnapshot, existingRequest] = await Promise.all([
+        transaction.get(idemRef),
+        transaction.get(accountRef),
+        transaction.get(requestRef),
+      ])
+      if (previous.exists) {
+        const data = previous.data() as { requestHash: string; response: AccountAccessChangeRequest }
+        if (data.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key telah digunakan untuk permintaan akses berbeda.')
+        return { request: data.response, replayed: true }
+      }
+      if (!accountSnapshot.exists) notFound('Akun')
+      if (existingRequest.exists) conflict('ACCESS_REQUEST_ALREADY_EXISTS', 'Permintaan akses telah tersedia.')
+      const current = { id: accountSnapshot.id, ...accountSnapshot.data() } as AccountRecord
+      const proposed = proposal(current)
+      transaction.create(requestRef, proposed)
+      transaction.create(idemRef, {
+        requestHash: hash,
+        response: proposed,
+        createdAt: now,
+        purgeAfter: firestorePurgeAfter(now, IDEMPOTENCY_TTL_MS),
+      })
+      return { request: proposed, replayed: false }
+    })
+    request = result.request
+    replayed = result.replayed
+  }
+
+  const result: { request: AccountAccessChangeRequest; replayed: boolean; auditId?: string } = {
+    request: cloneValue(request),
+    replayed,
+  }
+  if (!replayed) {
+    const audit = await appendAudit({
+      actor: context,
+      action: 'ACCOUNT_ACCESS_CHANGE_REQUESTED',
+      resourceType: 'account_access_request',
+      resourceId: request.id,
+      after: accessRequestAuditView(request),
+      metadata: { reason: request.reason },
+      event,
+    })
+    result.auditId = audit.id
+  }
+  return result
+}
+
+export async function listAccountAccessChangeRequests(
+  context: AuthContext,
+  options: { status?: AccountAccessRequestStatus; limit?: number; cursor?: string } = {},
+): Promise<AccountAccessRequestListResult> {
+  requireAdministrator(context)
+  const limit = requireInteger(options.limit ?? 20, 'limit', 1, 50)
+  if (options.status && !ACCOUNT_ACCESS_REQUEST_STATUSES.includes(options.status)) invalidInput('Status permintaan akses tidak valid.')
+  if (dataMode() === 'mock') {
+    const items = [...mockAccessRequests.values()]
+      .filter(item => !options.status || item.status === options.status)
+      .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt) || right.id.localeCompare(left.id))
+    const start = options.cursor ? Math.max(0, items.findIndex(item => item.id === options.cursor) + 1) : 0
+    const page = items.slice(start, start + limit)
+    return {
+      items: page.map(cloneValue),
+      ...(start + limit < items.length && page.length ? { nextCursor: page.at(-1)!.id } : {}),
+    }
+  }
+  const db = firestoreAdmin()
+  if (!db) serviceUnavailable('Penyimpanan permintaan akses tidak tersedia.')
+  let query: FirebaseFirestore.Query = db.collection(ACCESS_REQUEST_COLLECTION).orderBy('requestedAt', 'desc')
+  if (options.status) query = query.where('status', '==', options.status)
+  if (options.cursor) {
+    const cursor = await db.collection(ACCESS_REQUEST_COLLECTION).doc(options.cursor).get()
+    if (!cursor.exists) invalidInput('Cursor permintaan akses tidak valid.')
+    query = query.startAfter(cursor)
+  }
+  const snapshot = await query.limit(limit + 1).get()
+  const items = snapshot.docs.slice(0, limit).map(document => ({ id: document.id, ...document.data() }) as AccountAccessChangeRequest)
+  return { items, ...(snapshot.size > limit && items.length ? { nextCursor: items.at(-1)!.id } : {}) }
+}
+
+export async function approveAccountAccessChange(
+  context: AuthContext,
+  requestId: string,
+  input: { expectedVersion: number },
+  idempotencyKey: string,
+  event?: H3Event,
+): Promise<{ request: AccountAccessChangeRequest; account: AccountRecord; replayed: boolean; auditId?: string }> {
+  requireAdministrator(context)
+  const request = await accessRequestById(requestId)
+  if (request.status === 'APPROVED') {
+    const account = await accountById(request.accountId)
+    return { request, account, replayed: true }
+  }
+  if (request.status !== 'PENDING') conflict('ACCESS_REQUEST_NOT_PENDING', 'Permintaan akses tidak lagi menunggu persetujuan.')
+  if (request.requestedBy === context.uid) conflict('SECOND_APPROVER_REQUIRED', 'Pengaju tidak dapat menyetujui perubahan aksesnya sendiri.')
+  if (request.version !== input.expectedVersion) {
+    conflict('VERSION_CONFLICT', 'Permintaan akses telah berubah. Muat ulang sebelum menyetujui.', { currentVersion: request.version })
+  }
+  const update = await updateAccount(
+    context,
+    request.accountId,
+    {
+      ...(request.changes.roles ? { roles: request.changes.roles } : {}),
+      ...(request.changes.scope ? { scope: request.changes.scope } : {}),
+      expectedVersion: request.expectedAccountVersion,
+    },
+    `access-approval:${request.id}:${idempotencyKey}`,
+    event,
+    { request, expectedRequestVersion: input.expectedVersion },
+  )
+  const approvedRequest = await accessRequestById(request.id)
+  const result: { request: AccountAccessChangeRequest; account: AccountRecord; replayed: boolean; auditId?: string } = {
+    request: approvedRequest,
+    account: update.account,
+    replayed: update.replayed,
+  }
+  if (!update.replayed) {
+    const audit = await appendAudit({
+      actor: context,
+      action: 'ACCOUNT_ACCESS_CHANGE_APPROVED',
+      resourceType: 'account_access_request',
+      resourceId: request.id,
+      before: accessRequestAuditView(request),
+      after: accessRequestAuditView(approvedRequest),
+      metadata: { requesterId: request.requestedBy, accountId: request.accountId },
+      event,
+    })
+    result.auditId = audit.id
+  }
+  return result
+}
+
+export async function rejectAccountAccessChange(
+  context: AuthContext,
+  requestIdValue: string,
+  input: { expectedVersion: number; reason: string },
+  idempotencyKey: string,
+  event?: H3Event,
+): Promise<{ request: AccountAccessChangeRequest; replayed: boolean; auditId?: string }> {
+  requireAdministrator(context)
+  const requestId = requireString(requestIdValue, 'requestId', { max: 128, pattern: /^[A-Za-z0-9_-]+$/ })
+  const expectedVersion = requireInteger(input.expectedVersion, 'expectedVersion', 1, 100_000)
+  const reason = requireString(input.reason, 'reason', { min: 5, max: 500 })
+  const namespace = `account:access-reject:${context.uid}:${idempotencyKey}`
+  const hash = requestHash({ requestId, expectedVersion, reason })
+  const now = new Date().toISOString()
+  let request: AccountAccessChangeRequest
+  let replayed = false
+
+  const transition = (current: AccountAccessChangeRequest): AccountAccessChangeRequest => {
+    if (current.status !== 'PENDING') conflict('ACCESS_REQUEST_NOT_PENDING', 'Permintaan akses tidak lagi menunggu persetujuan.')
+    if (current.requestedBy === context.uid) conflict('SECOND_APPROVER_REQUIRED', 'Pengaju tidak dapat menolak permintaan aksesnya sendiri.')
+    if (current.version !== expectedVersion) {
+      conflict('VERSION_CONFLICT', 'Permintaan akses telah berubah. Muat ulang sebelum menolak.', { currentVersion: current.version })
+    }
+    return {
+      ...cloneValue(current),
+      status: 'REJECTED',
+      version: current.version + 1,
+      rejectedBy: context.uid,
+      rejectedAt: now,
+      rejectionReason: reason,
+    }
+  }
+
+  if (dataMode() === 'mock') {
+    const previous = mockAccessRequestIdempotency.get(namespace)
+    if (previous) {
+      if (previous.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key telah digunakan untuk penolakan berbeda.')
+      return { request: cloneValue(previous.response as AccountAccessChangeRequest), replayed: true }
+    }
+    const current = mockAccessRequests.get(requestId)
+    if (!current) notFound('Permintaan akses')
+    request = transition(current)
+    mockAccessRequests.set(request.id, cloneValue(request))
+    mockAccessRequestIdempotency.set(namespace, { requestHash: hash, response: cloneValue(request) })
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan permintaan akses tidak tersedia.')
+    const requestRef = db.collection(ACCESS_REQUEST_COLLECTION).doc(requestId)
+    const idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace))
+    const transactionResult = await db.runTransaction(async (transaction) => {
+      const [prior, snapshot] = await Promise.all([transaction.get(idemRef), transaction.get(requestRef)])
+      if (prior.exists) {
+        const stored = prior.data() as { requestHash: string; response: AccountAccessChangeRequest }
+        if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key telah digunakan untuk penolakan berbeda.')
+        return { request: stored.response, replayed: true }
+      }
+      if (!snapshot.exists) notFound('Permintaan akses')
+      const next = transition({ id: snapshot.id, ...snapshot.data() } as AccountAccessChangeRequest)
+      transaction.update(requestRef, next)
+      transaction.create(idemRef, {
+        requestHash: hash,
+        response: next,
+        createdAt: now,
+        purgeAfter: firestorePurgeAfter(now, IDEMPOTENCY_TTL_MS),
+      })
+      return { request: next, replayed: false }
+    })
+    request = transactionResult.request
+    replayed = transactionResult.replayed
+  }
+
+  const result: { request: AccountAccessChangeRequest; replayed: boolean; auditId?: string } = {
+    request: cloneValue(request),
+    replayed,
+  }
+  if (!replayed) {
+    const audit = await appendAudit({
+      actor: context,
+      action: 'ACCOUNT_ACCESS_CHANGE_REJECTED',
+      resourceType: 'account_access_request',
+      resourceId: request.id,
+      before: { status: 'PENDING', version: expectedVersion },
+      after: accessRequestAuditView(request),
+      metadata: { requesterId: request.requestedBy, accountId: request.accountId, reason },
+      event,
+    })
+    result.auditId = audit.id
+  }
+  return result
+}
+
 export async function createAccount(
   context: AuthContext,
   value: unknown,
@@ -749,6 +1175,12 @@ export async function createAccount(
 ): Promise<AccountWriteResult> {
   requireAdministrator(context)
   const input = parseCreateInput(value)
+  if (dualApprovalRequired() && includesSensitiveRole(input.roles) && input.status === 'active') {
+    conflict(
+      'SECOND_APPROVER_REQUIRED',
+      'Akun dengan role sensitif harus dibuat nonaktif, lalu aktivasi diajukan untuk persetujuan administrator kedua.',
+    )
+  }
   const hash = requestHash(input)
   const namespace = `account:create:${context.uid}:${idempotencyKey}`
   const now = new Date().toISOString()
@@ -839,6 +1271,7 @@ export async function updateAccount(
   value: unknown,
   idempotencyKey: string,
   event?: H3Event,
+  approval?: AccountUpdateApproval,
 ): Promise<AccountWriteResult> {
   requireAdministrator(context)
   const safeId = requireString(accountId, 'accountId', { max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._:-]*$/ })
@@ -857,6 +1290,7 @@ export async function updateAccount(
     if (!stored) notFound('Akun')
     before = cloneValue(stored)
     after = buildUpdatedAccount(before, context, input, now)
+    assertSensitiveApproval(before, after, context, approval)
     if ([...mockAccounts.values()].some((account) => account.id !== safeId && account.email === after.email)) {
       conflict('EMAIL_ALREADY_USED', 'Email telah digunakan akun lain.')
     }
@@ -870,6 +1304,16 @@ export async function updateAccount(
     const revokeSessions = (after.status !== 'active' && before.status !== after.status) || rolesOrScopeChanged(before, after)
     await identityGateway().synchronizeAccount(after, revokeSessions)
     mockAccounts.set(after.id, cloneValue(after))
+    if (approval && isSensitiveAuthorizationChange(before, after)) {
+      const approvedRequest: AccountAccessChangeRequest = {
+        ...cloneValue(approval.request),
+        status: 'APPROVED',
+        version: approval.request.version + 1,
+        approvedBy: context.uid,
+        approvedAt: now,
+      }
+      mockAccessRequests.set(approvedRequest.id, approvedRequest)
+    }
     result = { account: cloneValue(after), replayed: false }
     saveMockReplay(namespace, hash, result, now)
   } else {
@@ -885,6 +1329,7 @@ export async function updateAccount(
     if (!snapshot.exists) notFound('Akun')
     before = { id: snapshot.id, ...snapshot.data() } as AccountRecord
     after = buildUpdatedAccount(before, context, input, now)
+    assertSensitiveApproval(before, after, context, approval)
     const authorizationChanged = rolesOrScopeChanged(before, after)
       || !sameStrings(before.guardianStudentIds, after.guardianStudentIds)
       || (before.status !== 'active' && after.status === 'active')
@@ -904,12 +1349,14 @@ export async function updateAccount(
     const afterStudentId = studentIdentityId(after)
     const oldStudentIdentityRef = beforeStudentId ? db.collection('accountStudentIds').doc(beforeStudentId) : undefined
     const newStudentIdentityRef = afterStudentId ? db.collection('accountStudentIds').doc(afterStudentId) : undefined
+    const approvalRef = approval ? db.collection(ACCESS_REQUEST_COLLECTION).doc(approval.request.id) : undefined
     try {
       result = await db.runTransaction(async (transaction) => {
-        const [previous, current, emailOwner] = await Promise.all([
+        const [previous, current, emailOwner, storedApproval] = await Promise.all([
           transaction.get(idemRef),
           transaction.get(accountRef),
           transaction.get(newEmailRef),
+          approvalRef ? transaction.get(approvalRef) : Promise.resolve(undefined),
         ])
         const oldStudentIdentity = authorizationChanged && oldStudentIdentityRef
           ? await transaction.get(oldStudentIdentityRef)
@@ -929,6 +1376,20 @@ export async function updateAccount(
         }
         if (emailOwner.exists && emailOwner.data()?.accountId !== safeId) conflict('EMAIL_ALREADY_USED', 'Email telah digunakan akun lain.')
         const transactionAfter = buildUpdatedAccount(transactionBefore, context, input, now)
+        if (approval) {
+          if (!storedApproval?.exists) notFound('Permintaan akses')
+          assertSensitiveApproval(
+            transactionBefore,
+            transactionAfter,
+            context,
+            {
+              request: { id: storedApproval.id, ...storedApproval.data() } as AccountAccessChangeRequest,
+              expectedRequestVersion: approval.expectedRequestVersion,
+            },
+          )
+        } else {
+          assertSensitiveApproval(transactionBefore, transactionAfter, context)
+        }
         if (authorizationChanged && newStudentIdentity?.exists && newStudentIdentity.data()?.accountId !== safeId) {
           conflict('STUDENT_ID_ALREADY_USED', 'ID mahasiswa telah ditautkan ke akun lain.')
         }
@@ -953,6 +1414,14 @@ export async function updateAccount(
           createdAt: now,
           purgeAfter: firestorePurgeAfter(now, IDEMPOTENCY_TTL_MS),
         })
+        if (approvalRef && storedApproval?.exists && isSensitiveAuthorizationChange(transactionBefore, transactionAfter)) {
+          transaction.update(approvalRef, {
+            status: 'APPROVED',
+            version: approval!.expectedRequestVersion + 1,
+            approvedBy: context.uid,
+            approvedAt: now,
+          })
+        }
         return response
       })
     } catch (error) {
@@ -1105,17 +1574,21 @@ export async function promoteApplicantAccount(
 
 export function resetAccountStateForTests(): void {
   mockAccounts = new Map(SEEDED_ACCOUNTS.map((account) => [account.id, cloneValue(account)]))
+  mockAccessRequests = new Map()
+  mockAccessRequestIdempotency.clear()
   mockIdentity.clear()
   revokedSessionUids.clear()
 }
 
 export function accountRuntimeForTests(): {
   accounts: AccountRecord[]
+  accessRequests: AccountAccessChangeRequest[]
   identities: IdentitySnapshot[]
   revokedSessionUids: string[]
 } {
   return {
     accounts: [...mockAccounts.values()].map(cloneValue),
+    accessRequests: [...mockAccessRequests.values()].map(cloneValue),
     identities: [...mockIdentity.values()].map(cloneValue),
     revokedSessionUids: [...revokedSessionUids],
   }

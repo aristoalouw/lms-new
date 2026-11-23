@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AdmissionProgram, AdmissionWave } from '~/server/types/admissions'
+import { ADMISSION_DOCUMENT_TYPES, STUDY_MODE_IDS, type AdmissionPathPolicy, type AdmissionProgram, type AdmissionWave } from '~/server/types/admissions'
 
 definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Pengaturan PMB' })
@@ -8,17 +8,27 @@ const { can } = useAuth()
 const { $api } = useNuxtApp()
 const programs = ref<AdmissionProgram[]>([])
 const waves = ref<AdmissionWave[]>([])
+const pathPolicies = ref<AdmissionPathPolicy[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
 const noticeMessage = ref('')
 const editingId = ref('')
+const editingPathId = ref('')
 
 const blank = () => ({
   id: '', academicYear: '', label: '', opensAt: '', closesAt: '', registrationFee: 0,
   active: false, programStudyIds: [] as string[], capacity: 100, expectedVersion: 0,
 })
 const form = reactive(blank())
+const blankPath = () => ({
+  id: '', label: '', description: '', active: false, programStudyIds: [] as string[],
+  studyModeIds: [...STUDY_MODE_IDS] as string[], requiredDocumentTypes: [] as string[],
+  registrationFee: 0, effectiveFrom: '', effectiveUntil: '', expectedVersion: 1,
+})
+const pathForm = reactive(blankPath())
+const documentLabels: Record<string, string> = { IDENTITY: 'Identitas resmi', DIPLOMA: 'Ijazah/SKL', TRANSCRIPT: 'Transkrip', KIP_CARD: 'Kartu KIP', RPL_PORTFOLIO: 'Portofolio RPL', OTHER: 'Dokumen lain' }
+const modeLabels: Record<string, string> = { hybrid: 'Hybrid', evening: 'Kelas malam', weekend: 'Kelas akhir pekan' }
 const localDate = (value?: string) => value
   ? new Intl.DateTimeFormat('sv-SE', {
       year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
@@ -39,13 +49,53 @@ async function load() {
   loading.value = true
   errorMessage.value = ''
   try {
-    const { data } = await $api.get<{ programs: AdmissionProgram[]; waves: AdmissionWave[] }>('/admissions/catalog/manage')
+    const { data } = await $api.get<{ programs: AdmissionProgram[]; waves: AdmissionWave[]; pathPolicies: AdmissionPathPolicy[] }>('/admissions/catalog/manage')
     programs.value = data.programs
     waves.value = data.waves
+    pathPolicies.value = data.pathPolicies
   } catch (error) {
     errorMessage.value = readable(error)
   } finally {
     loading.value = false
+  }
+}
+
+function editPath(policy: AdmissionPathPolicy) {
+  editingPathId.value = policy.id
+  Object.assign(pathForm, {
+    id: policy.id, label: policy.label, description: policy.description, active: policy.active,
+    programStudyIds: [...policy.programStudyIds], studyModeIds: [...policy.studyModeIds],
+    requiredDocumentTypes: [...policy.requiredDocumentTypes], registrationFee: policy.registrationFee,
+    effectiveFrom: localDate(policy.effectiveFrom), effectiveUntil: localDate(policy.effectiveUntil), expectedVersion: policy.version,
+  })
+}
+
+function resetPath() {
+  editingPathId.value = ''
+  Object.assign(pathForm, blankPath())
+}
+
+async function savePath() {
+  if (!can('pmb.configure') || !editingPathId.value) return
+  saving.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.patch(`/admissions/catalog/paths/${encodeURIComponent(editingPathId.value)}`, {
+      id: pathForm.id, label: pathForm.label, description: pathForm.description, active: pathForm.active,
+      programStudyIds: [...pathForm.programStudyIds], studyModeIds: [...pathForm.studyModeIds],
+      requiredDocumentTypes: [...pathForm.requiredDocumentTypes], registrationFee: Number(pathForm.registrationFee),
+      effectiveFrom: instant(pathForm.effectiveFrom),
+      ...(pathForm.effectiveUntil ? { effectiveUntil: instant(pathForm.effectiveUntil) } : {}),
+      expectedVersion: pathForm.expectedVersion,
+    })
+    noticeMessage.value = 'Kebijakan jalur PMB berhasil diperbarui.'
+    resetPath()
+    await load()
+  } catch (error) {
+    errorMessage.value = readable(error)
+  } finally {
+    saving.value = false
   }
 }
 
@@ -119,10 +169,29 @@ onMounted(load)
         <article v-for="wave in waves" v-else :key="wave.id"><div><strong>{{ wave.label }} · {{ wave.academicYear }}</strong><small>{{ date(wave.opensAt) }}—{{ date(wave.closesAt) }} · {{ money(wave.registrationFee) }} · kapasitas {{ wave.capacity }} · v{{ wave.version }}</small><small>{{ wave.programStudyIds.length }} program studi · {{ wave.active ? 'Aktif' : 'Nonaktif' }}</small></div><button class="btn btn-sm btn-outline-primary" type="button" @click="edit(wave)">Ubah</button></article>
         <EmptyState v-if="!loading && !waves.length" title="Belum ada gelombang PMB" description="Buat gelombang resmi sebelum membuka formulir publik." />
       </section>
+      <section class="surface-card path-inventory">
+        <header><span>Jalur & syarat</span><h2>Kebijakan jalur efektif</h2><p>Atur biaya, program studi, sistem kuliah, dan daftar dokumen per jalur. Pendaftaran baru menyimpan snapshot versi kebijakan.</p></header>
+        <article v-for="policy in pathPolicies" :key="policy.id"><div><strong>{{ policy.label }}</strong><small>{{ policy.description }}</small><small>{{ money(policy.registrationFee) }} · efektif {{ date(policy.effectiveFrom) }}{{ policy.effectiveUntil ? `—${date(policy.effectiveUntil)}` : '' }} · v{{ policy.version }}</small><small>{{ policy.requiredDocumentTypes.map(item => documentLabels[item] || item).join(', ') }} · {{ policy.active ? 'Aktif' : 'Nonaktif' }}</small></div><button class="btn btn-sm btn-outline-primary" type="button" @click="editPath(policy)">Atur</button></article>
+      </section>
+      <section class="surface-card path-editor">
+        <header><span>Versi kebijakan</span><h2>{{ editingPathId ? `Ubah ${pathForm.label}` : 'Pilih jalur untuk diatur' }}</h2><p>Tanggal efektif wajib; versi lama tetap menjadi snapshot pada pendaftaran yang sudah masuk.</p></header>
+        <form v-if="editingPathId" @submit.prevent="savePath">
+          <div class="form-row"><label>ID jalur<input v-model="pathForm.id" class="form-control" disabled></label><label>Nama jalur<input v-model.trim="pathForm.label" class="form-control" maxlength="100" required></label></div>
+          <label>Deskripsi<textarea v-model.trim="pathForm.description" class="form-control" rows="2" maxlength="500" required /></label>
+          <div class="form-row"><label>Biaya formulir (IDR)<input v-model.number="pathForm.registrationFee" class="form-control" type="number" min="0" max="1000000000" step="1000" required></label><label>Mulai berlaku<input v-model="pathForm.effectiveFrom" class="form-control" type="datetime-local" required></label></div>
+          <label>Berakhir (opsional)<input v-model="pathForm.effectiveUntil" class="form-control" type="datetime-local"></label>
+          <fieldset><legend>Program studi (kosong berarti semua, khusus administrator)</legend><label v-for="program in programs" :key="program.id" class="program-check"><input v-model="pathForm.programStudyIds" type="checkbox" :value="program.id"> <span><strong>{{ program.name }}</strong><small>{{ program.code }}</small></span></label></fieldset>
+          <fieldset><legend>Sistem perkuliahan</legend><label v-for="mode in STUDY_MODE_IDS" :key="mode" class="program-check"><input v-model="pathForm.studyModeIds" type="checkbox" :value="mode"> {{ modeLabels[mode] }}</label></fieldset>
+          <fieldset><legend>Dokumen wajib</legend><label v-for="documentType in ADMISSION_DOCUMENT_TYPES" :key="documentType" class="program-check"><input v-model="pathForm.requiredDocumentTypes" type="checkbox" :value="documentType"> {{ documentLabels[documentType] }}</label></fieldset>
+          <label class="active-check"><input v-model="pathForm.active" type="checkbox"> Jalur aktif dan dapat dipilih pendaftar</label>
+          <div class="actions"><button class="btn btn-outline-secondary" type="button" @click="resetPath">Batal</button><button class="btn btn-primary" type="submit" :disabled="saving || !pathForm.studyModeIds.length || !pathForm.requiredDocumentTypes.length">{{ saving ? 'Menyimpan…' : 'Simpan kebijakan' }}</button></div>
+        </form>
+        <EmptyState v-else title="Belum memilih jalur" description="Klik Atur pada salah satu jalur penerimaan." />
+      </section>
     </div>
   </div>
 </template>
 
 <style scoped>
-.settings-page{display:grid;gap:1rem}.settings-layout{display:grid;grid-template-columns:minmax(360px,.85fr) minmax(0,1.15fr);gap:1rem;align-items:start}.surface-card{padding:1rem}.surface-card>header{margin-bottom:.9rem}.surface-card header span{color:#a17725;font-size:.55rem;font-weight:800;text-transform:uppercase}.surface-card h2{margin:.15rem 0;color:#2d5144;font-size:.95rem}.surface-card header p{margin:0;color:#7e8e87;font-size:.58rem}.surface-card form{display:grid;gap:.7rem}.surface-card label,.surface-card legend{display:grid;gap:.3rem;color:#536c62;font-size:.6rem;font-weight:700}.form-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}.form-control{font-size:.7rem}.surface-card fieldset{display:grid;gap:.35rem;padding:.65rem;border:1px solid #e2e9e5;border-radius:.7rem}.program-check,.active-check{display:flex!important;align-items:center;gap:.5rem}.program-check strong,.program-check small{display:block}.program-check small{color:#82918b;font-size:.54rem;font-weight:400}.actions{display:flex;justify-content:flex-end;gap:.5rem}.inventory article{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;padding:.8rem 0;border-top:1px solid #e8eeeb}.inventory strong,.inventory small{display:block}.inventory strong{color:#35584b;font-size:.66rem}.inventory small{margin-top:.2rem;color:#809089;font-size:.54rem}.state{display:flex;justify-content:center;gap:.5rem;padding:2rem;color:#72847c;font-size:.65rem}@media(max-width:900px){.settings-layout{grid-template-columns:1fr}}@media(max-width:600px){.form-row{grid-template-columns:1fr}}
+.settings-page{display:grid;gap:1rem}.settings-layout{display:grid;grid-template-columns:minmax(360px,.85fr) minmax(0,1.15fr);gap:1rem;align-items:start}.surface-card{padding:1rem}.surface-card>header{margin-bottom:.9rem}.surface-card header span{color:#a17725;font-size:.55rem;font-weight:800;text-transform:uppercase}.surface-card h2{margin:.15rem 0;color:#2d5144;font-size:.95rem}.surface-card header p{margin:0;color:#7e8e87;font-size:.58rem}.surface-card form{display:grid;gap:.7rem}.surface-card label,.surface-card legend{display:grid;gap:.3rem;color:#536c62;font-size:.6rem;font-weight:700}.form-row{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}.form-control{font-size:.7rem}.surface-card fieldset{display:grid;gap:.35rem;padding:.65rem;border:1px solid #e2e9e5;border-radius:.7rem}.program-check,.active-check{display:flex!important;align-items:center;gap:.5rem}.program-check strong,.program-check small{display:block}.program-check small{color:#82918b;font-size:.54rem;font-weight:400}.actions{display:flex;justify-content:flex-end;gap:.5rem}.inventory article,.path-inventory article{display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;padding:.8rem 0;border-top:1px solid #e8eeeb}.inventory strong,.inventory small,.path-inventory strong,.path-inventory small{display:block}.inventory strong,.path-inventory strong{color:#35584b;font-size:.66rem}.inventory small,.path-inventory small{margin-top:.2rem;color:#809089;font-size:.54rem}.path-inventory{grid-column:1}.path-editor{grid-column:2}.state{display:flex;justify-content:center;gap:.5rem;padding:2rem;color:#72847c;font-size:.65rem}@media(max-width:900px){.settings-layout{grid-template-columns:1fr}.path-inventory,.path-editor{grid-column:1}}@media(max-width:600px){.form-row{grid-template-columns:1fr}}
 </style>

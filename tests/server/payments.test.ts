@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { billingModuleState, resetBillingStateForTests } from '../../server/services/billing-state'
 import { recordPayment } from '../../server/services/payments'
 import { CampusError } from '../../server/utils/errors'
 import { mockState, resetMockState } from '../../server/utils/mock-store'
@@ -17,6 +18,7 @@ describe('payment idempotency', () => {
   beforeEach(() => {
     process.env.CAMPUS_DATA_MODE = 'mock'
     resetMockState()
+    resetBillingStateForTests()
   })
 
   it('records invoice and payment atomically, then replays the same response', async () => {
@@ -39,12 +41,19 @@ describe('payment idempotency', () => {
       .rejects.toMatchObject({ statusCode: 409, code: 'IDEMPOTENCY_KEY_REUSED' } satisfies Partial<CampusError>)
   })
 
-  it('does not mutate state when a payment exceeds the outstanding balance', async () => {
+  it('applies the invoice portion and credits an overpayment to the immutable deposit ledger', async () => {
     const finance = authContext('finance-001', ['finance_staff'])
-    await expect(recordPayment(finance, { ...payment, amount: 2_500_001 }, 'payment-key-0002'))
-      .rejects.toMatchObject({ code: 'PAYMENT_EXCEEDS_BALANCE' } satisfies Partial<CampusError>)
-    expect(mockState().invoices.get(payment.invoiceId)?.paidAmount).toBe(5_000_000)
-    expect(mockState().payments.size).toBe(0)
+    const result = await recordPayment(finance, { ...payment, amount: 2_750_000 }, 'payment-key-0002')
+
+    expect(result).toMatchObject({
+      invoice: { paidAmount: 7_500_000, status: 'PAID' },
+      payment: { appliedAmountIdr: 2_500_000, overpaymentAmountIdr: 250_000 },
+      depositAccount: { balanceIdr: 500_000, version: 2 },
+      depositTransaction: { amountIdr: 250_000, kind: 'OVERPAYMENT_CREDIT', immutable: true },
+    })
+    expect(mockState().payments.size).toBe(1)
+    expect(billingModuleState().depositTransactions.get(result.depositTransaction!.id))
+      .toMatchObject({ sourceReference: payment.externalReference, balanceAfterIdr: 500_000 })
   })
 
   it('accepts standard ISO instants with up to nine fractional-second digits', () => {

@@ -1,5 +1,5 @@
-import { DEMO_ADMISSION_PROGRAMS, DEMO_ADMISSION_WAVES } from '../data/admissions-catalog'
-import type { AdmissionApplicationRecord, AdmissionDocumentRecord, AdmissionProgram, AdmissionStudentRecord, AdmissionWave } from '../types/admissions'
+import { DEMO_ADMISSION_PATH_POLICIES, DEMO_ADMISSION_PROGRAMS, DEMO_ADMISSION_WAVES } from '../data/admissions-catalog'
+import type { AdmissionApplicationRecord, AdmissionDocumentRecord, AdmissionPathPolicy, AdmissionProgram, AdmissionStudentRecord, AdmissionWave } from '../types/admissions'
 
 interface AdmissionIdempotencyEntry<T = unknown> {
   requestHash: string
@@ -9,6 +9,7 @@ interface AdmissionIdempotencyEntry<T = unknown> {
 
 interface AdmissionModuleState {
   programs: Map<string, AdmissionProgram>
+  pathPolicies: Map<string, AdmissionPathPolicy>
   waves: Map<string, AdmissionWave>
   applications: Map<string, AdmissionApplicationRecord>
   students: Map<string, AdmissionStudentRecord>
@@ -54,6 +55,7 @@ const SEEDED_APPLICATION: AdmissionApplicationRecord = {
 function initialState(): AdmissionModuleState {
   return {
     programs: new Map(DEMO_ADMISSION_PROGRAMS.map(program => [program.id, structuredClone(program)])),
+    pathPolicies: new Map(DEMO_ADMISSION_PATH_POLICIES.map(policy => [policy.id, structuredClone(policy)])),
     waves: new Map(DEMO_ADMISSION_WAVES.map(wave => [wave.id, structuredClone(wave)])),
     applications: new Map([[SEEDED_APPLICATION.id, structuredClone(SEEDED_APPLICATION)]]),
     students: new Map(),

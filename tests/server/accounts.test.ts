@@ -1,9 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  approveAccountAccessChange,
   accountRuntimeForTests,
   createAccount,
+  listAccountAccessChangeRequests,
   listAccounts,
   parseAccountListQuery,
+  rejectAccountAccessChange,
+  requestAccountAccessChange,
   resetAccountStateForTests,
   updateAccount,
 } from '../../server/services/accounts'
@@ -338,6 +342,85 @@ describe('account lifecycle', () => {
       expectedVersion: 3,
     }, 'account-update-key-0002')
     expect(accountRuntimeForTests().revokedSessionUids).toContain('academic-001')
+  })
+
+  it('requires a distinct second administrator for sensitive role and scope changes', async () => {
+    process.env.ACCOUNT_REQUIRE_DUAL_APPROVAL = 'true'
+    try {
+      const changes = {
+        roles: ['academic_staff', 'finance_staff'],
+        scope: {
+          unitIds: ['faculty-economics'],
+          programStudyIds: ['management-s1'],
+          cohortYears: [2024],
+          studentIds: [],
+        },
+        expectedVersion: 3,
+      }
+
+      await expect(updateAccount(admin(), 'academic-001', changes, 'direct-sensitive-change'))
+        .rejects.toMatchObject({ statusCode: 409, code: 'SECOND_APPROVER_REQUIRED' } satisfies Partial<CampusError>)
+
+      const requested = await requestAccountAccessChange(admin(), 'academic-001', {
+        changes,
+        reason: 'Penugasan rekonsiliasi keuangan semester berjalan.',
+      }, 'request-sensitive-change')
+      expect(requested).toMatchObject({
+        replayed: false,
+        request: { status: 'PENDING', requestedBy: 'admin-001', expectedAccountVersion: 3, version: 1 },
+      })
+      expect(accountRuntimeForTests().accounts.find(item => item.id === 'academic-001')?.roles)
+        .toEqual(['academic_staff'])
+
+      await expect(approveAccountAccessChange(admin(), requested.request.id, { expectedVersion: 1 }, 'self-approval'))
+        .rejects.toMatchObject({ statusCode: 409, code: 'SECOND_APPROVER_REQUIRED' } satisfies Partial<CampusError>)
+
+      const secondAdmin = authContext('admin-002', ['administrator'], [])
+      const approved = await approveAccountAccessChange(secondAdmin, requested.request.id, { expectedVersion: 1 }, 'second-approval')
+      expect(approved).toMatchObject({
+        replayed: false,
+        request: { status: 'APPROVED', approvedBy: 'admin-002', version: 2 },
+        account: { roles: ['academic_staff', 'finance_staff'], version: 4 },
+      })
+      expect(accountRuntimeForTests().revokedSessionUids).toContain('academic-001')
+      expect((await listAccountAccessChangeRequests(secondAdmin, { status: 'APPROVED' })).items)
+        .toHaveLength(1)
+      expect(mockState().auditEntries.map(entry => entry.action)).toEqual(expect.arrayContaining([
+        'ACCOUNT_ACCESS_CHANGE_REQUESTED',
+        'ACCOUNT_ACCESS_CHANGE_APPROVED',
+        'ACCOUNT_UPDATED',
+      ]))
+    } finally {
+      delete process.env.ACCOUNT_REQUIRE_DUAL_APPROVAL
+    }
+  })
+
+  it('lets only another administrator reject a sensitive access request without changing the account', async () => {
+    process.env.ACCOUNT_REQUIRE_DUAL_APPROVAL = 'true'
+    try {
+      const requested = await requestAccountAccessChange(admin(), 'academic-001', {
+        changes: {
+          roles: ['academic_staff', 'finance_staff'],
+          scope: { unitIds: ['faculty-economics'], programStudyIds: ['management-s1'], cohortYears: [2024], studentIds: [] },
+          expectedVersion: 3,
+        },
+        reason: 'Penugasan sementara rekonsiliasi keuangan semester berjalan.',
+      }, 'request-sensitive-reject')
+      await expect(rejectAccountAccessChange(admin(), requested.request.id, {
+        expectedVersion: 1, reason: 'Ditolak sendiri.',
+      }, 'self-rejection')).rejects.toMatchObject({ code: 'SECOND_APPROVER_REQUIRED' })
+
+      const secondAdmin = authContext('admin-002', ['administrator'], [])
+      const rejected = await rejectAccountAccessChange(secondAdmin, requested.request.id, {
+        expectedVersion: 1, reason: 'Dokumen penugasan belum mencantumkan tanggal berakhir.',
+      }, 'second-admin-rejection')
+      expect(rejected).toMatchObject({ request: { status: 'REJECTED', rejectedBy: 'admin-002', version: 2 }, replayed: false })
+      expect((await listAccountAccessChangeRequests(secondAdmin, { status: 'REJECTED' })).items).toHaveLength(1)
+      expect(accountRuntimeForTests().accounts.find(item => item.id === 'academic-001'))
+        .toMatchObject({ roles: ['academic_staff'], version: 3 })
+    } finally {
+      delete process.env.ACCOUNT_REQUIRE_DUAL_APPROVAL
+    }
   })
 
   it('rejects stale versions and prevents administrator self-lockout', async () => {

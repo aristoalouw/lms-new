@@ -11,6 +11,7 @@ import {
   type AdmissionFeeStatus,
   type AdmissionListOptions,
   type AdmissionListResult,
+  type AdmissionPathPolicy,
   type AdmissionProgram,
   type AdmissionStatus,
   type AdmissionStudentRecord,
@@ -27,7 +28,7 @@ import { promoteApplicantAccount } from './accounts'
 import { requiredAdmissionDocumentsVerified } from './admissions-documents'
 import { admissionSelectionModuleState } from './admissions-selection-state'
 import { admissionModuleState } from './admissions-state'
-import { admissionProgramById, admissionWaveById } from './admissions-catalog'
+import { admissionPathPolicyById, admissionProgramById, admissionWaveById } from './admissions-catalog'
 export { admissionCatalog, ADMISSION_PROGRAMS, ADMISSION_WAVES } from './admissions-catalog'
 
 const EMAIL_PATTERN = /^[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+$/i
@@ -90,6 +91,7 @@ async function normalizeSubmission(value: unknown, now: number): Promise<Admissi
   identityNumber: string
   program: AdmissionProgram
   wave: AdmissionWave
+  pathPolicy: AdmissionPathPolicy
 }> {
   const body = requireRecord(value)
   const allowed = new Set([
@@ -108,13 +110,15 @@ async function normalizeSubmission(value: unknown, now: number): Promise<Admissi
   if (!ADMISSION_PATH_IDS.includes(admissionPathId)) invalidInput('Jalur pendaftaran tidak valid.')
   if (!STUDY_MODE_IDS.includes(studyModeId)) invalidInput('Sistem perkuliahan tidak valid.')
   const graduationYear = requireInteger(body.graduationYear, 'graduationYear', 1950, new Date(now).getUTCFullYear())
-  const [program, wave] = await Promise.all([
+  const [program, wave, pathPolicy] = await Promise.all([
     admissionProgramById(programStudyId),
     admissionWaveById(waveId, now),
+    admissionPathPolicyById(admissionPathId, now, programStudyId),
   ])
   if (wave.programStudyIds.length && !wave.programStudyIds.includes(programStudyId)) {
     invalidInput('Program studi tidak tersedia pada gelombang PMB yang dipilih.')
   }
+  if (!pathPolicy.studyModeIds.includes(studyModeId)) invalidInput('Sistem perkuliahan tidak tersedia untuk jalur pendaftaran yang dipilih.')
   return {
     fullName: cleanText(body.fullName, 'fullName', 150),
     email: normalizeEmail(body.email),
@@ -132,6 +136,7 @@ async function normalizeSubmission(value: unknown, now: number): Promise<Admissi
     consent: true,
     program,
     wave,
+    pathPolicy,
   }
 }
 
@@ -157,6 +162,8 @@ function buildApplication(
     programStudyId: normalized.program.id,
     unitId: normalized.program.unitId,
     admissionPathId: normalized.admissionPathId,
+    admissionPathPolicyVersion: normalized.pathPolicy.version,
+    requiredDocumentTypes: [...normalized.pathPolicy.requiredDocumentTypes],
     studyModeId: normalized.studyModeId,
     waveId: normalized.wave.id,
     academicYear: normalized.wave.academicYear,
@@ -167,7 +174,7 @@ function buildApplication(
     submittedAt,
     status: 'SUBMITTED',
     registrationFeeStatus: 'UNPAID',
-    registrationFeeAmount: normalized.wave.registrationFee,
+    registrationFeeAmount: normalized.pathPolicy.registrationFee,
     version: 1,
     updatedAt: submittedAt,
     updatedBy: applicant?.uid || 'self-service',
@@ -189,6 +196,7 @@ export async function submitAdmissionApplication(
     identityNumber: candidate.identityFingerprint,
     program: undefined,
     wave: undefined,
+    pathPolicy: undefined,
   })
   const namespace = `admission-submit:${idempotencyKey}`
   let application = candidate

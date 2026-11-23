@@ -1,6 +1,31 @@
 {
   "indexes": [
     {
+      "collectionGroup": "accountAccessChangeRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "billingRefundRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "billingRefundRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "programStudyId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "requestedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "academicPeriodDefinitions",
       "queryScope": "COLLECTION",
       "fields": [

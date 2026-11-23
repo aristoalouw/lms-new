@@ -137,6 +137,7 @@ export interface DepositAccount {
   studentId: string
   programStudyId: string
   balanceIdr: number
+  reservedRefundAmountIdr?: number
   version: number
   updatedAt: string
   updatedBy: string
@@ -148,12 +149,29 @@ export interface DepositTransaction {
   programStudyId: string
   amountIdr: number
   balanceAfterIdr: number
-  kind: 'CREDIT' | 'REDEMPTION'
+  kind: 'CREDIT' | 'REDEMPTION' | 'OVERPAYMENT_CREDIT' | 'OVERPAYMENT_REVERSAL' | 'REFUND'
   sourceReference: string
   invoiceId?: string
   createdAt: string
   createdBy: string
   immutable: true
+}
+
+export interface BillingRefundRequest {
+  id: string
+  studentId: string
+  programStudyId: string
+  amountIdr: number
+  reason: string
+  status: 'PENDING' | 'DISBURSED' | 'REJECTED'
+  version: number
+  requestedAt: string
+  requestedBy: string
+  reviewedAt?: string
+  reviewedBy?: string
+  reviewReason?: string
+  disbursementReference?: string
+  depositTransactionId?: string
 }
 
 export interface BillingVoucher {

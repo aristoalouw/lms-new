@@ -41,6 +41,18 @@ interface AccountPage {
   totalPages: number
 }
 
+interface AccountAccessChangeRequest {
+  id: string
+  accountId: string
+  reason: string
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  requestedBy: string
+  requestedAt: string
+  proposedRoles: AccountRole[]
+  proposedScope: AccountRecord['scope']
+  version: number
+}
+
 interface AccountForm {
   id?: string
   version?: number
@@ -71,6 +83,9 @@ const showEditor = ref(false)
 const editorMode = ref<'create' | 'edit'>('create')
 const pageData = ref<AccountPage>({ items: [], page: 1, pageSize: 10, total: 0, totalPages: 1 })
 const programStudies = ref<AcademicProgramStudy[]>([])
+const accessRequests = ref<AccountAccessChangeRequest[]>([])
+const originalAccount = ref<AccountRecord | null>(null)
+const accessReason = ref('')
 const filters = reactive({ search: '', status: '', role: '', programStudyId: '' })
 
 const emptyForm = (): AccountForm => ({
@@ -137,6 +152,15 @@ const rows = computed(() => pageData.value.items.map((account) => ({
 const activeOnPage = computed(() => pageData.value.items.filter((account) => account.status === 'active').length)
 const restrictedOnPage = computed(() => pageData.value.items.filter((account) => account.status !== 'active').length)
 const guardianOnPage = computed(() => pageData.value.items.filter((account) => account.roles.includes('guardian')).length)
+const sensitiveRoles = new Set<AccountRole>(['administrator', 'finance_staff', 'academic_staff'])
+const authorizationChanged = computed(() => {
+  if (editorMode.value !== 'edit' || !originalAccount.value) return false
+  const next = payloadFromForm()
+  return JSON.stringify({ roles: next.roles, scope: next.scope })
+    !== JSON.stringify({ roles: originalAccount.value.roles, scope: originalAccount.value.scope })
+})
+const sensitiveAuthorizationChanged = computed(() => authorizationChanged.value && Boolean(originalAccount.value)
+  && ([...originalAccount.value!.roles, ...form.roles].some(role => sensitiveRoles.has(role))))
 
 const canonicalIds = (value: string, label: string) => parseCanonicalScopeInput(value, label)
 const errorText = (error: unknown) => {
@@ -179,12 +203,26 @@ const loadProgramStudies = async () => {
   }
 }
 
+const loadAccessRequests = async () => {
+  if (!isAdministrator.value) return
+  try {
+    const { data } = await useNuxtApp().$api.get<{ items: AccountAccessChangeRequest[] }>('/accounts/access-change-requests', {
+      params: { status: 'PENDING', limit: 50 },
+    })
+    accessRequests.value = data.items
+  } catch (error) {
+    errorMessage.value = errorText(error)
+  }
+}
+
 const resetForm = () => Object.assign(form, emptyForm())
 const openCreate = () => {
   resetForm()
   editorMode.value = 'create'
   errorMessage.value = ''
   showEditor.value = true
+  originalAccount.value = null
+  accessReason.value = ''
 }
 const openEdit = (account: AccountRecord) => {
   Object.assign(form, {
@@ -203,6 +241,8 @@ const openEdit = (account: AccountRecord) => {
   editorMode.value = 'edit'
   errorMessage.value = ''
   showEditor.value = true
+  originalAccount.value = structuredClone(account)
+  accessReason.value = ''
 }
 
 const toggleRole = (role: AccountRole) => {
@@ -277,16 +317,70 @@ const saveAccount = async () => {
         }
       }
     } else {
-      await useNuxtApp().$api.patch(`/accounts/${encodeURIComponent(form.id || '')}`, {
-        ...payload,
-        expectedVersion: form.version,
-      }, {
-        headers: { 'Idempotency-Key': idempotencyKey('account-update') },
-      })
-      noticeMessage.value = `Perubahan akun ${payload.displayName} berhasil disimpan.`
+      if (sensitiveAuthorizationChanged.value) {
+        await useNuxtApp().$api.post(`/accounts/${encodeURIComponent(form.id || '')}/access-change-requests`, {
+          changes: {
+            roles: payload.roles,
+            scope: payload.scope,
+            expectedVersion: form.version,
+          },
+          reason: accessReason.value.trim(),
+        }, {
+          headers: { 'Idempotency-Key': idempotencyKey('account-access-request') },
+        })
+        noticeMessage.value = `Perubahan akses ${payload.displayName} menunggu persetujuan administrator kedua.`
+      } else {
+        await useNuxtApp().$api.patch(`/accounts/${encodeURIComponent(form.id || '')}`, {
+          ...payload,
+          expectedVersion: form.version,
+        }, {
+          headers: { 'Idempotency-Key': idempotencyKey('account-update') },
+        })
+        noticeMessage.value = `Perubahan akun ${payload.displayName} berhasil disimpan.`
+      }
     }
     showEditor.value = false
-    await loadAccounts(pageData.value.page)
+    await Promise.all([loadAccounts(pageData.value.page), loadAccessRequests()])
+  } catch (error) {
+    errorMessage.value = errorText(error)
+  } finally {
+    saving.value = false
+  }
+}
+
+
+const approveAccessRequest = async (request: AccountAccessChangeRequest) => {
+  saving.value = true
+  errorMessage.value = ''
+  try {
+    await useNuxtApp().$api.post(`/accounts/access-change-requests/${encodeURIComponent(request.id)}/approve`, {
+      expectedVersion: request.version,
+    }, {
+      headers: { 'Idempotency-Key': idempotencyKey('account-access-approve') },
+    })
+    noticeMessage.value = 'Perubahan akses telah disetujui dan sesi lama pengguna dicabut.'
+    await Promise.all([loadAccounts(pageData.value.page), loadAccessRequests()])
+  } catch (error) {
+    errorMessage.value = errorText(error)
+  } finally {
+    saving.value = false
+  }
+}
+
+const rejectAccessRequest = async (request: AccountAccessChangeRequest) => {
+  const reason = window.prompt('Alasan penolakan perubahan akses:')?.trim() || ''
+  if (reason.length < 5) return
+  saving.value = true
+  errorMessage.value = ''
+  try {
+    await useNuxtApp().$api.post(`/accounts/access-change-requests/${encodeURIComponent(request.id)}/reject`, {
+      expectedVersion: request.version,
+      reason,
+    }, {
+      headers: { 'Idempotency-Key': idempotencyKey('account-access-reject') },
+    })
+    noticeMessage.value = 'Perubahan akses ditolak; akun tidak diubah.'
+    await loadAccessRequests()
   } catch (error) {
     errorMessage.value = errorText(error)
   } finally {
@@ -304,7 +398,7 @@ const sendPasswordReset = async (account: AccountRecord) => {
   }
 }
 
-onMounted(() => Promise.all([loadAccounts(), loadProgramStudies()]))
+onMounted(() => Promise.all([loadAccounts(), loadProgramStudies(), loadAccessRequests()]))
 </script>
 
 <template>
@@ -354,6 +448,19 @@ onMounted(() => Promise.all([loadAccounts(), loadProgramStudies()]))
           <label><span>Program studi</span><select v-model="filters.programStudyId" class="form-select form-select-sm"><option value="">Semua lingkup</option><option v-for="program in programStudies" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label>
           <button class="btn btn-sm btn-outline-secondary align-self-end" type="submit" :disabled="loading"><i class="uil uil-filter me-1" aria-hidden="true" />Terapkan</button>
         </form>
+      </section>
+
+      <section v-if="accessRequests.length" class="workflow-surface access-approval-queue" aria-labelledby="access-approval-title">
+        <header class="workflow-surface__header">
+          <div><span class="section-kicker">Pemisahan tugas</span><h2 id="access-approval-title">Persetujuan akses sensitif</h2><p>Role administrator, keuangan, dan akademik hanya diterapkan setelah administrator berbeda menyetujui proposal.</p></div>
+          <span class="directory-count">{{ accessRequests.length }} menunggu</span>
+        </header>
+        <div class="access-request-list">
+          <article v-for="request in accessRequests" :key="request.id">
+            <div><strong>{{ request.accountId }}</strong><span>{{ request.proposedRoles.map(role => roleLabels[role] || role).join(', ') }}</span><small>{{ request.reason }} · diajukan {{ new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(request.requestedAt)) }}</small></div>
+            <div class="access-request-actions"><button class="btn btn-sm btn-outline-danger" type="button" :disabled="saving || request.requestedBy === user?.id" @click="rejectAccessRequest(request)">Tolak</button><button class="btn btn-sm btn-primary" type="button" :disabled="saving || request.requestedBy === user?.id" @click="approveAccessRequest(request)">{{ request.requestedBy === user?.id ? 'Menunggu admin lain' : 'Setujui akses' }}</button></div>
+          </article>
+        </div>
       </section>
 
       <section class="workflow-surface" :aria-busy="loading">
@@ -429,6 +536,8 @@ onMounted(() => Promise.all([loadAccounts(), loadProgramStudies()]))
             </div>
           </fieldset>
 
+          <label v-if="sensitiveAuthorizationChanged" class="form-field approval-reason"><span>Alasan perubahan akses sensitif</span><textarea v-model="accessReason" class="form-control" rows="3" minlength="10" maxlength="500" required placeholder="Jelaskan kebutuhan tugas, periode, dan lingkup akses." /><small>Perubahan ini tidak langsung aktif. Administrator lain harus menyetujuinya.</small></label>
+
           <div class="note-box"><i class="uil uil-info-circle" aria-hidden="true" /><p v-if="passwordResetAvailable">Akun baru tidak menerima kata sandi awal. Gunakan aksi amplop pada tabel untuk mengirim petunjuk melalui {{ passwordResetDeliveryLabel }}.</p><p v-else>Pemulihan akun belum dikonfigurasi. Aktifkan jalur pemulihan sebelum menambahkan pengguna produksi.</p></div>
         </div>
 
@@ -466,6 +575,14 @@ onMounted(() => Promise.all([loadAccounts(), loadProgramStudies()]))
 .server-pagination { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1.25rem; border-top: 1px solid #e8eeea; background: #fafcfb; }
 .server-pagination p { margin: 0; color: #7e8d87; font-size: .65rem; }
 .server-pagination div { display: flex; gap: .5rem; }
+.access-request-list { display: grid; gap: .65rem; padding: 1rem 1.25rem 1.25rem; }
+.access-request-list article { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem; border: 1px solid #e2eae5; border-radius: .75rem; }
+.access-request-list strong, .access-request-list span, .access-request-list small { display: block; }
+.access-request-list strong { color: #315447; font-size: .72rem; }
+.access-request-list span { margin-top: .2rem; color: #597168; font-size: .65rem; }
+.access-request-list small { margin-top: .25rem; color: #84928c; font-size: .58rem; }
+.access-request-actions { display: flex; gap: .45rem; }
+.approval-reason { padding: 1rem; border: 1px solid #e7d9ba; border-radius: .85rem; background: #fffaf0; }
 .editor-overlay { position: fixed; z-index: 1080; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgba(11, 34, 27, .62); backdrop-filter: blur(5px); }
 .account-editor { display: flex; overflow: hidden; width: min(100%, 880px); max-height: calc(100vh - 2rem); flex-direction: column; border-radius: 1.1rem; background: #fff; box-shadow: 0 30px 90px rgba(8, 29, 22, .34); }
 .account-editor > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.35rem 1.5rem 1.1rem; border-bottom: 1px solid #e9eeeb; }

@@ -1,9 +1,14 @@
 import type { H3Event } from 'h3'
-import { DEMO_ADMISSION_PROGRAMS, DEMO_ADMISSION_WAVES } from '../data/admissions-catalog'
+import { DEMO_ADMISSION_PATH_POLICIES, DEMO_ADMISSION_PROGRAMS, DEMO_ADMISSION_WAVES } from '../data/admissions-catalog'
 import type { AuthContext } from '../types/auth'
 import {
   ADMISSION_PATH_IDS,
+  ADMISSION_DOCUMENT_TYPES,
   STUDY_MODE_IDS,
+  type AdmissionDocumentType,
+  type AdmissionPathId,
+  type AdmissionPathPolicy,
+  type AdmissionPathPolicyInput,
   type AdmissionProgram,
   type AdmissionWave,
   type AdmissionWaveInput,
@@ -25,6 +30,7 @@ export interface AdmissionCatalog {
   programs: AdmissionProgram[]
   waves: AdmissionWave[]
   paths: typeof ADMISSION_PATH_IDS
+  pathPolicies: AdmissionPathPolicy[]
   studyModes: typeof STUDY_MODE_IDS
 }
 
@@ -59,28 +65,75 @@ function asWave(id: string, value: Record<string, unknown>): AdmissionWave {
   }
 }
 
+function asPathPolicy(id: string, value: Record<string, unknown>): AdmissionPathPolicy {
+  return {
+    id: id as AdmissionPathId,
+    label: String(value.label || ''),
+    description: String(value.description || ''),
+    active: value.active === true,
+    programStudyIds: Array.isArray(value.programStudyIds) ? value.programStudyIds.filter(item => typeof item === 'string') : [],
+    studyModeIds: Array.isArray(value.studyModeIds) ? value.studyModeIds.filter(item => STUDY_MODE_IDS.includes(item as never)) as AdmissionPathPolicy['studyModeIds'] : [],
+    requiredDocumentTypes: Array.isArray(value.requiredDocumentTypes) ? value.requiredDocumentTypes.filter(item => ADMISSION_DOCUMENT_TYPES.includes(item as never)) as AdmissionDocumentType[] : [],
+    registrationFee: Number(value.registrationFee || 0),
+    currency: 'IDR',
+    effectiveFrom: String(value.effectiveFrom || ''),
+    ...(typeof value.effectiveUntil === 'string' && value.effectiveUntil ? { effectiveUntil: value.effectiveUntil } : {}),
+    version: Number(value.version || 1),
+    ...(typeof value.createdAt === 'string' ? { createdAt: value.createdAt } : {}),
+    ...(typeof value.createdBy === 'string' ? { createdBy: value.createdBy } : {}),
+    ...(typeof value.updatedAt === 'string' ? { updatedAt: value.updatedAt } : {}),
+    ...(typeof value.updatedBy === 'string' ? { updatedBy: value.updatedBy } : {}),
+  }
+}
+
 export async function admissionCatalog(options: { includeInactive?: boolean } = {}): Promise<AdmissionCatalog> {
   let programs: AdmissionProgram[]
   let waves: AdmissionWave[]
+  let pathPolicies: AdmissionPathPolicy[]
   if (dataMode() === 'mock') {
     programs = [...admissionModuleState().programs.values()].map(value => structuredClone(value))
     waves = [...admissionModuleState().waves.values()].map(value => structuredClone(value))
+    pathPolicies = [...admissionModuleState().pathPolicies.values()].map(value => structuredClone(value))
   } else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan katalog PMB tidak tersedia.')
-    const [programSnapshot, waveSnapshot] = await Promise.all([
+    const [programSnapshot, waveSnapshot, pathSnapshot] = await Promise.all([
       db.collection('academicProgramStudies').limit(100).get(),
       db.collection('admissionWaves').orderBy('opensAt', 'desc').limit(100).get(),
+      db.collection('admissionPathPolicies').limit(20).get(),
     ])
     programs = programSnapshot.docs.map(document => asProgram(document.id, document.data()))
     waves = waveSnapshot.docs.map(document => asWave(document.id, document.data()))
+    const configured = new Map(pathSnapshot.docs.map(document => [document.id, asPathPolicy(document.id, document.data())]))
+    pathPolicies = DEMO_ADMISSION_PATH_POLICIES.map(policy => structuredClone(configured.get(policy.id) || { ...policy, programStudyIds: [] }))
   }
   return {
     programs: programs.filter(program => options.includeInactive || program.active).sort((a, b) => a.name.localeCompare(b.name, 'id')),
     waves: waves.filter(wave => options.includeInactive || wave.active).sort((a, b) => b.opensAt.localeCompare(a.opensAt)),
     paths: [...ADMISSION_PATH_IDS],
+    pathPolicies: pathPolicies.filter(policy => options.includeInactive || policy.active)
+      .sort((a, b) => a.label.localeCompare(b.label, 'id')),
     studyModes: [...STUDY_MODE_IDS],
   }
+}
+
+export async function admissionPathPolicyById(
+  idValue: string,
+  at = Date.now(),
+  programStudyId?: string,
+): Promise<AdmissionPathPolicy> {
+  const id = requireString(idValue, 'admissionPathId', { max: 40 }) as AdmissionPathId
+  if (!ADMISSION_PATH_IDS.includes(id)) invalidInput('Jalur pendaftaran tidak valid.')
+  const catalog = await admissionCatalog({ includeInactive: true })
+  const policy = catalog.pathPolicies.find(item => item.id === id)
+  if (!policy || !policy.active) invalidInput('Jalur pendaftaran tidak aktif.')
+  const starts = Date.parse(policy.effectiveFrom)
+  const ends = policy.effectiveUntil ? Date.parse(policy.effectiveUntil) : Number.POSITIVE_INFINITY
+  if (!Number.isFinite(starts) || at < starts || at > ends) invalidInput('Kebijakan jalur pendaftaran belum atau tidak lagi berlaku.')
+  if (programStudyId && policy.programStudyIds.length && !policy.programStudyIds.includes(programStudyId)) {
+    invalidInput('Jalur pendaftaran tidak tersedia untuk program studi yang dipilih.')
+  }
+  return structuredClone(policy)
 }
 
 export async function admissionProgramById(idValue: string): Promise<AdmissionProgram> {
@@ -240,4 +293,97 @@ export async function updateAdmissionWave(
   return { wave, auditId: audit.id }
 }
 
-export { DEMO_ADMISSION_PROGRAMS as ADMISSION_PROGRAMS, DEMO_ADMISSION_WAVES as ADMISSION_WAVES }
+function normalizePathPolicy(
+  input: AdmissionPathPolicyInput,
+  version: number,
+  actor: string,
+  prior?: AdmissionPathPolicy,
+): AdmissionPathPolicy {
+  const id = requireString(input.id, 'id', { max: 40 }) as AdmissionPathId
+  if (!ADMISSION_PATH_IDS.includes(id)) invalidInput('ID jalur pendaftaran tidak valid.')
+  if (typeof input.active !== 'boolean') invalidInput('active wajib berupa boolean.')
+  const label = requireString(input.label, 'label', { min: 2, max: 100 }).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  const description = requireString(input.description, 'description', { min: 5, max: 500 }).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  const programStudyIds = [...new Set(input.programStudyIds.map(item => requireString(item, 'programStudyId', { max: 80, pattern: SAFE_ID })))]
+  if (programStudyIds.length > 100) invalidInput('Jalur hanya dapat membatasi maksimal 100 program studi.')
+  const studyModeIds = [...new Set(input.studyModeIds)]
+  if (!studyModeIds.length || studyModeIds.some(item => !STUDY_MODE_IDS.includes(item))) invalidInput('Sistem perkuliahan jalur tidak valid.')
+  const requiredDocumentTypes = [...new Set(input.requiredDocumentTypes)]
+  if (!requiredDocumentTypes.length || requiredDocumentTypes.some(item => !ADMISSION_DOCUMENT_TYPES.includes(item))) invalidInput('Syarat dokumen jalur tidak valid.')
+  const effectiveFromMs = Date.parse(requireString(input.effectiveFrom, 'effectiveFrom', { max: 48 }))
+  const effectiveUntilMs = input.effectiveUntil ? Date.parse(requireString(input.effectiveUntil, 'effectiveUntil', { max: 48 })) : undefined
+  if (!Number.isFinite(effectiveFromMs) || (effectiveUntilMs !== undefined && (!Number.isFinite(effectiveUntilMs) || effectiveUntilMs <= effectiveFromMs))) {
+    invalidInput('Rentang tanggal efektif jalur tidak valid.')
+  }
+  const timestamp = new Date().toISOString()
+  return {
+    id,
+    label,
+    description,
+    active: input.active,
+    programStudyIds,
+    studyModeIds,
+    requiredDocumentTypes,
+    registrationFee: requireInteger(input.registrationFee, 'registrationFee', 0, 1_000_000_000),
+    currency: 'IDR',
+    effectiveFrom: new Date(effectiveFromMs).toISOString(),
+    ...(effectiveUntilMs !== undefined ? { effectiveUntil: new Date(effectiveUntilMs).toISOString() } : {}),
+    version,
+    createdAt: prior?.createdAt || timestamp,
+    createdBy: prior?.createdBy || actor,
+    updatedAt: timestamp,
+    updatedBy: actor,
+  }
+}
+
+async function requirePathPolicyScope(context: AuthContext, programStudyIds: string[]): Promise<void> {
+  requirePermission(context, 'pmb.configure')
+  if (!hasRole(context, 'administrator', 'admissions_staff')) forbidden('Jalur PMB hanya dapat dikelola petugas penerimaan.')
+  await Promise.all(programStudyIds.map(admissionProgramById))
+  if (!hasRole(context, 'administrator') && (
+    !programStudyIds.length || programStudyIds.some(id => !context.scope.programStudyIds.includes(id))
+  )) forbidden('Jalur PMB harus dibatasi pada program studi dalam lingkup petugas.')
+}
+
+export async function updateAdmissionPathPolicy(
+  context: AuthContext,
+  idValue: string,
+  input: AdmissionPathPolicyInput & { expectedVersion: number },
+  event?: H3Event,
+): Promise<{ pathPolicy: AdmissionPathPolicy; auditId: string }> {
+  const id = requireString(idValue, 'id', { max: 40 }) as AdmissionPathId
+  if (input.id !== id) invalidInput('ID jalur pada path dan body harus sama.')
+  if (!ADMISSION_PATH_IDS.includes(id)) invalidInput('ID jalur pendaftaran tidak valid.')
+  await requirePathPolicyScope(context, input.programStudyIds)
+  const expectedVersion = requireInteger(input.expectedVersion, 'expectedVersion', 1, 100_000)
+  let before: AdmissionPathPolicy
+  let pathPolicy: AdmissionPathPolicy
+  if (dataMode() === 'mock') {
+    const current = admissionModuleState().pathPolicies.get(id)
+    if (!current) notFound('Jalur PMB')
+    if (current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Jalur PMB telah berubah.', { currentVersion: current.version })
+    before = structuredClone(current)
+    pathPolicy = normalizePathPolicy(input, expectedVersion + 1, context.uid, current)
+    admissionModuleState().pathPolicies.set(id, structuredClone(pathPolicy))
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan katalog PMB tidak tersedia.')
+    const reference = db.collection('admissionPathPolicies').doc(id)
+    const result = await db.runTransaction(async transaction => {
+      const snapshot = await transaction.get(reference)
+      const fallback = DEMO_ADMISSION_PATH_POLICIES.find(item => item.id === id)
+      if (!fallback) notFound('Jalur PMB')
+      const current = snapshot.exists ? asPathPolicy(snapshot.id, snapshot.data() || {}) : { ...structuredClone(fallback), programStudyIds: [] }
+      if (current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Jalur PMB telah berubah.', { currentVersion: current.version })
+      const next = normalizePathPolicy(input, expectedVersion + 1, context.uid, current)
+      transaction.set(reference, next)
+      return { current, next }
+    })
+    before = result.current
+    pathPolicy = result.next
+  }
+  const audit = await appendAudit({ actor: context, action: 'ADMISSION_PATH_POLICY_UPDATED', resourceType: 'admission_path_policy', resourceId: id, before, after: pathPolicy, event })
+  return { pathPolicy, auditId: audit.id }
+}
+
+export { DEMO_ADMISSION_PATH_POLICIES as ADMISSION_PATH_POLICIES, DEMO_ADMISSION_PROGRAMS as ADMISSION_PROGRAMS, DEMO_ADMISSION_WAVES as ADMISSION_WAVES }

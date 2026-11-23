@@ -17,6 +17,7 @@ import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireRecord, requireString } from '../utils/validation'
 import { admissionModuleState } from './admissions-state'
+import { admissionPathPolicyById } from './admissions-catalog'
 import { getPrivateFileDetail } from './files'
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/
@@ -59,22 +60,33 @@ async function documentsFor(applicationId: string): Promise<AdmissionDocumentRec
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as AdmissionDocumentRecord)
 }
 
-function checklist(path: AdmissionPathId, documents: AdmissionDocumentRecord[]): AdmissionDocumentChecklistItem[] {
-  const required = new Set(REQUIREMENTS[path])
+function checklist(requiredTypes: AdmissionDocumentType[], documents: AdmissionDocumentRecord[]): AdmissionDocumentChecklistItem[] {
+  const required = new Set(requiredTypes)
   return ADMISSION_DOCUMENT_TYPES.filter(type => required.has(type)).map(documentType => {
     const latest = documents.filter(item => item.documentType === documentType).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
     return { documentType, label: LABELS[documentType], required: true, status: latest?.status || 'MISSING', ...(latest ? { documentId: latest.id } : {}) }
   })
 }
 
+async function applicationRequirements(application: AdmissionApplicationRecord): Promise<AdmissionDocumentType[]> {
+  if (application.requiredDocumentTypes?.length) return [...application.requiredDocumentTypes]
+  try {
+    return (await admissionPathPolicyById(application.admissionPathId, Date.parse(application.submittedAt), application.programStudyId)).requiredDocumentTypes
+  }
+  catch {
+    return [...REQUIREMENTS[application.admissionPathId]]
+  }
+}
+
 export async function getAdmissionDocumentWorkspace(context: AuthContext, applicationId: string): Promise<AdmissionDocumentWorkspace> {
   const application = await loadApplication(applicationId); if (!canRead(context, application)) forbidden('Pendaftaran berada di luar lingkup akses Anda.')
-  const documents = (await documentsFor(application.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), items = checklist(application.admissionPathId, documents)
+  const documents = (await documentsFor(application.id)).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)), items = checklist(await applicationRequirements(application), documents)
   return { application: view(application), documents, checklist: items, complete: items.every(item => item.status === 'VERIFIED') }
 }
 
 export async function requiredAdmissionDocumentsVerified(applicationId: string, path: AdmissionPathId): Promise<boolean> {
-  const items = checklist(path, await documentsFor(applicationId))
+  const application = await loadApplication(applicationId)
+  const items = checklist(application.admissionPathId === path ? await applicationRequirements(application) : REQUIREMENTS[path], await documentsFor(applicationId))
   return items.length > 0 && items.every(item => item.status === 'VERIFIED')
 }
 
@@ -111,7 +123,7 @@ export async function reviewAdmissionDocument(context: AuthContext, applicationI
   let document: AdmissionDocumentRecord
   if (dataMode() === 'mock') { const before = admissionModuleState().documents.get(id); if (!before) notFound('Dokumen PMB'); document = update(clone(before)); admissionModuleState().documents.set(id, clone(document)) }
   else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan dokumen PMB tidak tersedia.'); const ref = db.collection('admissionDocuments').doc(id); document = await db.runTransaction(async transaction => { const snapshot = await transaction.get(ref); if (!snapshot.exists) notFound('Dokumen PMB'); const next = update({ id: snapshot.id, ...snapshot.data() } as AdmissionDocumentRecord); transaction.update(ref, next); transaction.set(db.collection('admissionDocumentKeys').doc(opaqueId('admission_document_key', `${application.id}:${next.documentType}`)), { documentId: id, status, updatedAt: now }); return next }) }
-  const items = checklist(application.admissionPathId, await documentsFor(application.id)), complete = items.every(item => item.status === 'VERIFIED')
+  const items = checklist(await applicationRequirements(application), await documentsFor(application.id)), complete = items.every(item => item.status === 'VERIFIED')
   const audit = await appendAudit({ actor: context, action: `ADMISSION_DOCUMENT_${status}`, resourceType: 'admission_document', resourceId: id, before: { status: 'PENDING', version: expectedVersion }, after: { status, version: document.version, applicationId: application.id, checklistComplete: complete }, event })
   return { document, checklist: items, complete, auditId: audit.id }
 }

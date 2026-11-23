@@ -10,7 +10,7 @@ import { opaqueId, requestHash } from '../utils/security'
 import { billingModuleState } from './billing-state'
 import { krsModuleState } from './krs-state'
 import type { KrsHold, KrsStudentAcademicState } from '../types/krs-enrollment'
-import type { BillingAcademicHold } from '../types/billing'
+import type { BillingAcademicHold, DepositAccount, DepositTransaction } from '../types/billing'
 
 export interface RecordPaymentInput {
   invoiceId: string
@@ -23,6 +23,8 @@ export interface RecordPaymentInput {
 export interface RecordPaymentResult {
   payment: PaymentRecord
   invoice: InvoiceRecord
+  depositAccount?: DepositAccount
+  depositTransaction?: DepositTransaction
   replayed: boolean
   auditId?: string
 }
@@ -36,24 +38,69 @@ export interface ReversePaymentInput {
 export interface ReversePaymentResult {
   payment: PaymentRecord
   invoice: InvoiceRecord
+  depositAccount?: DepositAccount
+  depositTransaction?: DepositTransaction
   replayed: boolean
   auditId?: string
 }
 
-function applyPayment(invoice: InvoiceRecord, amount: number): InvoiceRecord {
+interface PaymentApplication {
+  invoice: InvoiceRecord
+  appliedAmountIdr: number
+  overpaymentAmountIdr: number
+}
+
+function applyPayment(invoice: InvoiceRecord, amount: number): PaymentApplication {
   if (invoice.status === 'VOID') conflict('INVOICE_VOID', 'Tagihan telah dibatalkan.')
-  if (invoice.status === 'PAID') conflict('INVOICE_ALREADY_PAID', 'Tagihan telah lunas.')
-  const remaining = invoice.totalAmount - invoice.paidAmount
-  if (amount > remaining) {
-    conflict('PAYMENT_EXCEEDS_BALANCE', 'Nominal pembayaran melebihi sisa tagihan.', { remainingAmount: remaining })
-  }
-  const paidAmount = invoice.paidAmount + amount
+  const remaining = Math.max(0, invoice.totalAmount - invoice.paidAmount)
+  const appliedAmountIdr = Math.min(amount, remaining)
+  const overpaymentAmountIdr = amount - appliedAmountIdr
+  const paidAmount = invoice.paidAmount + appliedAmountIdr
   return {
-    ...invoice,
-    paidAmount,
-    status: paidAmount === invoice.totalAmount ? 'PAID' : 'PARTIALLY_PAID',
-    version: invoice.version + 1,
+    invoice: {
+      ...invoice,
+      paidAmount,
+      status: paidAmount === invoice.totalAmount ? 'PAID' : 'PARTIALLY_PAID',
+      version: invoice.version + 1,
+    },
+    appliedAmountIdr,
+    overpaymentAmountIdr,
   }
+}
+
+function creditOverpayment(
+  current: DepositAccount | undefined,
+  invoice: InvoiceRecord,
+  amountIdr: number,
+  sourceReference: string,
+  actor: string,
+  now: string,
+): { account: DepositAccount; transaction: DepositTransaction } {
+  const balanceIdr = (current?.balanceIdr || 0) + amountIdr
+  if (!Number.isSafeInteger(balanceIdr)) conflict('DEPOSIT_BALANCE_INVALID', 'Saldo deposit melampaui batas yang didukung.')
+  const account: DepositAccount = {
+    studentId: invoice.studentId,
+    programStudyId: invoice.programStudyId,
+    balanceIdr,
+    reservedRefundAmountIdr: current?.reservedRefundAmountIdr || 0,
+    version: (current?.version || 0) + 1,
+    updatedAt: now,
+    updatedBy: actor,
+  }
+  const transaction: DepositTransaction = {
+    id: opaqueId('deposit_tx', `overpayment:${sourceReference}`),
+    studentId: invoice.studentId,
+    programStudyId: invoice.programStudyId,
+    amountIdr,
+    balanceAfterIdr: balanceIdr,
+    kind: 'OVERPAYMENT_CREDIT',
+    sourceReference,
+    invoiceId: invoice.id,
+    createdAt: now,
+    createdBy: actor,
+    immutable: true,
+  }
+  return { account, transaction }
 }
 
 function financeHoldForInvoice(invoice: InvoiceRecord, now: string): BillingAcademicHold | undefined {
@@ -102,6 +149,7 @@ function paymentRecord(
   id: string,
   context: AuthContext,
   input: RecordPaymentInput,
+  application: PaymentApplication,
   now: string,
 ): PaymentRecord {
   return {
@@ -115,6 +163,11 @@ function paymentRecord(
     recordedAt: now,
     recordedBy: context.uid,
     status: 'SETTLED',
+    appliedAmountIdr: application.appliedAmountIdr,
+    overpaymentAmountIdr: application.overpaymentAmountIdr,
+    ...(application.overpaymentAmountIdr > 0
+      ? { overpaymentDepositTransactionId: opaqueId('deposit_tx', `overpayment:${input.externalReference}`) }
+      : {}),
   }
 }
 
@@ -142,12 +195,20 @@ export async function recordPayment(
     const storedInvoice = mockState().invoices.get(input.invoiceId)
     if (!storedInvoice) notFound('Tagihan')
     requirePaymentScope(context, storedInvoice)
-    const invoice = applyPayment(storedInvoice, input.amount)
-    const payment = paymentRecord(paymentId, context, input, now)
-    result = { payment, invoice, replayed: false }
+    const application = applyPayment(storedInvoice, input.amount)
+    const invoice = application.invoice
+    const payment = paymentRecord(paymentId, context, input, application, now)
+    const overpayment = application.overpaymentAmountIdr > 0
+      ? creditOverpayment(billingModuleState().depositAccounts.get(invoice.studentId), invoice, application.overpaymentAmountIdr, input.externalReference, context.uid, now)
+      : undefined
+    result = { payment, invoice, ...(overpayment ? { depositAccount: overpayment.account, depositTransaction: overpayment.transaction } : {}), replayed: false }
     mockState().invoices.set(invoice.id, cloneValue(invoice))
     synchronizeMockBilling(invoice, now)
     mockState().payments.set(payment.id, cloneValue(payment))
+    if (overpayment) {
+      billingModuleState().depositAccounts.set(invoice.studentId, cloneValue(overpayment.account))
+      billingModuleState().depositTransactions.set(overpayment.transaction.id, cloneValue(overpayment.transaction))
+    }
     mockState().idempotency.set(namespace, { requestHash: hash, response: cloneValue(result), createdAt: now })
   } else {
     const db = firestoreAdmin()
@@ -172,13 +233,33 @@ export async function recordPayment(
       if (!invoiceSnapshot.exists) notFound('Tagihan')
       const current = { id: invoiceSnapshot.id, ...invoiceSnapshot.data() } as InvoiceRecord
       requirePaymentScope(context, current)
-      const invoice = applyPayment(current, input.amount)
-      const payment = paymentRecord(paymentId, context, input, now)
-      const response: RecordPaymentResult = { payment, invoice, replayed: false }
+      const application = applyPayment(current, input.amount)
+      const invoice = application.invoice
+      const payment = paymentRecord(paymentId, context, input, application, now)
+      let overpayment: { account: DepositAccount; transaction: DepositTransaction } | undefined
+      let depositAccountRef: FirebaseFirestore.DocumentReference | undefined
+      if (application.overpaymentAmountIdr > 0) {
+        depositAccountRef = db.collection('billingDepositAccounts').doc(invoice.studentId)
+        const accountSnapshot = await transaction.get(depositAccountRef)
+        const currentAccount = accountSnapshot.exists
+          ? ({ studentId: accountSnapshot.id, ...accountSnapshot.data() } as DepositAccount)
+          : undefined
+        overpayment = creditOverpayment(currentAccount, invoice, application.overpaymentAmountIdr, input.externalReference, context.uid, now)
+      }
+      const response: RecordPaymentResult = {
+        payment,
+        invoice,
+        ...(overpayment ? { depositAccount: overpayment.account, depositTransaction: overpayment.transaction } : {}),
+        replayed: false,
+      }
       await synchronizeFirebaseHold(transaction, db, invoice, now)
       transaction.update(invoiceRef, invoice)
       transaction.create(paymentRef, payment)
       transaction.create(externalRef, { paymentId, externalReference: input.externalReference, createdAt: now })
+      if (overpayment && depositAccountRef) {
+        transaction.set(depositAccountRef, overpayment.account)
+        transaction.create(db.collection('billingDepositTransactions').doc(overpayment.transaction.id), overpayment.transaction)
+      }
       transaction.create(idemRef, { requestHash: hash, response, createdAt: now, expiresAt: new Date(Date.now() + 86_400_000).toISOString() })
       return response
     })
@@ -193,6 +274,8 @@ export async function recordPayment(
       after: {
         invoiceId: result.invoice.id,
         amount: result.payment.amount,
+        appliedAmountIdr: result.payment.appliedAmountIdr,
+        overpaymentAmountIdr: result.payment.overpaymentAmountIdr,
         channel: result.payment.channel,
         externalReference: result.payment.externalReference,
         invoiceStatus: result.invoice.status,
@@ -206,16 +289,57 @@ export async function recordPayment(
 
 function applyReversal(invoice: InvoiceRecord, payment: PaymentRecord): InvoiceRecord {
   if ((payment.status || 'SETTLED') === 'REVERSED') conflict('PAYMENT_ALREADY_REVERSED', 'Pembayaran telah dibalik sebelumnya.')
-  if (invoice.paidAmount < payment.amount) {
+  const appliedAmountIdr = payment.appliedAmountIdr ?? payment.amount
+  if (invoice.paidAmount < appliedAmountIdr) {
     conflict('INVOICE_BALANCE_INCONSISTENT', 'Saldo tagihan lebih kecil dari pembayaran yang akan dibalik.')
   }
-  const paidAmount = invoice.paidAmount - payment.amount
+  const paidAmount = invoice.paidAmount - appliedAmountIdr
   return {
     ...invoice,
     paidAmount,
     status: paidAmount === 0 ? 'UNPAID' : 'PARTIALLY_PAID',
     version: invoice.version + 1,
   }
+}
+
+function reverseOverpayment(
+  current: DepositAccount | undefined,
+  invoice: InvoiceRecord,
+  payment: PaymentRecord,
+  reversalReference: string,
+  actor: string,
+  now: string,
+): { account: DepositAccount; transaction: DepositTransaction } | undefined {
+  const amountIdr = payment.overpaymentAmountIdr || 0
+  if (amountIdr < 1) return undefined
+  if (!current || current.studentId !== invoice.studentId || current.programStudyId !== invoice.programStudyId) {
+    conflict('OVERPAYMENT_DEPOSIT_MISSING', 'Saldo kelebihan pembayaran tidak ditemukan.')
+  }
+  const balanceIdr = current.balanceIdr - amountIdr
+  if (balanceIdr < (current.reservedRefundAmountIdr || 0)) {
+    conflict('OVERPAYMENT_ALREADY_CONSUMED', 'Kelebihan pembayaran telah digunakan atau dicadangkan untuk refund.')
+  }
+  const account: DepositAccount = {
+    ...current,
+    balanceIdr,
+    version: current.version + 1,
+    updatedAt: now,
+    updatedBy: actor,
+  }
+  const transaction: DepositTransaction = {
+    id: opaqueId('deposit_tx', `overpayment-reversal:${reversalReference}`),
+    studentId: invoice.studentId,
+    programStudyId: invoice.programStudyId,
+    amountIdr,
+    balanceAfterIdr: balanceIdr,
+    kind: 'OVERPAYMENT_REVERSAL',
+    sourceReference: reversalReference,
+    invoiceId: invoice.id,
+    createdAt: now,
+    createdBy: actor,
+    immutable: true,
+  }
+  return { account, transaction }
 }
 
 export async function findPaymentByExternalReference(externalReference: string): Promise<PaymentRecord> {
@@ -274,8 +398,21 @@ export async function reversePayment(
     const invoice = mockState().invoices.get(payment.invoiceId)
     if (!invoice) notFound('Tagihan')
     result = transition(cloneValue(payment), cloneValue(invoice))
+    const overpayment = reverseOverpayment(
+      billingModuleState().depositAccounts.get(invoice.studentId),
+      invoice,
+      payment,
+      normalizedInput.externalReference,
+      context.uid,
+      now,
+    )
+    if (overpayment) result = { ...result, depositAccount: overpayment.account, depositTransaction: overpayment.transaction }
     mockState().payments.set(paymentId, cloneValue(result.payment))
     mockState().invoices.set(invoice.id, cloneValue(result.invoice))
+    if (overpayment) {
+      billingModuleState().depositAccounts.set(invoice.studentId, cloneValue(overpayment.account))
+      billingModuleState().depositTransactions.set(overpayment.transaction.id, cloneValue(overpayment.transaction))
+    }
     synchronizeMockBilling(result.invoice, now)
     mockState().idempotency.set(namespace, { requestHash: hash, response: cloneValue(result), createdAt: now })
   } else {
@@ -300,10 +437,28 @@ export async function reversePayment(
       const invoiceSnapshot = await transaction.get(invoiceRef)
       if (!invoiceSnapshot.exists) notFound('Tagihan')
       const invoice = { id: invoiceSnapshot.id, ...invoiceSnapshot.data() } as InvoiceRecord
-      const response = transition(payment, invoice)
+      let overpayment: { account: DepositAccount; transaction: DepositTransaction } | undefined
+      let depositAccountRef: FirebaseFirestore.DocumentReference | undefined
+      if ((payment.overpaymentAmountIdr || 0) > 0) {
+        depositAccountRef = db.collection('billingDepositAccounts').doc(invoice.studentId)
+        const accountSnapshot = await transaction.get(depositAccountRef)
+        const currentAccount = accountSnapshot.exists
+          ? ({ studentId: accountSnapshot.id, ...accountSnapshot.data() } as DepositAccount)
+          : undefined
+        overpayment = reverseOverpayment(currentAccount, invoice, payment, normalizedInput.externalReference, context.uid, now)
+      }
+      const baseResponse = transition(payment, invoice)
+      const response: ReversePaymentResult = {
+        ...baseResponse,
+        ...(overpayment ? { depositAccount: overpayment.account, depositTransaction: overpayment.transaction } : {}),
+      }
       await synchronizeFirebaseHold(transaction, db, response.invoice, now)
       transaction.update(paymentRef, response.payment)
       transaction.update(invoiceRef, response.invoice)
+      if (overpayment && depositAccountRef) {
+        transaction.update(depositAccountRef, overpayment.account)
+        transaction.create(db.collection('billingDepositTransactions').doc(overpayment.transaction.id), overpayment.transaction)
+      }
       transaction.create(reversalRef, {
         paymentId, externalReference: normalizedInput.externalReference, createdAt: now,
       })
@@ -320,11 +475,13 @@ export async function reversePayment(
       action: 'PAYMENT_REVERSED',
       resourceType: 'payment',
       resourceId: result.payment.id,
-      before: { status: 'SETTLED', invoicePaidAmount: result.invoice.paidAmount + result.payment.amount },
+      before: { status: 'SETTLED', invoicePaidAmount: result.invoice.paidAmount + (result.payment.appliedAmountIdr ?? result.payment.amount) },
       after: {
         status: result.payment.status,
         invoiceId: result.invoice.id,
         amount: result.payment.amount,
+        appliedAmountIdr: result.payment.appliedAmountIdr,
+        overpaymentAmountIdr: result.payment.overpaymentAmountIdr,
         invoicePaidAmount: result.invoice.paidAmount,
         reversalExternalReference: result.payment.reversalExternalReference,
         reason: result.payment.reversalReason,

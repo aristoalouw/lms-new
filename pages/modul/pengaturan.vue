@@ -23,6 +23,7 @@ const links = computed(() => [
   ...(can('accounts:manage') ? [{ to: '/admin/pengguna', label: 'Pengguna & akses', detail: 'Akun, role, scope, status, dan revocation', icon: 'uil-users-alt' }] : []),
   ...(can('academic.write') || can('academic.configure') ? [{ to: '/akademik/master', label: 'Master akademik', detail: 'Program studi, periode, mata kuliah, kurikulum, dan kalender', icon: 'uil-book-open' }] : []),
   ...(can('pmb.configure') ? [{ to: '/pmb/pengaturan', label: 'Konfigurasi PMB', detail: 'Gelombang, jadwal, biaya, kapasitas, dan program', icon: 'uil-user-plus' }] : []),
+  ...(can('evaluation.configure') ? [{ to: '/evaluasi', label: 'Konfigurasi evaluasi', detail: 'Form, periode evaluasi dosen, dan ambang anonimitas', icon: 'uil-favorite' }] : []),
   ...(can('graduation.configure') ? [{ to: '/kelulusan', label: 'Konfigurasi kelulusan', detail: 'Periode, persyaratan, dan template dokumen', icon: 'uil-graduation-cap' }] : []),
   ...(can('tracer.configure') ? [{ to: '/tracer-study', label: 'Konfigurasi tracer study', detail: 'Kuesioner dan periode distribusi tanpa data responden', icon: 'uil-chart-growth' }] : []),
   ...(can('pddikti:view') ? [{ to: '/pddikti', label: 'Operasi PDDIKTI', detail: 'Status worker, antrean, dan kesehatan adapter tanpa approval bisnis', icon: 'uil-sync' }] : []),

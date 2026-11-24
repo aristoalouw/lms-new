@@ -4,7 +4,7 @@ export type NavigationItem = {
   label: string
   to: string
   icon: string
-  permission?: string
+  permission?: string | readonly string[]
   badge?: string
   feature: Feature
 }
@@ -32,16 +32,16 @@ export const navigation: NavigationGroup[] = [
       { label: 'Pembelajaran', to: '/pembelajaran', icon: 'uil-presentation-play', permission: 'learning.read', feature: 'learning' },
       { label: 'Keuangan', to: '/keuangan', icon: 'uil-receipt', permission: 'finance.read', feature: 'finance' },
       { label: 'Rekonsiliasi', to: '/keuangan/rekonsiliasi', icon: 'uil-exchange', permission: 'finance.write', feature: 'finance' },
-      { label: 'PDDIKTI', to: '/pddikti', icon: 'uil-sync', permission: 'pddikti.read', feature: 'pddikti' },
+      { label: 'PDDIKTI', to: '/pddikti', icon: 'uil-sync', permission: ['pddikti.read', 'pddikti:view'], feature: 'pddikti' },
     ],
   },
   {
     label: 'Layanan kampus',
     items: [
       { label: 'Kemahasiswaan', to: '/kemahasiswaan', icon: 'uil-award', permission: 'student_affairs.read', feature: 'student-affairs' },
-      { label: 'Evaluasi dosen', to: '/evaluasi', icon: 'uil-favorite', permission: 'evaluation.read', feature: 'evaluation' },
-      { label: 'Kelulusan', to: '/kelulusan', icon: 'uil-graduation-cap', permission: 'graduation.read', feature: 'graduation' },
-      { label: 'Tracer study', to: '/tracer-study', icon: 'uil-chart-growth', permission: 'tracer.read', feature: 'tracer-study' },
+      { label: 'Evaluasi dosen', to: '/evaluasi', icon: 'uil-favorite', permission: ['evaluation.read', 'evaluation.configure'], feature: 'evaluation' },
+      { label: 'Kelulusan', to: '/kelulusan', icon: 'uil-graduation-cap', permission: ['graduation.read', 'graduation.configure'], feature: 'graduation' },
+      { label: 'Tracer study', to: '/tracer-study', icon: 'uil-chart-growth', permission: ['tracer.read', 'tracer.report', 'tracer.configure'], feature: 'tracer-study' },
       { label: 'Tata usaha', to: '/layanan', icon: 'uil-file-check-alt', permission: 'service.read', feature: 'services' },
     ],
   },
@@ -58,13 +58,22 @@ export const navigation: NavigationGroup[] = [
   },
 ]
 
+export function navigationPermissionAllowed(
+  required: string | readonly string[] | undefined,
+  permissionAllowed: (permission?: string) => boolean,
+): boolean {
+  if (!required) return true
+  if (typeof required === 'string') return permissionAllowed(required)
+  return required.some(permission => permissionAllowed(permission))
+}
+
 export function navigationCommandsForAccess(
   featureEnabled: (feature: Feature) => boolean,
   permissionAllowed: (permission?: string) => boolean,
   pageAllowed: (path: string) => boolean = () => true,
 ): NavigationCommand[] {
   return navigation.flatMap(group => group.items
-    .filter(item => featureEnabled(item.feature) && pageAllowed(item.to) && permissionAllowed(item.permission))
+    .filter(item => featureEnabled(item.feature) && pageAllowed(item.to) && navigationPermissionAllowed(item.permission, permissionAllowed))
     .map(item => ({ ...item, context: group.label })))
 }
 

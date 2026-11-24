@@ -60,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { navigation } from '~/config/navigation'
+import { navigation, navigationPermissionAllowed } from '~/config/navigation'
 
 const { sidebarOpen, sidebarCompact, closeSidebar, toggleCompact } = useAppShell()
 const { can } = useAuth()
@@ -70,6 +70,6 @@ const appName = computed(() => String(config.public.appName || 'Nusa Campus').tr
 const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'N')
 
 const visibleNavigation = computed(() => navigation
-  .map(group => ({ ...group, items: group.items.filter(item => enabled(item.feature) && pageEnabled(item.to) && can(item.permission)) }))
+  .map(group => ({ ...group, items: group.items.filter(item => enabled(item.feature) && pageEnabled(item.to) && navigationPermissionAllowed(item.permission, can)) }))
   .filter(group => group.items.length))
 </script>

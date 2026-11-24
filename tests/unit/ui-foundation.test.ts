@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { permissionsForLmsMvpRole, type Permission } from '../../shared/auth'
+import { permissionsForLmsMvpRole, permissionsForRole, type Permission } from '../../shared/auth'
 import { navigationCommandsForAccess } from '../../config/navigation'
 import { isFeatureEnabled, normalizeFeatureProfile } from '../../shared/features'
 import { usePrivateUpload } from '../../composables/usePrivateUpload'
@@ -94,6 +94,34 @@ describe('command palette authorization', () => {
     expect(administratorCommands.map(item => item.to)).toEqual(expect.arrayContaining([
       '/admin/kelas',
       '/admin/pengguna',
+    ]))
+  })
+
+  it('exposes tracer report to leader and configuration modules to administrator in full-campus', () => {
+    const profile = normalizeFeatureProfile('full-campus')
+    const leaderPermissions = new Set<Permission>(permissionsForRole('leader'))
+    const leaderCommands = navigationCommandsForAccess(
+      feature => isFeatureEnabled(profile, feature),
+      permission => !permission || leaderPermissions.has(permission as Permission),
+    )
+    expect(leaderCommands.map(item => item.to)).toContain('/tracer-study')
+
+    const adminPermissions = new Set<Permission>(permissionsForRole('administrator'))
+    const adminCommands = navigationCommandsForAccess(
+      feature => isFeatureEnabled(profile, feature),
+      permission => !permission || adminPermissions.has(permission as Permission),
+    )
+    expect(adminCommands.map(item => item.to)).toEqual(expect.arrayContaining([
+      '/pddikti',
+      '/evaluasi',
+      '/kelulusan',
+      '/tracer-study',
+      '/admin/pengguna',
+      '/modul/pengaturan',
+    ]))
+    expect(adminCommands.map(item => item.to)).not.toEqual(expect.arrayContaining([
+      '/keuangan',
+      '/akademik/krs',
     ]))
   })
 })

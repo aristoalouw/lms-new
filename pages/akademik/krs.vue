@@ -382,7 +382,9 @@ const initializeKrs = async () => {
     if (!data.profile) throw new Error('Profil akademik mahasiswa belum tersedia.')
     periods.value = data.periods.filter(item => item.active && !item.deletedAt)
     programs.value = data.programs.filter(item => !item.deletedAt)
-    const periodId = data.profile.currentPeriodId || periods.value[0]?.id
+    const periodId = periods.value.some(item => item.id === data.profile?.currentPeriodId)
+      ? data.profile.currentPeriodId
+      : periods.value[0]?.id
     if (!periodId) throw new Error('Periode akademik aktif belum tersedia.')
     selectedPeriodId.value = periodId
     await loadPeriod(periodId)

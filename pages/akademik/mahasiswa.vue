@@ -8,6 +8,7 @@ useHead({ title: 'Onboarding Mahasiswa' })
 
 const { $api } = useNuxtApp()
 const { user } = useAuth()
+const route = useRoute()
 const catalog = ref<AcademicAdministrationWorkspace | null>(null)
 const loading = ref(true)
 const working = ref(false)
@@ -183,7 +184,14 @@ async function save() {
   finally { working.value = false }
 }
 
-onMounted(loadCatalog)
+onMounted(async () => {
+  await loadCatalog()
+  const queryStudentId = typeof route.query.studentId === 'string' ? route.query.studentId.trim() : ''
+  if (queryStudentId) {
+    lookupId.value = queryStudentId
+    await lookup()
+  }
+})
 </script>
 
 <template>

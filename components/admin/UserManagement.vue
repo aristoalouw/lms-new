@@ -528,6 +528,11 @@ onMounted(() => Promise.all([loadAccounts(), loadProgramStudies(), loadAccessReq
               <label class="form-field"><span>NIM / ID mahasiswa (wajib)</span><input v-model="form.studentIds" class="form-control" required placeholder="2026001" data-clarity-mask="true"></label>
               <label class="form-field"><span>Angkatan</span><input v-model="form.cohortYears" class="form-control" inputmode="numeric" placeholder="2026"></label>
             </div>
+            <div v-if="form.roles.includes('student') && form.studentIds.trim()" class="mt-2">
+              <NuxtLink class="btn btn-sm btn-outline-primary" :to="`/akademik/mahasiswa?studentId=${encodeURIComponent(form.studentIds.trim())}`">
+                <i class="uil uil-graduation-cap me-1" />Atur semester &amp; profil akademik mahasiswa
+              </NuxtLink>
+            </div>
             <div v-else class="form-grid">
               <label class="form-field"><span>Unit</span><ChoiceSelect v-model="selectedUnitIds" :options="unitChoiceOptions" multiple aria-label="Pilih unit akses" /><small>Pilihan berasal dari fakultas/unit pada master program studi.</small></label>
               <label class="form-field"><span>Program studi</span><ChoiceSelect v-model="selectedProgramStudyIds" :options="programChoiceOptions" multiple aria-label="Pilih program studi akses" /><small>Pilih satu atau beberapa program studi resmi.</small></label>

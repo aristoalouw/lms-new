@@ -289,8 +289,8 @@ export async function listKrsCatalog(
       .map(document => {
         const record = { id: document.id, ...document.data() } as AcademicClassRecord
         if (!record.semesterRecommendation) {
-          const fallbackSem = (record.courseVersionId ? courseById.get(record.courseVersionId)?.semesterRecommendation : undefined)
-            ?? courseByProgramCode.get(`${record.programStudyId}:${record.courseCode.toUpperCase()}`)?.semesterRecommendation
+          const fallbackSem = courseByProgramCode.get(`${record.programStudyId}:${record.courseCode.toUpperCase()}`)?.semesterRecommendation
+            ?? (record.courseVersionId ? courseById.get(record.courseVersionId)?.semesterRecommendation : undefined)
           if (fallbackSem) record.semesterRecommendation = fallbackSem
         }
         return record

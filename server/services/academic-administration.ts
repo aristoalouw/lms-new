@@ -23,6 +23,7 @@ import type {
   ThesisGuidanceEntry,
   ThesisRecord,
 } from '../types/academic-administration'
+import { deriveStudentSemester } from '../utils/academic-semester'
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
@@ -226,8 +227,18 @@ export async function getAcademicAdministrationWorkspace(context: AuthContext, r
       leaveRequests: [], advisingSessions: [], rpsVersions: [], theses: [], mbkmActivities: [],
     }
   }
+  const sortedActivePeriods = periods
+    .filter(item => !item.deletedAt && item.active)
+    .sort((left, right) => right.startsAt.localeCompare(left.startsAt) || left.id.localeCompare(right.id))
+  const resolvedProfile = profile
+    ? (() => {
+        const matchedPeriod = sortedActivePeriods.find(item => item.id === profile.currentPeriodId) || sortedActivePeriods[0]
+        const currentSemester = profile.currentSemester ?? deriveStudentSemester(profile.cohortYear, matchedPeriod?.academicYear, matchedPeriod?.term)
+        return { ...profile, currentSemester }
+      })()
+    : undefined
   return {
-    ...(profile ? { profile } : {}), programs: visiblePrograms, periods: visiblePeriods,
+    ...(resolvedProfile ? { profile: resolvedProfile } : {}), programs: visiblePrograms, periods: visiblePeriods,
     courses: visibleCourses, curricula: visibleCurricula,
     calendar: visibleCalendar,
     leaveRequests: leaves.filter(item => studentFilter(item.studentId, item.programStudyId)).sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)),

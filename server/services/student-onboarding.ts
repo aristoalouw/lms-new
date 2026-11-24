@@ -271,6 +271,27 @@ export async function getStudentOnboarding(context: AuthContext, studentIdValue:
   const programStudyId = result.profile?.programStudyId || result.krsState?.programStudyId || result.billingProfile?.programStudyId
   if (!programStudyId) serviceUnavailable('Data onboarding mahasiswa tidak memiliki program studi.')
   requireOnboardingStaff(context, programStudyId)
+  if ((result.profile && !result.profile.currentSemester) || (result.krsState && !result.krsState.currentSemester)) {
+    const cohortYear = result.profile?.cohortYear ?? result.krsState?.cohortYear ?? result.billingProfile?.cohortYear
+    let matchedPeriod: AcademicPeriodDefinition | undefined
+    if (dataMode() === 'mock') {
+      const periods = [...academicAdministrationState().periods.values()].filter(item => !item.deletedAt && item.active)
+      matchedPeriod = periods.find(item => item.id === result.profile?.currentPeriodId) || periods[0]
+    } else {
+      const db = firestoreAdmin()
+      if (db) {
+        const snap = await db.collection('academicPeriodDefinitions').where('active', '==', true).limit(20).get()
+        const periods = snap.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }) as AcademicPeriodDefinition)
+          .filter(item => !item.deletedAt)
+          .sort((a, b) => b.startsAt.localeCompare(a.startsAt))
+        matchedPeriod = periods.find(item => item.id === result.profile?.currentPeriodId) || periods[0]
+      }
+    }
+    const derived = result.profile?.currentSemester ?? result.krsState?.currentSemester ?? deriveStudentSemester(cohortYear, matchedPeriod?.academicYear, matchedPeriod?.term)
+    if (result.profile && !result.profile.currentSemester) result.profile.currentSemester = derived
+    if (result.krsState && !result.krsState.currentSemester) result.krsState.currentSemester = derived
+  }
   return result
 }
 

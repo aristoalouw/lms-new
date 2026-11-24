@@ -40,10 +40,18 @@ const form = reactive({
   meetingDurationMinutes: 100,
 })
 
+const latestActiveCourses = computed(() => {
+  const map = new Map<string, LmsAcademicCatalog['courses'][number]>()
+  for (const item of catalog.value.courses) {
+    const existing = map.get(item.courseId)
+    if (!existing || item.version > existing.version) map.set(item.courseId, item)
+  }
+  return [...map.values()].sort((left, right) => left.code.localeCompare(right.code, 'id'))
+})
 const filteredCoursesForCreate = computed(() => (
   courseProgramFilter.value === 'ALL'
-    ? catalog.value.courses
-    : catalog.value.courses.filter(item => item.programStudyId === courseProgramFilter.value)
+    ? latestActiveCourses.value
+    : latestActiveCourses.value.filter(item => item.programStudyId === courseProgramFilter.value)
 ))
 const selectedCourse = computed(() => catalog.value.courses.find(item => item.id === form.courseVersionId))
 const selectedProgram = computed(() => catalog.value.programs.find(item => item.id === selectedCourse.value?.programStudyId))

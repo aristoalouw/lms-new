@@ -66,8 +66,39 @@ export const BUILT_IN_LMS_NOTIFICATION_TEMPLATES: readonly NotificationTemplate[
   },
 ]
 
+export const BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES: readonly NotificationTemplate[] = [
+  {
+    key: 'krs-submitted', name: 'Pengajuan KRS mahasiswa', category: 'ACADEMIC',
+    titleTemplate: 'Pengajuan KRS baru dari {{studentName}}',
+    bodyTemplate: 'Mahasiswa {{studentName}} ({{studentNumber}}) mengajukan KRS periode {{periodId}} sebanyak {{totalCredits}} SKS untuk persetujuan dosen wali.',
+    emailSubjectTemplate: 'Pengajuan KRS baru dari {{studentName}}',
+    emailBodyTemplate: 'Mahasiswa {{studentName}} ({{studentNumber}}) mengajukan KRS periode {{periodId}} sebanyak {{totalCredits}} SKS. Buka portal kampus untuk meninjau.',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-27T00:00:00.000Z', updatedBy: 'system',
+  },
+  {
+    key: 'krs-approved', name: 'KRS disetujui', category: 'ACADEMIC',
+    titleTemplate: 'KRS periode {{periodId}} disetujui',
+    bodyTemplate: 'Pengajuan KRS Anda ({{totalCredits}} SKS) pada periode {{periodId}} telah disetujui dan kelas telah didaftarkan.',
+    emailSubjectTemplate: 'KRS periode {{periodId}} disetujui',
+    emailBodyTemplate: 'Pengajuan KRS Anda sebanyak {{totalCredits}} SKS pada periode {{periodId}} telah disetujui.',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-27T00:00:00.000Z', updatedBy: 'system',
+  },
+  {
+    key: 'krs-rejected', name: 'KRS dikembalikan untuk revisi', category: 'ACADEMIC',
+    titleTemplate: 'KRS periode {{periodId}} perlu revisi',
+    bodyTemplate: 'Pengajuan KRS Anda pada periode {{periodId}} dikembalikan untuk revisi. {{reviewNotes}}',
+    emailSubjectTemplate: 'KRS periode {{periodId}} perlu revisi',
+    emailBodyTemplate: 'Pengajuan KRS Anda pada periode {{periodId}} dikembalikan untuk revisi. {{reviewNotes}}',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-27T00:00:00.000Z', updatedBy: 'system',
+  },
+]
+
 const templates: NotificationTemplate[] = [
   ...BUILT_IN_LMS_NOTIFICATION_TEMPLATES,
+  ...BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES,
   {
     key: 'ticket-created', name: 'Tiket layanan dibuat', category: 'SERVICE',
     titleTemplate: 'Tiket {{ticketNumber}} berhasil dibuat',

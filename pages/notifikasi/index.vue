@@ -22,6 +22,8 @@ const notificationCursor = ref<string>()
 const loadingMore = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
+const noticeMessage = ref('')
+const route = useRoute()
 const isAdmin = computed(() => can('notifications:manage'))
 const emailAvailable = computed(() => config.public.emailDeliveryEnabled)
 const lmsCategorySet = new Set<NotificationCategory>(LMS_MVP_NOTIFICATION_CATEGORIES)
@@ -126,6 +128,8 @@ const openNotification = async (item: InAppNotification) => {
 
 const savePreferences = async () => {
   saving.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
   try {
     if (!config.public.demoMode) await $api.put('/notifications/preferences', {
       inAppEnabled: preferences.inAppEnabled,
@@ -135,6 +139,7 @@ const savePreferences = async () => {
         : Object.fromEntries(Object.keys(preferences.categoryEmail).map(category => [category, false])),
       quietHours: preferences.quietHours,
     })
+    noticeMessage.value = 'Preferensi notifikasi berhasil disimpan.'
   } catch { errorMessage.value = 'Preferensi belum berhasil disimpan.' } finally { saving.value = false }
 }
 
@@ -156,7 +161,10 @@ const retryOutbox = async (record: EmailOutboxSummary) => {
   } catch { errorMessage.value = 'Email belum dapat dijadwalkan ulang.' }
 }
 
-onMounted(load)
+onMounted(() => {
+  if (route.query.tab === 'preferences') activeTab.value = 'preferences'
+  void load()
+})
 </script>
 
 <template>
@@ -164,6 +172,7 @@ onMounted(load)
     <AppPageHeader eyebrow="Komunikasi kampus" title="Pusat Notifikasi" :description="isLmsMvp ? 'Pembaruan pembelajaran dan sistem dalam satu kotak masuk.' : 'Satu kotak masuk untuk pembaruan akademik, keuangan, pembelajaran, dan layanan administratif.'">
       <template #actions><button class="btn btn-outline-secondary" type="button" @click="activeTab = 'preferences'"><i class="uil uil-sliders-v-alt me-2" />Atur preferensi</button></template>
     </AppPageHeader>
+    <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div>
     <div v-if="errorMessage" class="alert alert-warning">{{ errorMessage }}</div>
 
     <nav class="notification-tabs" aria-label="Bagian pusat notifikasi">

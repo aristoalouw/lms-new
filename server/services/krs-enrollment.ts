@@ -17,6 +17,7 @@ import { cloneValue, mockState } from '../utils/mock-store'
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { krsModuleState } from './krs-state'
+import { enqueueAcademicWorkflowNotification } from './notifications'
 
 export interface SaveKrsDraftInput {
   periodId: string
@@ -545,6 +546,24 @@ export async function submitKrs(
     event,
   })
   result.auditId = audit.id
+  if (result.record.advisorId) {
+    try {
+      await enqueueAcademicWorkflowNotification(context, {
+        recipientUid: result.record.advisorId,
+        templateKey: 'krs-submitted',
+        variables: {
+          studentName: result.record.studentName || context.displayName,
+          studentNumber: result.record.studentNumber || result.record.studentId,
+          periodId: result.record.periodId,
+          totalCredits: result.record.totalCredits,
+        },
+        actionPath: '/akademik/krs',
+        eventKey: `krs-submitted:${krsId}:v${result.record.version}`,
+      }, event)
+    } catch {
+      // Do not fail KRS submission if notification delivery fails transiently.
+    }
+  }
   return result
 }
 

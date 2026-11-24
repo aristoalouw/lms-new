@@ -22,6 +22,7 @@ import { normalizeRoles, permissionsFor } from './rbac'
 
 export const SESSION_COOKIE_NAME = 'campus_session'
 const SESSION_DURATION_MS = 8 * 60 * 60 * 1000
+const REMEMBER_SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000
 const AUTH_UPSTREAM_TIMEOUT_MS = 10_000
 
 interface FirebaseAppSessionPayload {
@@ -422,7 +423,7 @@ export async function requireAuth(event: H3Event): Promise<AuthContext> {
 
 export async function createFirebaseSession(
   idToken: string,
-  options: { onVerified?: (context: AuthContext) => Promise<void> } = {},
+  options: { remember?: boolean; onVerified?: (context: AuthContext) => Promise<void> } = {},
 ): Promise<{ context: AuthContext; token: string }> {
   const decoded = await verifyFirebaseIdToken(idToken)
   const uid = String(decoded.uid || decoded.sub).slice(0, 128)
@@ -437,9 +438,10 @@ export async function createFirebaseSession(
     throw new CampusError(401, 'RECENT_LOGIN_REQUIRED', 'Silakan login kembali sebelum membuat sesi.')
   }
   const now = Date.now()
+  const durationMs = options.remember ? REMEMBER_SESSION_DURATION_MS : SESSION_DURATION_MS
   const context = firebaseAccountContext(account, {
     issuedAt: now,
-    expiresAt: now + SESSION_DURATION_MS,
+    expiresAt: now + durationMs,
   })
   await options.onVerified?.(context)
   const token = signedFirebaseSessionToken({
@@ -451,13 +453,13 @@ export async function createFirebaseSession(
   return { context, token }
 }
 
-export function setSessionCookie(event: H3Event, token: string): void {
+export function setSessionCookie(event: H3Event, token: string, remember = false): void {
   setCookie(event, SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
     path: '/',
-    maxAge: SESSION_DURATION_MS / 1000,
+    ...(remember ? { maxAge: REMEMBER_SESSION_DURATION_MS / 1000 } : {}),
   })
 }
 

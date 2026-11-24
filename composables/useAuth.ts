@@ -29,6 +29,7 @@ const initialsFor = (name: string) => name
   .map(part => part[0]?.toUpperCase())
   .join('') || 'NC'
 
+const REMEMBERED_EMAIL_STORAGE_KEY = 'campus.rememberedEmail'
 const FIREBASE_LOGIN_TIMEOUT_MS = 20_000
 const SESSION_COLD_START_TIMEOUT_MS = 60_000
 
@@ -103,10 +104,18 @@ export const useAuth = () => {
       const credential = await withLoginTimeout(signInWithEmailAndPassword(firebaseAuth, email, password))
       firebaseSignedIn = true
       const idToken = await withLoginTimeout(credential.user.getIdToken(), 10_000)
-      const { data } = await $api.post<{ session: ServerSession }>('/auth/session', { idToken }, {
+      const { data } = await $api.post<{ session: ServerSession }>('/auth/session', { idToken, remember }, {
         // Hostinger can cold-start the managed Node process after an idle period.
         timeout: SESSION_COLD_START_TIMEOUT_MS,
       })
+      if (import.meta.client) {
+        try {
+          if (remember) window.localStorage.setItem(REMEMBERED_EMAIL_STORAGE_KEY, email.trim())
+          else window.localStorage.removeItem(REMEMBERED_EMAIL_STORAGE_KEY)
+        } catch {
+          // Ignore storage quota or private-mode restrictions.
+        }
+      }
       user.value = userFromSession(data.session, activeRoleCookie.value || undefined)
       activeRoleCookie.value = user.value.activeRole
       restored.value = true

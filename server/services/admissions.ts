@@ -21,7 +21,7 @@ import {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasProgramAccess, hasRole } from '../utils/rbac'
+import { hasCampusWideProgramScope, hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireRecord, requireString } from '../utils/validation'
 import { promoteApplicantAccount } from './accounts'
@@ -296,6 +296,7 @@ async function normalizeStaffProgram(context: AuthContext, requested?: string): 
   }
   if (context.scope.programStudyIds.length === 1) return context.scope.programStudyIds[0]
   if (context.scope.programStudyIds.length > 1) invalidInput('programStudyId wajib dipilih untuk akun dengan beberapa lingkup.')
+  if (hasCampusWideProgramScope(context)) return undefined
   forbidden('Akun tidak memiliki lingkup program studi PMB.')
 }
 

@@ -16,9 +16,24 @@
         <span class="live-dot" aria-hidden="true" />
         {{ isLmsMvp ? 'Mode LMS aktif' : 'Platform kampus' }}
       </div>
-      <button class="topbar-icon" type="button" aria-label="Bantuan">
-        <i class="uil uil-question-circle" aria-hidden="true" />
-      </button>
+      <div class="topbar-popover-wrap">
+        <button class="topbar-icon" type="button" :aria-expanded="helpOpen" aria-label="Bantuan" @click="toggleHelp">
+          <i class="uil uil-question-circle" aria-hidden="true" />
+        </button>
+        <div v-if="helpOpen" class="notification-popover shadow-lg">
+          <div class="notification-popover__head">
+            <div><p class="eyebrow mb-1">Panduan cepat</p><h2>Bantuan portal</h2></div>
+            <button class="btn btn-link btn-sm" type="button" @click="helpOpen = false">Tutup</button>
+          </div>
+          <div class="p-3 d-grid gap-2 small">
+            <p class="mb-1 text-muted">Tekan <kbd>Ctrl</kbd> + <kbd>K</kbd> kapan saja untuk mencari menu atau modul yang tersedia pada peran aktif Anda (<strong>{{ activeRoleLabel }}</strong>).</p>
+            <NuxtLink class="btn btn-outline-secondary btn-sm text-start" to="/profil" @click="helpOpen = false"><i class="uil uil-user-circle me-1" /> Profil & preferensi akun</NuxtLink>
+            <NuxtLink class="btn btn-outline-secondary btn-sm text-start" to="/notifikasi" @click="helpOpen = false"><i class="uil uil-bell me-1" /> Pusat notifikasi</NuxtLink>
+            <NuxtLink v-if="can('service.read')" class="btn btn-outline-secondary btn-sm text-start" to="/layanan" @click="helpOpen = false"><i class="uil uil-file-check-alt me-1" /> Layanan tata usaha & tiket</NuxtLink>
+            <NuxtLink v-if="can('settings.read')" class="btn btn-outline-secondary btn-sm text-start" to="/modul/pengaturan" @click="helpOpen = false"><i class="uil uil-setting me-1" /> Pengaturan sistem</NuxtLink>
+          </div>
+        </div>
+      </div>
       <div class="topbar-popover-wrap">
         <button class="topbar-icon" :class="{ 'topbar-icon--notified': visibleNotices.length }" type="button" :aria-expanded="notificationsOpen" aria-label="Buka notifikasi" @click="notificationsOpen = !notificationsOpen">
           <i class="uil uil-bell" aria-hidden="true" />
@@ -61,7 +76,8 @@
             </button>
           </div>
           <div class="dropdown-divider" />
-          <NuxtLink v-if="!isLmsMvp" class="dropdown-item" to="/modul/pengaturan"><i class="uil uil-user-circle" /> Profil & preferensi</NuxtLink>
+          <NuxtLink class="dropdown-item" to="/profil"><i class="uil uil-user-circle" /> Profil & preferensi</NuxtLink>
+          <NuxtLink v-if="!isLmsMvp && can('settings.read')" class="dropdown-item" to="/modul/pengaturan"><i class="uil uil-setting" /> Pengaturan sistem</NuxtLink>
           <button class="dropdown-item text-danger" type="button" @click="logout"><i class="uil uil-signout" /> Keluar</button>
         </div>
       </div>
@@ -100,6 +116,11 @@ const searchInput = ref<HTMLInputElement>()
 const query = ref('')
 const notices = ref<InAppNotification[]>([])
 const markingNotices = ref(false)
+const helpOpen = ref(false)
+const toggleHelp = () => {
+  helpOpen.value = !helpOpen.value
+  if (helpOpen.value) notificationsOpen.value = false
+}
 
 const noticeMeta: Record<NotificationCategory, { icon: string; tone: string }> = {
   ACADEMIC: { icon: 'uil-graduation-cap', tone: 'blue' },
@@ -173,8 +194,17 @@ const activeRoleLabel = computed(() => user.value ? roleLabels[user.value.active
 watch(commandOpen, async (open) => {
   if (open) {
     query.value = ''
+    helpOpen.value = false
+    notificationsOpen.value = false
     await nextTick()
     searchInput.value?.focus()
+  }
+})
+
+watch(notificationsOpen, (open) => {
+  if (open) {
+    helpOpen.value = false
+    void loadNotices()
   }
 })
 

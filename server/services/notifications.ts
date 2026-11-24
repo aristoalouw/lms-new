@@ -18,7 +18,7 @@ import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from '../utils/firest
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { listActiveAccountsByIds } from './accounts'
-import { BUILT_IN_LMS_NOTIFICATION_TEMPLATES, notificationModuleState } from './notifications-state'
+import { BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES, BUILT_IN_LMS_NOTIFICATION_TEMPLATES, notificationModuleState } from './notifications-state'
 import { serverFeatureProfile } from '../utils/feature-profile'
 import { emailDeliveryEnabled } from '../utils/capabilities'
 
@@ -200,7 +200,8 @@ async function templateByKey(key: string): Promise<NotificationTemplate> {
   if (!db) serviceUnavailable('Penyimpanan notifikasi tidak tersedia.')
   const snapshot = await db.collection('notificationTemplates').doc(key).get()
   if (!snapshot.exists) {
-    const builtIn = BUILT_IN_LMS_NOTIFICATION_TEMPLATES.find(template => template.key === key)
+    const builtIn = [...BUILT_IN_LMS_NOTIFICATION_TEMPLATES, ...BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES]
+      .find(template => template.key === key)
     if (builtIn) return structuredClone(builtIn)
     notFound('Template notifikasi')
   }
@@ -216,9 +217,12 @@ async function allNotificationTemplates(): Promise<NotificationTemplate[]> {
   const snapshot = await db.collection('notificationTemplates').limit(100).get()
   const stored = snapshot.docs.map(doc => ({ key: doc.id, ...doc.data() }) as NotificationTemplate)
   const storedKeys = new Set(stored.map(template => template.key))
+  const builtIns = isLmsMvpProfile()
+    ? BUILT_IN_LMS_NOTIFICATION_TEMPLATES
+    : [...BUILT_IN_LMS_NOTIFICATION_TEMPLATES, ...BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES]
   return [
     ...stored,
-    ...BUILT_IN_LMS_NOTIFICATION_TEMPLATES
+    ...builtIns
       .filter(template => !storedKeys.has(template.key))
       .map(template => structuredClone(template)),
   ]
@@ -341,7 +345,7 @@ async function enqueueNotificationWithAuthorization(
   input: EnqueueNotificationInput,
   idempotencyKey: string,
   event?: H3Event,
-  trustedLearningEvent = false,
+  trustedWorkflow: 'none' | 'learning' | 'academic' = 'none',
 ): Promise<EnqueueNotificationResult> {
   if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) invalidInput('Idempotency key tidak valid.')
   const template = await templateByKey(input.templateKey)
@@ -349,7 +353,14 @@ async function enqueueNotificationWithAuthorization(
   if (!template.active) conflict('TEMPLATE_INACTIVE', 'Template notifikasi tidak aktif.')
   const builtInLearningEvent = template.category === 'LEARNING'
     && BUILT_IN_LMS_NOTIFICATION_TEMPLATES.some(candidate => candidate.key === template.key)
-  if (trustedLearningEvent ? !builtInLearningEvent : !canEnqueue(context, template, input.programStudyId)) {
+  const builtInAcademicEvent = template.category === 'ACADEMIC'
+    && BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES.some(candidate => candidate.key === template.key)
+  const authorized = trustedWorkflow === 'learning'
+    ? builtInLearningEvent
+    : trustedWorkflow === 'academic'
+      ? builtInAcademicEvent
+      : canEnqueue(context, template, input.programStudyId)
+  if (!authorized) {
     forbidden('Notifikasi berada di luar lingkup kewenangan Anda.')
   }
   const variables = normalizeVariables(input.variables)
@@ -451,7 +462,7 @@ export async function enqueueLearningNotificationBatch(
         templateKey: input.templateKey,
         variables: input.variables,
         actionPath: input.actionPath,
-      }, opaqueId('learning_notice', `${input.eventKey}:${account.id}`), event, true)))
+      }, opaqueId('learning_notice', `${input.eventKey}:${account.id}`), event, 'learning')))
     inAppQueued += results.filter(result => result.channels.includes('IN_APP')).length
     emailQueued += results.filter(result => result.channels.includes('EMAIL')).length
   }
@@ -461,6 +472,29 @@ export async function enqueueLearningNotificationBatch(
     inAppQueued,
     emailQueued,
   }
+}
+
+export async function enqueueAcademicWorkflowNotification(
+  context: AuthContext,
+  input: {
+    recipientUid: string
+    templateKey: string
+    variables: Record<string, string | number | boolean>
+    actionPath: string
+    eventKey: string
+  },
+  event?: H3Event,
+): Promise<EnqueueNotificationResult | null> {
+  if (isLmsMvpProfile() || !input.recipientUid) return null
+  const [account] = await listActiveAccountsByIds([input.recipientUid])
+  if (!account && dataMode() !== 'mock') return null
+  return enqueueNotificationWithAuthorization(context, {
+    recipientUid: account?.id ?? input.recipientUid,
+    recipientEmail: account?.email,
+    templateKey: input.templateKey,
+    variables: input.variables,
+    actionPath: input.actionPath,
+  }, opaqueId('academic_notice', `${input.eventKey}:${input.recipientUid}`), event, 'academic')
 }
 
 /**

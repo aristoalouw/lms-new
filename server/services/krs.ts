@@ -10,6 +10,7 @@ import { requireKrsApprovalScope } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { classEnrollmentId, upsertMockKrsClassEnrollment } from './academic-classes'
 import { enrollMockKrsReservations, releaseMockKrsReservations } from './krs-enrollment'
+import { enqueueAcademicWorkflowNotification } from './notifications'
 
 export interface ReviewKrsInput {
   decision: 'APPROVE' | 'REJECT'
@@ -185,5 +186,22 @@ export async function reviewKrs(
     after: { status: after.status, version: after.version, reviewNotes: after.reviewNotes },
     event,
   })
+  if (after.studentUid) {
+    try {
+      await enqueueAcademicWorkflowNotification(context, {
+        recipientUid: after.studentUid,
+        templateKey: input.decision === 'APPROVE' ? 'krs-approved' : 'krs-rejected',
+        variables: {
+          periodId: after.periodId,
+          totalCredits: after.totalCredits,
+          reviewNotes: after.reviewNotes || 'Silakan periksa catatan dosen wali di halaman KRS.',
+        },
+        actionPath: '/akademik/krs',
+        eventKey: `krs-reviewed:${krsId}:v${after.version}`,
+      }, event)
+    } catch {
+      // Do not fail KRS review if notification delivery fails transiently.
+    }
+  }
   return { record: after, replayed: false, auditId: audit.id }
 }

@@ -11,10 +11,12 @@ export default defineCampusHandler(async (event) => {
   await enforceAuthIpBurst(clientAddress(event) || 'unknown')
   const body = requireRecord(await readBody(event))
   const idToken = requireString(body.idToken, 'idToken', { min: 100, max: 10_000 })
+  const remember = body.remember === true
   const { context, token } = await createFirebaseSession(idToken, {
+    remember,
     onVerified: verifiedContext => enforceAuthUserLimit('firebase', verifiedContext.uid),
   })
-  await appendAudit({ actor: context, action: 'AUTH_LOGIN_SUCCEEDED', resourceType: 'session', resourceId: context.uid, event })
-  setSessionCookie(event, token)
+  await appendAudit({ actor: context, action: 'AUTH_LOGIN_SUCCEEDED', resourceType: 'session', resourceId: context.uid, metadata: { remember }, event })
+  setSessionCookie(event, token, remember)
   return { session: publicSession(context) }
 })

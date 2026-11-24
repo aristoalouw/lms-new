@@ -80,6 +80,19 @@ const submitReset = async () => {
 }
 
 watch(resetEmail, () => { resetIdempotencyKey = '' })
+
+onMounted(() => {
+  if (config.public.demoMode) return
+  try {
+    const rememberedEmail = window.localStorage.getItem('campus.rememberedEmail')?.trim()
+    if (rememberedEmail) {
+      email.value = rememberedEmail
+      remember.value = true
+    }
+  } catch {
+    // Ignore storage access errors in restricted browsers.
+  }
+})
 </script>
 
 <template>

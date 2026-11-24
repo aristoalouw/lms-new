@@ -112,6 +112,9 @@ describe('Firebase application sessions', () => {
       uid: 'firebase-admin-001',
       roles: ['administrator'],
     })
+
+    const remembered = await createFirebaseSession('fresh-firebase-id-token', { remember: true })
+    expect(remembered.context.expiresAt - remembered.context.issuedAt).toBe(7 * 24 * 60 * 60 * 1000)
   })
 
   it('rejects tampered, expired, changed-version, and disabled-account sessions', async () => {

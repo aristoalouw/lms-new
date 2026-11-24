@@ -34,7 +34,7 @@ const pagePrefixes: ReadonlyArray<readonly [string, Feature]> = [
   ['/pmb', 'admissions'], ['/keuangan', 'finance'], ['/pddikti', 'pddikti'],
   ['/kemahasiswaan', 'student-affairs'], ['/evaluasi', 'evaluation'],
   ['/kelulusan', 'graduation'], ['/tracer-study', 'tracer-study'],
-  ['/layanan', 'services'], ['/impor', 'imports'], ['/login', 'auth'],
+  ['/layanan', 'services'], ['/impor', 'imports'], ['/profil', 'auth'], ['/login', 'auth'],
   ['/', 'dashboard'],
 ]
 
@@ -66,6 +66,7 @@ export function featureForApiPath(path: string): Feature | undefined {
 export const MVP_ALLOWED_PAGE_ROUTES = [
   '/',
   '/login',
+  '/profil',
   '/admin/pengguna',
   '/admin/kelas',
   '/admin/kelas/:classId',

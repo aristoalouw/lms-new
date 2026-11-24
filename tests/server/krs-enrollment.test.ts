@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { getOwnKrs, listKrsCatalog, saveKrsDraft, submitKrs } from '../../server/services/krs-enrollment'
 import { krsModuleState, resetKrsModuleState } from '../../server/services/krs-state'
 import { reviewKrs } from '../../server/services/krs'
+import { listInAppNotifications } from '../../server/services/notifications'
+import { resetNotificationModuleState } from '../../server/services/notifications-state'
 import type { AuthContext } from '../../server/types/auth'
 import { CampusError } from '../../server/utils/errors'
 import { mockState, resetMockState } from '../../server/utils/mock-store'
@@ -123,9 +125,13 @@ describe('KRS draft, eligibility, seats, and submission', () => {
     expect(krsModuleState().classes.get('class-mgt-501-a')?.reservedSeatCount).toBe(0)
   })
 
-  it('turns approved reservations into roster enrollment without double counting', async () => {
+  it('turns approved reservations into roster enrollment and notifies advisor and student', async () => {
+    resetNotificationModuleState()
     const saved = await draft(studentContext(), ['class-mgt-501-a'], 'draft-before-approve-01')
     const submitted = await submitKrs(studentContext(), saved.record.id, { expectedVersion: 1 }, 'submit-before-approve-1', undefined, clock)
+    const advisorNotices = await listInAppNotifications(authContext('advisor-001', ['advisor']))
+    expect(advisorNotices.some(item => item.templateKey === 'krs-submitted' && item.actionPath === '/akademik/krs')).toBe(true)
+
     const result = await reviewKrs(submitted.record.id, authContext('advisor-001', ['advisor']), {
       decision: 'APPROVE', expectedVersion: 2,
     })
@@ -133,6 +139,9 @@ describe('KRS draft, eligibility, seats, and submission', () => {
     expect(krsModuleState().classes.get('class-mgt-501-a')?.rosterStudentIds).toContain('student-010')
     expect(krsModuleState().classes.get('class-mgt-501-a')?.reservedSeatCount).toBe(1)
     expect([...krsModuleState().reservations.values()][0]?.status).toBe('ENROLLED')
+
+    const studentNotices = await listInAppNotifications(studentContext())
+    expect(studentNotices.some(item => item.templateKey === 'krs-approved' && item.actionPath === '/akademik/krs')).toBe(true)
   })
 
   it('fails closed when a non-student tries to change a draft', async () => {

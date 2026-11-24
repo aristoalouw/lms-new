@@ -71,6 +71,7 @@ export const useAuth = () => {
   const pending = useState<boolean>('auth.pending', () => false)
   const authError = useState<string | null>('auth.error', () => null)
   const restored = useState<boolean>('auth.restored', () => false)
+  const activeRoleCookie = useCookie<UserRole | null>('campus_active_role', { sameSite: 'strict', path: '/' })
   const requestFetch = useRequestFetch()
   const sessionFetch = requestFetch as unknown as (path: string) => Promise<{ session: ServerSession }>
 
@@ -106,7 +107,8 @@ export const useAuth = () => {
         // Hostinger can cold-start the managed Node process after an idle period.
         timeout: SESSION_COLD_START_TIMEOUT_MS,
       })
-      user.value = userFromSession(data.session)
+      user.value = userFromSession(data.session, activeRoleCookie.value || undefined)
+      activeRoleCookie.value = user.value.activeRole
       restored.value = true
       return user.value
     } catch (error) {
@@ -138,6 +140,7 @@ export const useAuth = () => {
       await Promise.allSettled(operations)
     } finally {
       user.value = null
+      activeRoleCookie.value = null
       restored.value = true
       await navigateTo('/login')
     }
@@ -148,7 +151,8 @@ export const useAuth = () => {
     pending.value = true
     try {
       const response = await sessionFetch('/api/auth/session')
-      user.value = userFromSession(response.session, user.value?.activeRole)
+      user.value = userFromSession(response.session, user.value?.activeRole || activeRoleCookie.value || undefined)
+      if (user.value) activeRoleCookie.value = user.value.activeRole
     } catch {
       user.value = null
     } finally {
@@ -160,6 +164,7 @@ export const useAuth = () => {
 
   const switchRole = (role: UserRole) => {
     if (!user.value?.roles.includes(role)) return
+    activeRoleCookie.value = role
     user.value = {
       ...user.value,
       activeRole: role,

@@ -172,7 +172,7 @@ export async function learningSpaceAccess(context: AuthContext, space: LearningS
   const canManage = generalManager(context, space)
   const scopedAcademicReader = hasRole(context, 'academic_staff')
     && Boolean(space.programStudyId)
-    && context.scope.programStudyIds.includes(space.programStudyId!)
+    && (context.scope.programStudyIds.includes(space.programStudyId!) || (hasRole(context, 'administrator') && !context.scope.programStudyIds.length))
   const assignedAdvisor = hasRole(context, 'advisor') && space.lecturerIds.includes(context.uid)
   const participant = space.participantUserIds.includes(context.uid)
     || context.scope.studentIds.some(studentId => space.participantUserIds.includes(studentId))
@@ -471,7 +471,7 @@ export async function listLearningSpacesPage(
     } else if (hasRole(context, 'academic_staff') && context.scope.programStudyIds.length) {
       const snapshots = await Promise.all(context.scope.programStudyIds.slice(0, 10).map(programStudyId => pageSpaceQuery(db.collection('learningSpaces').where('programStudyId', '==', programStudyId)).get()))
       spaces = snapshots.flatMap(snapshot => snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as LearningSpace))
-    } else if (serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator')) {
+    } else if ((serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator')) || (hasRole(context, 'academic_staff') && hasRole(context, 'administrator') && !context.scope.programStudyIds.length)) {
       const snapshot = await pageSpaceQuery(db.collection('learningSpaces')).get()
       spaces = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as LearningSpace)
     } else spaces = []

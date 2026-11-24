@@ -392,9 +392,16 @@ function isAssignedAdvisor(context: AuthContext, record: AcademicClassRecord): b
   return hasRole(context, 'advisor') && record.lecturerIds.includes(context.uid)
 }
 
+function hasCampusWideAcademicStaffScope(context: AuthContext): boolean {
+  return hasRole(context, 'academic_staff')
+    && hasRole(context, 'administrator')
+    && !context.scope.programStudyIds.length
+}
+
 function canManageClassProgram(context: AuthContext, programStudyId: string): boolean {
   return (serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator'))
     || (hasRole(context, 'academic_staff') && context.scope.programStudyIds.includes(programStudyId))
+    || hasCampusWideAcademicStaffScope(context)
 }
 
 function canManageClass(context: AuthContext, record: AcademicClassRecord): boolean {
@@ -1550,7 +1557,10 @@ function decodeClassCursor(value?: string): { id: string } | undefined {
 }
 
 export async function listAcademicClassesPage(context: AuthContext, query: AcademicClassListQuery = {}): Promise<AcademicClassPage> {
-  if (hasRole(context, 'leader') || (hasRole(context, 'administrator') && serverFeatureProfile() !== 'lms-mvp')) {
+  if (
+    !hasRole(context, 'student', 'lecturer', 'advisor', 'academic_staff')
+    && (hasRole(context, 'leader') || (hasRole(context, 'administrator') && serverFeatureProfile() !== 'lms-mvp'))
+  ) {
     forbidden('Data operasional kelas tidak tersedia untuk role ini.')
   }
   const limit = Math.min(Math.max(query.limit ?? 50, 1), 50)
@@ -1595,7 +1605,7 @@ export async function listAcademicClassesPage(context: AuthContext, query: Acade
         return pageQuery(candidate.orderBy('__name__')).get()
       }))
       records = [...new Map(snapshots.flatMap(snapshot => snapshot.docs).map(document => [document.id, ({ id: document.id, ...document.data() }) as AcademicClassRecord])).values()].slice(0, limit + 1)
-    } else if (serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator')) {
+    } else if ((serverFeatureProfile() === 'lms-mvp' && hasRole(context, 'administrator')) || hasCampusWideAcademicStaffScope(context)) {
       const snapshot = await pageQuery(filteredClassQuery(db.collection('academicClasses')).orderBy('__name__')).get()
       records = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as AcademicClassRecord)
     } else records = []

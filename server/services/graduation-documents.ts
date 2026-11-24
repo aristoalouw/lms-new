@@ -395,7 +395,7 @@ export async function listGraduationDocuments(
   filters: { applicationId?: string; type?: GraduationDocumentType } = {},
 ): Promise<IssuedGraduationDocument[]> {
   requirePermission(context, 'graduation.read')
-  if (hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
+  if (!hasRole(context, 'academic_staff', 'lecturer', 'advisor', 'student') && hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
   if (filters.type) validateDocumentType(filters.type)
   let documents: IssuedGraduationDocument[]
   if (dataMode() === 'mock') {

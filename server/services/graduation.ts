@@ -389,7 +389,7 @@ export async function listGraduationApplications(
   filters: { periodId?: string; status?: GraduationApplicationStatus; limit?: number } | number = {},
 ): Promise<GraduationApplication[]> {
   requirePermission(context, 'graduation.read')
-  if (hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
+  if (!hasRole(context, 'academic_staff', 'lecturer', 'advisor', 'student') && hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
   const options = typeof filters === 'number' ? { limit: filters } : filters
   const limit = options.limit ?? 100
   let applications: GraduationApplication[]
@@ -540,7 +540,7 @@ export async function transitionGraduationApplication(context: AuthContext, id: 
 
 export async function listGraduationParticipants(context: AuthContext, limit = 100): Promise<GraduationParticipant[]> {
   requirePermission(context, 'graduation.read')
-  if (hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
+  if (!hasRole(context, 'academic_staff', 'lecturer', 'advisor', 'student') && hasRole(context, 'leader', 'administrator')) forbidden('Role ini hanya dapat mengakses agregat atau konfigurasi kelulusan.')
   let participants: GraduationParticipant[]
   if (dataMode() === 'mock') {
     participants = [...graduationModuleState().participants.values()].map(participant => structuredClone(participant))

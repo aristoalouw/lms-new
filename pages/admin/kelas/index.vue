@@ -116,7 +116,7 @@ onMounted(() => load())
 
     <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div>
     <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
-    <div v-if="!can('classes:manage')" class="alert alert-warning">Halaman ini hanya tersedia untuk administrator.</div>
+    <div v-if="!can('classes:manage')" class="alert alert-warning">Halaman ini hanya tersedia untuk pengelola kelas.</div>
 
     <template v-else>
       <AcademicCatalogManager :catalog="catalog" @created="load()" />

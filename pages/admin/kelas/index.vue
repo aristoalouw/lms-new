@@ -6,7 +6,7 @@ interface AccountOption { id: string; displayName: string; roles: string[] }
 interface AccountPage { items: AccountOption[] }
 
 definePageMeta({ middleware: ['auth', 'admin-mvp'] })
-useHead({ title: 'Kelola Kelas' })
+useHead({ title: 'Kelas & Peserta' })
 
 const { can } = useAuth()
 const { $api } = useNuxtApp()
@@ -20,22 +20,85 @@ const loadingMore = ref(false)
 const lecturers = ref<AccountOption[]>([])
 const selectedLecturers = ref<string[]>([])
 const catalog = ref<LmsAcademicCatalog>({ programs: [], periods: [], courses: [] })
+
+const activePanel = ref<'list' | 'create' | 'catalog'>('list')
+const searchQuery = ref('')
+const periodFilter = ref('ALL')
+const programFilter = ref('ALL')
+const statusFilter = ref<'ALL' | 'ACTIVE' | 'CLOSED'>('ACTIVE')
+const courseProgramFilter = ref('ALL')
+
 const firstMeeting = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 16)
 const form = reactive({
-  courseVersionId: '', section: 'A', periodId: '',
-  capacity: 40, firstMeetingStartsAt: firstMeeting,
-  meetingCount: 16, meetingDurationMinutes: 100,
+  courseVersionId: '',
+  section: 'A',
+  periodId: '',
+  capacity: 40,
+  firstMeetingStartsAt: firstMeeting,
+  meetingCount: 16,
+  meetingDurationMinutes: 100,
 })
+
+const filteredCoursesForCreate = computed(() => (
+  courseProgramFilter.value === 'ALL'
+    ? catalog.value.courses
+    : catalog.value.courses.filter(item => item.programStudyId === courseProgramFilter.value)
+))
 const selectedCourse = computed(() => catalog.value.courses.find(item => item.id === form.courseVersionId))
 const selectedProgram = computed(() => catalog.value.programs.find(item => item.id === selectedCourse.value?.programStudyId))
+
+const filteredClasses = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  return classes.value.filter(item =>
+    (statusFilter.value === 'ALL' || item.status === statusFilter.value)
+    && (periodFilter.value === 'ALL' || item.periodId === periodFilter.value)
+    && (programFilter.value === 'ALL' || item.programStudyId === programFilter.value)
+    && (!q
+      || item.courseCode.toLowerCase().includes(q)
+      || item.courseName.toLowerCase().includes(q)
+      || item.section.toLowerCase().includes(q)
+      || item.lecturerNames.some(name => name.toLowerCase().includes(q))),
+  )
+})
+
+const activeCount = computed(() => classes.value.filter(item => item.status === 'ACTIVE').length)
+const totalEnrolled = computed(() => classes.value.reduce((sum, item) => sum + (item.enrollmentCount ?? 0), 0))
 
 const key = (purpose: string) => `${purpose}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const messageFor = (error: unknown) => {
   const data = (error as AxiosError<{ statusMessage?: string; message?: string }>).response?.data
   return data?.statusMessage || data?.message || (error instanceof Error ? error.message : 'Permintaan kelas gagal diproses.')
 }
-const formatDate = (value: string) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(value))
-const termLabel = (term: string) => ({ ODD: 'Ganjil', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
+const termLabel = (term: string) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
+const periodLabel = (periodId: string) => {
+  const match = catalog.value.periods.find(item => item.id === periodId)
+  return match ? `${match.academicYear} · ${termLabel(match.term)}` : periodId
+}
+const programLabel = (programId: string) => {
+  const match = catalog.value.programs.find(item => item.id === programId)
+  return match ? match.name : programId
+}
+const schedulePreview = (item: AcademicClassRecord) => {
+  const first = item.schedule?.[0]
+  if (!first) return 'Jadwal belum diatur'
+  const start = new Date(first.scheduledStartAt)
+  const end = new Date(first.scheduledEndAt)
+  const day = new Intl.DateTimeFormat('id-ID', { weekday: 'long', timeZone: 'Asia/Jakarta' }).format(start)
+  const clock = (date: Date) => new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Jakarta' }).format(date)
+  return `${day}, ${clock(start)}–${clock(end)} WIB (${item.totalScheduledMeetings || item.schedule.length} pertemuan)`
+}
+
+function toggleLecturer(id: string) {
+  selectedLecturers.value = selectedLecturers.value.includes(id)
+    ? selectedLecturers.value.filter(item => item !== id)
+    : [...selectedLecturers.value, id]
+}
+
+watch(courseProgramFilter, () => {
+  if (!filteredCoursesForCreate.value.some(item => item.id === form.courseVersionId)) {
+    form.courseVersionId = filteredCoursesForCreate.value[0]?.id || ''
+  }
+})
 
 async function load(reset = true) {
   if (reset) { loading.value = true; nextCursor.value = undefined }
@@ -51,11 +114,14 @@ async function load(reset = true) {
     nextCursor.value = classResponse.data.nextCursor
     lecturers.value = lecturerResponse.data.items
     catalog.value = catalogResponse.data
-    if (!catalog.value.courses.some(item => item.id === form.courseVersionId)) {
-      form.courseVersionId = catalog.value.courses[0]?.id || ''
+    if (!filteredCoursesForCreate.value.some(item => item.id === form.courseVersionId)) {
+      form.courseVersionId = filteredCoursesForCreate.value[0]?.id || ''
     }
     if (!catalog.value.periods.some(item => item.id === form.periodId)) {
       form.periodId = catalog.value.periods[0]?.id || ''
+    }
+    if (!selectedLecturers.value.length && lecturers.value.length === 1) {
+      selectedLecturers.value = [lecturers.value[0]!.id]
     }
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -78,8 +144,9 @@ async function createClass() {
       lecturerIds: selected.map(item => item.id),
       lecturerNames: selected.map(item => item.displayName),
     }, { headers: { 'Idempotency-Key': key('class-create') } })
-    noticeMessage.value = 'Kelas dan ruang pembelajaran berhasil dibuat.'
+    noticeMessage.value = 'Kelas baru beserta ruang pembelajarannya berhasil dibuat.'
     form.section = 'A'
+    activePanel.value = 'list'
     await load()
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -88,15 +155,19 @@ async function createClass() {
   }
 }
 
-async function archiveClass(item: AcademicClassRecord) {
+async function toggleClassStatus(item: AcademicClassRecord) {
+  const nextStatus = item.status === 'ACTIVE' ? 'CLOSED' : 'ACTIVE'
   saving.value = true
   errorMessage.value = ''
+  noticeMessage.value = ''
   try {
     await $api.patch(`/academic/classes/${encodeURIComponent(item.id)}`, {
       expectedVersion: item.version ?? 1,
-      status: 'CLOSED',
-    }, { headers: { 'Idempotency-Key': key('class-archive') } })
-    noticeMessage.value = 'Kelas dan ruang LMS telah diarsipkan.'
+      status: nextStatus,
+    }, { headers: { 'Idempotency-Key': key('class-status') } })
+    noticeMessage.value = nextStatus === 'CLOSED'
+      ? `Kelas ${item.courseCode} (${item.section}) telah diarsipkan.`
+      : `Kelas ${item.courseCode} (${item.section}) diaktifkan kembali.`
     await load()
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -110,52 +181,202 @@ onMounted(() => load())
 
 <template>
   <div class="page-stack" data-clarity-mask="true">
-    <AppPageHeader eyebrow="Administrasi akademik" title="Kelas & peserta" description="Kelola kelas perkuliahan, dosen pengampu, dan ruang pembelajaran untuk setiap periode akademik.">
-      <template #actions><button class="btn btn-outline-secondary" type="button" :disabled="loading" @click="load()"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
+    <AppPageHeader eyebrow="Administrasi akademik" title="Kelas & peserta" description="Kelola kelas perkuliahan, dosen pengampu, jadwal, dan peserta dalam satu tempat.">
+      <template #actions>
+        <button class="btn btn-outline-secondary" type="button" :disabled="loading" @click="load()"><i class="uil uil-refresh me-1" />Muat ulang</button>
+        <button v-if="can('classes:manage')" class="btn btn-primary" type="button" @click="activePanel = activePanel === 'create' ? 'list' : 'create'">
+          <i class="uil me-1" :class="activePanel === 'create' ? 'uil-list-ul' : 'uil-plus'" />
+          {{ activePanel === 'create' ? 'Lihat daftar kelas' : 'Buat kelas baru' }}
+        </button>
+      </template>
     </AppPageHeader>
 
-    <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div>
+    <div v-if="noticeMessage" class="alert alert-success d-flex align-items-center justify-content-between" role="status"><span>{{ noticeMessage }}</span><button class="btn-close" type="button" aria-label="Tutup" @click="noticeMessage = ''" /></div>
     <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
     <div v-if="!can('classes:manage')" class="alert alert-warning">Halaman ini hanya tersedia untuk pengelola kelas.</div>
 
     <template v-else>
-      <AcademicCatalogManager :catalog="catalog" @created="load()" />
-      <section class="admin-class-grid">
-      <article class="surface-card">
-        <header><span class="section-kicker">Kelas baru</span><h2>Buat kelas dan ruang LMS</h2></header>
+      <nav class="panel-tabs" aria-label="Mode pengelolaan kelas">
+        <button type="button" :class="{ active: activePanel === 'list' }" @click="activePanel = 'list'">
+          <i class="uil uil-presentation-check" />Daftar kelas <span class="tab-count">{{ activeCount }}</span>
+        </button>
+        <button type="button" :class="{ active: activePanel === 'create' }" @click="activePanel = 'create'">
+          <i class="uil uil-plus-circle" />Buat kelas baru
+        </button>
+        <button type="button" :class="{ active: activePanel === 'catalog' }" @click="activePanel = 'catalog'">
+          <i class="uil uil-book-open" />Katalog prodi &amp; mata kuliah <span class="tab-count">{{ catalog.courses.length }}</span>
+        </button>
+      </nav>
+
+      <AcademicCatalogManager v-if="activePanel === 'catalog'" :catalog="catalog" @created="load()" />
+
+      <article v-else-if="activePanel === 'create'" class="surface-card">
+        <header class="card-head">
+          <div><span class="section-kicker">Kelas baru</span><h2>Buat kelas &amp; ruang pembelajaran</h2><p>Ruang LMS dan jadwal mingguan dibuat otomatis sesuai periode dan mata kuliah yang dipilih.</p></div>
+          <button class="btn btn-sm btn-outline-secondary" type="button" @click="activePanel = 'catalog'"><i class="uil uil-sliders-v-alt me-1" />Kelola mata kuliah</button>
+        </header>
+
+        <div v-if="!loading && (!catalog.courses.length || !catalog.periods.length)" class="alert alert-warning mb-3" role="alert">
+          Tambahkan minimal satu mata kuliah aktif dan periode akademik di tab <strong>Katalog prodi &amp; mata kuliah</strong> sebelum membuat kelas.
+        </div>
+
         <form class="class-form" @submit.prevent="createClass">
-          <div v-if="!loading && (!catalog.courses.length || !catalog.periods.length)" class="alert alert-warning span-2 mb-0" role="alert">Buat minimal satu versi mata kuliah ACTIVE dan periode aktif melalui API katalog sebelum membuat kelas.</div>
-          <label class="span-2"><span>Versi mata kuliah</span><select v-model="form.courseVersionId" class="form-select" required><option value="" disabled>Pilih versi mata kuliah</option><option v-for="course in catalog.courses" :key="course.id" :value="course.id">{{ course.code }} · {{ course.name }} (v{{ course.version }})</option></select><small>Hanya mata kuliah berstatus aktif yang dapat dipilih.</small></label>
-          <label><span>Section</span><input v-model="form.section" class="form-control" required maxlength="20"></label>
+          <label v-if="catalog.programs.length > 1">
+            <span>Filter program studi</span>
+            <select v-model="courseProgramFilter" class="form-select">
+              <option value="ALL">Semua program studi</option>
+              <option v-for="prog in catalog.programs" :key="prog.id" :value="prog.id">{{ prog.code }} · {{ prog.name }}</option>
+            </select>
+          </label>
+          <label :class="{ 'span-2': catalog.programs.length <= 1 }">
+            <span>Mata kuliah</span>
+            <select v-model="form.courseVersionId" class="form-select" required>
+              <option value="" disabled>Pilih mata kuliah aktif</option>
+              <option v-for="course in filteredCoursesForCreate" :key="course.id" :value="course.id">{{ course.code }} · {{ course.name }} ({{ course.credits }} SKS)</option>
+            </select>
+          </label>
+
+          <div v-if="selectedCourse && selectedProgram" class="catalog-summary span-2" aria-live="polite">
+            <div><small>Kode &amp; bobot</small><strong>{{ selectedCourse.code }} · {{ selectedCourse.credits }} SKS</strong></div>
+            <div><small>Program studi</small><strong>{{ selectedProgram.name }}</strong></div>
+            <div><small>Semester acuan</small><strong>Semester {{ selectedCourse.semesterRecommendation }}</strong></div>
+          </div>
+
           <label><span>Periode akademik</span><select v-model="form.periodId" class="form-select" required><option value="" disabled>Pilih periode aktif</option><option v-for="period in catalog.periods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ termLabel(period.term) }}</option></select></label>
-          <div v-if="selectedCourse && selectedProgram" class="catalog-summary span-2" aria-live="polite"><div><small>Kode / SKS</small><strong>{{ selectedCourse.code }} · {{ selectedCourse.credits }} SKS</strong></div><div><small>Program studi</small><strong>{{ selectedProgram.name }}</strong></div><div><small>Unit</small><strong>{{ selectedProgram.facultyId }}</strong></div></div>
-          <label><span>Kapasitas</span><input v-model.number="form.capacity" class="form-control" type="number" min="1" max="5000" required></label>
-          <label class="span-2"><span>Dosen pengampu</span><select v-model="selectedLecturers" class="form-select" multiple required size="4"><option v-for="lecturer in lecturers" :key="lecturer.id" :value="lecturer.id">{{ lecturer.displayName }}</option></select><small>Pilih minimal satu dosen.</small></label>
+          <div class="inline-two">
+            <label><span>Kelas / Section</span><input v-model="form.section" class="form-control" placeholder="A" required maxlength="20"></label>
+            <label><span>Kapasitas kursi</span><input v-model.number="form.capacity" class="form-control" type="number" min="1" max="5000" required></label>
+          </div>
+
+          <div class="span-2 lecturer-picker">
+            <span class="field-label">Dosen pengampu ({{ selectedLecturers.length }} dipilih)</span>
+            <div v-if="lecturers.length" class="lecturer-chips">
+              <label v-for="lecturer in lecturers" :key="lecturer.id" class="lecturer-chip" :class="{ selected: selectedLecturers.includes(lecturer.id) }">
+                <input type="checkbox" class="form-check-input" :checked="selectedLecturers.includes(lecturer.id)" @change="toggleLecturer(lecturer.id)">
+                <span>{{ lecturer.displayName }}</span>
+              </label>
+            </div>
+            <p v-else class="text-muted small mb-0">Belum ada akun dosen aktif. Tambahkan peran dosen di menu Pengguna &amp; akses.</p>
+          </div>
+
           <label><span>Pertemuan pertama (WIB)</span><input v-model="form.firstMeetingStartsAt" class="form-control" type="datetime-local" required></label>
-          <label><span>Jumlah pertemuan</span><input v-model.number="form.meetingCount" class="form-control" type="number" min="1" max="32" required></label>
-          <label><span>Durasi (menit)</span><input v-model.number="form.meetingDurationMinutes" class="form-control" type="number" min="30" max="360" required></label>
-          <button class="btn btn-primary span-2" type="submit" :disabled="saving || !selectedLecturers.length || !form.courseVersionId || !form.periodId"><span v-if="saving" class="spinner-border spinner-border-sm me-2" />Buat kelas</button>
+          <div class="inline-two">
+            <label><span>Jumlah pertemuan</span><input v-model.number="form.meetingCount" class="form-control" type="number" min="1" max="32" required></label>
+            <label><span>Durasi (menit)</span><input v-model.number="form.meetingDurationMinutes" class="form-control" type="number" min="30" max="360" required></label>
+          </div>
+
+          <div class="form-actions span-2">
+            <button class="btn btn-outline-secondary" type="button" @click="activePanel = 'list'">Batal</button>
+            <button class="btn btn-primary" type="submit" :disabled="saving || !selectedLecturers.length || !form.courseVersionId || !form.periodId">
+              <span v-if="saving" class="spinner-border spinner-border-sm me-2" />Simpan &amp; buat kelas
+            </button>
+          </div>
         </form>
       </article>
 
-      <article class="surface-card class-list-card">
-        <header><span class="section-kicker">Kelas tersedia</span><h2>{{ classes.length }} kelas dalam lingkup akun</h2></header>
-        <div v-if="loading" class="loading-state" role="status"><span class="spinner-border spinner-border-sm" /> Memuat kelas…</div>
-        <div v-else-if="classes.length" class="class-list">
-          <article v-for="item in classes" :key="item.id">
-            <div><strong>{{ item.courseCode }} · {{ item.courseName }}</strong><small>Kelas {{ item.section }} · {{ item.periodId }} · {{ item.enrollmentCount ?? 0 }}/{{ item.capacity || '∞' }} peserta</small><small>{{ item.lecturerNames.join(', ') }} · diperbarui {{ formatDate(item.updatedAt) }}</small></div>
-            <StatusBadge :status="item.status === 'ACTIVE' ? 'active' : 'blocked'" :label="item.status === 'ACTIVE' ? 'Aktif' : 'Arsip'" />
-            <div class="class-actions"><NuxtLink class="btn btn-sm btn-outline-primary" :to="`/admin/kelas/${item.id}`">Kelola</NuxtLink><button v-if="item.status === 'ACTIVE'" class="btn btn-sm btn-outline-danger" type="button" :disabled="saving" @click="archiveClass(item)">Arsipkan</button></div>
+      <article v-else class="surface-card">
+        <header class="list-header">
+          <div>
+            <span class="section-kicker">Daftar perkuliahan</span>
+            <h2>{{ filteredClasses.length }} kelas ditampilkan <small class="count-sub">({{ totalEnrolled }} total peserta)</small></h2>
+          </div>
+          <div class="filter-bar">
+            <input v-model="searchQuery" class="form-control form-control-sm" type="search" placeholder="Cari mata kuliah, kode, dosen..." aria-label="Cari kelas">
+            <select v-model="periodFilter" class="form-select form-select-sm" aria-label="Filter periode">
+              <option value="ALL">Semua periode</option>
+              <option v-for="period in catalog.periods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ termLabel(period.term) }}</option>
+            </select>
+            <select v-if="catalog.programs.length > 1" v-model="programFilter" class="form-select form-select-sm" aria-label="Filter program studi">
+              <option value="ALL">Semua prodi</option>
+              <option v-for="prog in catalog.programs" :key="prog.id" :value="prog.id">{{ prog.name }}</option>
+            </select>
+            <select v-model="statusFilter" class="form-select form-select-sm" aria-label="Filter status">
+              <option value="ACTIVE">Kelas aktif</option>
+              <option value="CLOSED">Diarsipkan</option>
+              <option value="ALL">Semua status</option>
+            </select>
+          </div>
+        </header>
+
+        <div v-if="loading" class="loading-state" role="status"><span class="spinner-border spinner-border-sm" /> Memuat daftar kelas…</div>
+        <div v-else-if="filteredClasses.length" class="class-list">
+          <article v-for="item in filteredClasses" :key="item.id" class="class-item">
+            <div class="class-item__main">
+              <div class="class-item__title">
+                <strong>{{ item.courseCode }} · {{ item.courseName }}</strong>
+                <span class="section-pill">Kelas {{ item.section }}</span>
+                <span class="section-pill">{{ item.credits }} SKS</span>
+              </div>
+              <div class="class-item__meta">
+                <span><i class="uil uil-calendar-alt" /> {{ periodLabel(item.periodId) }}</span>
+                <span><i class="uil uil-university" /> {{ programLabel(item.programStudyId) }}</span>
+                <span><i class="uil uil-clock" /> {{ schedulePreview(item) }}</span>
+              </div>
+              <div class="class-item__meta">
+                <span><i class="uil uil-user-square" /> {{ item.lecturerNames.join(', ') || 'Dosen belum diatur' }}</span>
+                <span><i class="uil uil-users-alt" /> {{ item.enrollmentCount ?? 0 }} / {{ item.capacity || '∞' }} peserta</span>
+              </div>
+            </div>
+            <div class="class-item__side">
+              <StatusBadge :status="item.status === 'ACTIVE' ? 'active' : 'blocked'" :label="item.status === 'ACTIVE' ? 'Aktif' : 'Arsip'" />
+              <div class="class-actions">
+                <NuxtLink class="btn btn-sm btn-primary" :to="`/admin/kelas/${item.id}`"><i class="uil uil-edit-alt me-1" />Kelola &amp; peserta</NuxtLink>
+                <NuxtLink class="btn btn-sm btn-outline-secondary" :to="`/pembelajaran/${item.id}`"><i class="uil uil-book-open me-1" />Ruang LMS</NuxtLink>
+                <button class="btn btn-sm" :class="item.status === 'ACTIVE' ? 'btn-outline-danger' : 'btn-outline-primary'" type="button" :disabled="saving" @click="toggleClassStatus(item)">
+                  {{ item.status === 'ACTIVE' ? 'Arsipkan' : 'Aktifkan' }}
+                </button>
+              </div>
+            </div>
           </article>
           <button v-if="nextCursor" class="btn btn-sm btn-outline-secondary" :disabled="loadingMore" @click="load(false)"><span v-if="loadingMore" class="spinner-border spinner-border-sm me-2" />Muat kelas berikutnya</button>
         </div>
-        <EmptyState v-else title="Belum ada kelas" description="Buat kelas pertama untuk menghasilkan ruang LMS otomatis." />
+        <EmptyState v-else title="Belum ada kelas sesuai filter" description="Ubah filter pencarian atau buat kelas baru untuk memulai perkuliahan." />
       </article>
-      </section>
     </template>
   </div>
 </template>
 
 <style scoped>
-.page-stack{display:grid;gap:1.25rem}.admin-class-grid{display:grid;grid-template-columns:minmax(320px,.8fr) minmax(0,1.2fr);gap:1rem;align-items:start}.surface-card{padding:1rem;border:1px solid #e6dfd6;border-radius:1rem;background:#fff}.surface-card header{margin-bottom:1rem}.surface-card h2{margin:.2rem 0 0;color:#294c40;font-size:1rem}.section-kicker{color:#668278;font-size:.65rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.class-form{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}.class-form label>span,.class-form small{display:block;margin-bottom:.3rem;color:#5c7269;font-size:.7rem;font-weight:700}.class-form small{margin:.3rem 0 0;color:#82918c;font-weight:500}.span-2{grid-column:1/-1}.catalog-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem;padding:.75rem;border:1px solid #e6dfd6;border-radius:.75rem;background:#faf6ef}.catalog-summary small,.catalog-summary strong{display:block}.catalog-summary strong{color:#315449;font-size:.75rem}.class-list{display:grid;gap:.65rem}.class-list>article{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.65rem;padding:.85rem;border:1px solid #e4ebe7;border-radius:.8rem}.class-list strong,.class-list small{display:block}.class-list strong{color:#315449;font-size:.82rem}.class-list small{margin-top:.25rem;color:#77877f;font-size:.68rem}.class-actions{grid-column:1/-1;display:flex;gap:.5rem}.loading-state{display:flex;gap:.5rem;align-items:center;min-height:140px;justify-content:center;color:#6e8179}@media(max-width:991.98px){.admin-class-grid{grid-template-columns:1fr}}@media(max-width:575.98px){.class-form,.catalog-summary{grid-template-columns:1fr}.span-2{grid-column:auto}.class-list>article{grid-template-columns:1fr}}
+.page-stack{display:grid;gap:1.15rem}
+.panel-tabs{display:flex;gap:.4rem;flex-wrap:wrap;padding:.35rem;border:1px solid #e6dfd6;border-radius:.85rem;background:#fff;width:fit-content}
+.panel-tabs button{display:inline-flex;align-items:center;gap:.45rem;padding:.5rem .85rem;border:0;border-radius:.6rem;color:#4e5462;background:transparent;font-size:.76rem;font-weight:700}
+.panel-tabs button.active{color:#fff;background:#593660}
+.tab-count{padding:.1rem .45rem;border-radius:999px;font-size:.66rem;background:rgba(89,54,96,.12);color:#593660}
+.panel-tabs button.active .tab-count{background:rgba(255,255,255,.22);color:#fff}
+.surface-card{padding:1.15rem;border:1px solid #e6dfd6;border-radius:1rem;background:#fff;box-shadow:0 6px 20px rgba(30,30,30,.04)}
+.card-head,.list-header{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:.9rem;margin-bottom:1rem;padding-bottom:.85rem;border-bottom:1px solid #ece6dd}
+.surface-card h2{margin:.2rem 0 0;color:#1e1e1e;font-size:1rem}
+.count-sub{color:#6c6865;font-size:.78rem;font-weight:500}
+.card-head p{margin:.25rem 0 0;color:#6c6865;font-size:.74rem}
+.section-kicker{color:#775a83;font-size:.66rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.filter-bar{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.filter-bar input{min-width:210px}
+.filter-bar select{min-width:145px}
+.class-form{display:grid;grid-template-columns:1fr 1fr;gap:.9rem}
+.class-form label>span,.field-label{display:block;margin-bottom:.32rem;color:#4e5462;font-size:.74rem;font-weight:700}
+.inline-two{display:grid;grid-template-columns:1fr 1fr;gap:.7rem}
+.span-2{grid-column:1/-1}
+.catalog-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.65rem;padding:.8rem;border:1px solid #e6dfd6;border-radius:.75rem;background:#faf6ef}
+.catalog-summary small,.catalog-summary strong{display:block}
+.catalog-summary small{color:#6c6865;font-size:.66rem}
+.catalog-summary strong{color:#1e1e1e;font-size:.8rem;margin-top:.1rem}
+.lecturer-picker{padding:.8rem;border:1px solid #e6dfd6;border-radius:.75rem;background:#faf6ef}
+.lecturer-chips{display:flex;flex-wrap:wrap;gap:.5rem}
+.lecturer-chip{display:inline-flex;align-items:center;gap:.45rem;padding:.45rem .7rem;border:1px solid #d9d0c5;border-radius:.6rem;background:#fff;color:#1e1e1e;font-size:.76rem;font-weight:600;cursor:pointer}
+.lecturer-chip.selected{border-color:#593660;background:#f5eff7;color:#3e2344}
+.form-actions{display:flex;justify-content:flex-end;gap:.6rem;padding-top:.5rem;border-top:1px solid #ece6dd}
+.class-list{display:grid;gap:.75rem}
+.class-item{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.95rem 1rem;border:1px solid #e6dfd6;border-radius:.85rem;background:#fff;transition:border-color .15s ease,background .15s ease}
+.class-item:hover{border-color:#c6b4ce;background:#fdfbf8}
+.class-item__main{display:grid;gap:.35rem;min-width:0}
+.class-item__title{display:flex;align-items:center;flex-wrap:wrap;gap:.45rem}
+.class-item__title strong{color:#1e1e1e;font-size:.88rem}
+.section-pill{padding:.12rem .48rem;border-radius:999px;background:#f5eff7;color:#593660;font-size:.66rem;font-weight:700}
+.class-item__meta{display:flex;flex-wrap:wrap;gap:.35rem .9rem;color:#6c6865;font-size:.72rem}
+.class-item__meta i{color:#775a83;margin-right:.18rem}
+.class-item__side{display:flex;flex-direction:column;align-items:flex-end;gap:.55rem;flex-shrink:0}
+.class-actions{display:flex;gap:.45rem;flex-wrap:wrap;justify-content:flex-end}
+.loading-state{display:flex;gap:.5rem;align-items:center;min-height:140px;justify-content:center;color:#6c6865}
+@media(max-width:991.98px){.class-item{flex-direction:column;align-items:stretch}.class-item__side{align-items:flex-start}.class-actions{justify-content:flex-start}}
+@media(max-width:640px){.class-form,.inline-two,.catalog-summary{grid-template-columns:1fr}.span-2{grid-column:auto}.filter-bar{width:100%}.filter-bar input,.filter-bar select{width:100%;min-width:0}}
 </style>

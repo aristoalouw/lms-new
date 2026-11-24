@@ -1,23 +1,38 @@
 <script setup lang="ts">
 import type { AxiosError } from 'axios'
-import type { LmsAcademicCatalog } from '~/shared/contracts/lms'
+import type {
+  AcademicCourseVersion,
+  AcademicPeriodDefinition,
+  AcademicProgramStudy,
+  LmsAcademicCatalog,
+} from '~/shared/contracts/lms'
 
 const props = defineProps<{ catalog: LmsAcademicCatalog }>()
 const emit = defineEmits<{ created: [] }>()
 const { $api } = useNuxtApp()
+
+const subTab = ref<'program' | 'course' | 'period'>('course')
 const busy = ref(false)
 const errorMessage = ref('')
 const noticeMessage = ref('')
 const year = new Date().getFullYear()
 
+const editingProgramId = ref('')
+const editingCourseId = ref('')
+const editingPeriodId = ref('')
+const manualProgramId = ref(false)
+const manualCourseId = ref(false)
+
+const defaultFaculty = computed(() => props.catalog.programs[0]?.facultyId || 'stt-saint-paul')
+
 const program = reactive({
   id: '',
-  facultyId: '',
+  facultyId: 'stt-saint-paul',
   code: '',
   name: '',
   level: 'S1' as 'D3' | 'S1' | 'S2',
-  accreditationStatus: '',
-  accreditationExpiresAt: '',
+  accreditationStatus: 'Baik Sekali',
+  accreditationExpiresAt: `${year + 5}-12-31`,
 })
 const period = reactive({
   id: `${year}-${year + 1}-1`,
@@ -37,6 +52,25 @@ const course = reactive({
   semesterRecommendation: 1,
 })
 
+const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+
+watch([() => program.code, () => program.level], () => {
+  if (!editingProgramId.value && !manualProgramId.value) {
+    const base = slugify(program.code)
+    program.id = base ? `${base}-${program.level.toLowerCase()}` : ''
+  }
+})
+watch(() => course.code, () => {
+  if (!editingCourseId.value && !manualCourseId.value) {
+    const base = slugify(course.code)
+    course.courseId = base ? `course-${base}` : ''
+  }
+})
+watch(() => props.catalog.programs, (programs) => {
+  if (!course.programStudyId && programs.length) course.programStudyId = programs[0]!.id
+  if (!editingProgramId.value && !program.facultyId) program.facultyId = defaultFaculty.value
+}, { immediate: true })
+
 const latestCourseVersion = computed(() => Math.max(
   0,
   ...props.catalog.courses
@@ -45,11 +79,97 @@ const latestCourseVersion = computed(() => Math.max(
 ))
 const existingPeriodVersion = computed(() => props.catalog.periods.find(item => item.id === period.id.trim())?.version ?? 0)
 const existingProgramVersion = computed(() => props.catalog.programs.find(item => item.id === program.id.trim())?.version ?? 0)
+
+const termLabel = (term: string) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
+const programName = (id: string) => props.catalog.programs.find(item => item.id === id)?.name || id
 const requestKey = (purpose: string) => `${purpose}-${globalThis.crypto.randomUUID()}`
 const instant = (date: string, end = false) => new Date(`${date}T${end ? '23:59:59' : '00:00:00'}+07:00`).toISOString()
 const messageFor = (error: unknown) => {
   const data = (error as AxiosError<{ statusMessage?: string; message?: string }>).response?.data
   return data?.statusMessage || data?.message || (error instanceof Error ? error.message : 'Katalog akademik belum dapat disimpan.')
+}
+
+function resetProgram() {
+  editingProgramId.value = ''
+  manualProgramId.value = false
+  Object.assign(program, {
+    id: '',
+    facultyId: defaultFaculty.value,
+    code: '',
+    name: '',
+    level: 'S1',
+    accreditationStatus: 'Baik Sekali',
+    accreditationExpiresAt: `${year + 5}-12-31`,
+  })
+}
+
+function editProgram(item: AcademicProgramStudy) {
+  subTab.value = 'program'
+  editingProgramId.value = item.id
+  manualProgramId.value = true
+  Object.assign(program, {
+    id: item.id,
+    facultyId: item.facultyId,
+    code: item.code,
+    name: item.name,
+    level: item.level,
+    accreditationStatus: item.accreditationStatus,
+    accreditationExpiresAt: item.accreditationExpiresAt.slice(0, 10),
+  })
+}
+
+function resetCourse() {
+  editingCourseId.value = ''
+  manualCourseId.value = false
+  Object.assign(course, {
+    courseId: '',
+    code: '',
+    name: '',
+    programStudyId: props.catalog.programs[0]?.id || '',
+    credits: 3,
+    semesterRecommendation: 1,
+  })
+}
+
+function editCourse(item: AcademicCourseVersion) {
+  subTab.value = 'course'
+  editingCourseId.value = item.courseId
+  manualCourseId.value = true
+  Object.assign(course, {
+    courseId: item.courseId,
+    code: item.code,
+    name: item.name,
+    programStudyId: item.programStudyId,
+    credits: item.credits,
+    semesterRecommendation: item.semesterRecommendation,
+  })
+}
+
+function resetPeriod() {
+  editingPeriodId.value = ''
+  Object.assign(period, {
+    id: `${year}-${year + 1}-1`,
+    academicYear: `${year}/${year + 1}`,
+    term: 'ODD',
+    startsAt: `${year}-08-01`,
+    endsAt: `${year + 1}-01-31`,
+    krsOpensAt: `${year}-07-01`,
+    krsClosesAt: `${year}-08-15`,
+  })
+}
+
+function editPeriod(item: AcademicPeriodDefinition) {
+  subTab.value = 'period'
+  editingPeriodId.value = item.id
+  Object.assign(period, {
+    id: item.id,
+    academicYear: item.academicYear,
+    term: item.term,
+    startsAt: item.startsAt.slice(0, 10),
+    endsAt: item.endsAt.slice(0, 10),
+    krsOpensAt: item.krsOpensAt.slice(0, 10),
+    krsClosesAt: item.krsClosesAt.slice(0, 10),
+  })
 }
 
 async function savePeriod() {
@@ -66,7 +186,8 @@ async function savePeriod() {
       active: true,
       expectedVersion: existingPeriodVersion.value,
     }, { headers: { 'Idempotency-Key': requestKey('catalog-period') } })
-    noticeMessage.value = 'Periode aktif tersimpan.'
+    noticeMessage.value = editingPeriodId.value ? 'Periode akademik berhasil diperbarui.' : 'Periode akademik baru berhasil disimpan.'
+    resetPeriod()
     emit('created')
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -90,12 +211,8 @@ async function saveProgram() {
       active: true,
       expectedVersion: existingProgramVersion.value,
     }, { headers: { 'Idempotency-Key': requestKey('catalog-program') } })
-    noticeMessage.value = 'Program studi aktif tersimpan.'
-    program.id = ''
-    program.code = ''
-    program.name = ''
-    program.accreditationStatus = ''
-    program.accreditationExpiresAt = ''
+    noticeMessage.value = editingProgramId.value ? 'Program studi berhasil diperbarui.' : 'Program studi baru berhasil disimpan.'
+    resetProgram()
     emit('created')
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -113,15 +230,14 @@ async function saveCourse() {
       ...course,
       courseId: course.courseId.trim(),
       code: course.code.trim().toUpperCase(),
+      name: course.name.trim(),
       prerequisiteCourseCodes: [],
       equivalentCourseCodes: [],
       status: 'ACTIVE',
       expectedCurrentVersion: latestCourseVersion.value,
     }, { headers: { 'Idempotency-Key': requestKey('catalog-course') } })
-    noticeMessage.value = 'Versi mata kuliah ACTIVE dibuat dan dikunci.'
-    course.courseId = ''
-    course.code = ''
-    course.name = ''
+    noticeMessage.value = editingCourseId.value ? 'Revisi mata kuliah berhasil disimpan dan aktif.' : 'Mata kuliah baru berhasil disimpan dan siap dipakai membuat kelas.'
+    resetCourse()
     emit('created')
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -133,59 +249,143 @@ async function saveCourse() {
 
 <template>
   <article class="catalog-manager">
-    <header>
-      <span class="section-kicker">Master akademik</span>
-      <h2>Periode & mata kuliah</h2>
-      <p>Siapkan referensi kanonik sebelum membuat kelas. Perubahan disimpan berversi dan diaudit.</p>
+    <header class="catalog-head">
+      <div>
+        <span class="section-kicker">Katalog akademik</span>
+        <h2>Kelola program studi, mata kuliah &amp; periode</h2>
+        <p>Pilih data yang ada di sebelah kanan untuk menyunting, atau isi formulir untuk menambah data baru.</p>
+      </div>
+      <NuxtLink class="btn btn-sm btn-outline-secondary" to="/akademik/master"><i class="uil uil-sliders-v-alt me-1" />Master data lengkap</NuxtLink>
     </header>
-    <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div>
-    <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
 
-    <details>
-      <summary>Tambah atau perbarui program studi</summary>
-      <form class="catalog-form" @submit.prevent="saveProgram">
-        <label><span>ID program studi</span><input v-model="program.id" class="form-control" maxlength="128" placeholder="manajemen-s1" required><small>ID stabil tanpa spasi.</small></label>
-        <label><span>ID unit/fakultas</span><input v-model="program.facultyId" class="form-control" maxlength="128" placeholder="stt-saint-paul" required><small>ID stabil tanpa spasi.</small></label>
-        <label><span>Kode program</span><input v-model="program.code" class="form-control text-uppercase" maxlength="20" placeholder="MANAJEMEN" required></label>
-        <label><span>Jenjang</span><select v-model="program.level" class="form-select"><option value="D3">D3</option><option value="S1">S1</option><option value="S2">S2</option></select></label>
-        <label class="wide"><span>Nama program studi</span><input v-model="program.name" class="form-control" maxlength="180" required></label>
-        <label><span>Status akreditasi</span><input v-model="program.accreditationStatus" class="form-control" maxlength="80" placeholder="Baik Sekali" required></label>
-        <label><span>Berlaku sampai</span><input v-model="program.accreditationExpiresAt" class="form-control" type="date" required></label>
-        <p class="version-note">Versi berikutnya: {{ existingProgramVersion + 1 }}.</p>
-        <button class="btn btn-outline-primary" type="submit" :disabled="busy">Simpan program studi</button>
-      </form>
-    </details>
+    <div v-if="noticeMessage" class="alert alert-success py-2 mb-0" role="status">{{ noticeMessage }}</div>
+    <div v-if="errorMessage" class="alert alert-danger py-2 mb-0" role="alert">{{ errorMessage }}</div>
 
-    <details>
-      <summary>Tambah atau aktifkan periode</summary>
-      <form class="catalog-form" @submit.prevent="savePeriod">
-        <label><span>ID periode</span><input v-model="period.id" class="form-control" maxlength="128" required></label>
-        <label><span>Tahun akademik</span><input v-model="period.academicYear" class="form-control" pattern="\d{4}[/-]\d{4}" required></label>
-        <label><span>Semester</span><select v-model="period.term" class="form-select"><option value="ODD">Ganjil</option><option value="EVEN">Genap</option><option value="SHORT">Pendek</option></select></label>
-        <label><span>Mulai kuliah</span><input v-model="period.startsAt" class="form-control" type="date" required></label>
-        <label><span>Akhir kuliah</span><input v-model="period.endsAt" class="form-control" type="date" required></label>
-        <label><span>KRS dibuka</span><input v-model="period.krsOpensAt" class="form-control" type="date" required></label>
-        <label><span>KRS ditutup</span><input v-model="period.krsClosesAt" class="form-control" type="date" required></label>
-        <button class="btn btn-outline-primary" type="submit" :disabled="busy">Simpan periode</button>
-      </form>
-    </details>
+    <nav class="sub-tabs" aria-label="Kategori katalog">
+      <button type="button" :class="{ active: subTab === 'course' }" @click="subTab = 'course'">Mata kuliah ({{ catalog.courses.length }})</button>
+      <button type="button" :class="{ active: subTab === 'program' }" @click="subTab = 'program'">Program studi ({{ catalog.programs.length }})</button>
+      <button type="button" :class="{ active: subTab === 'period' }" @click="subTab = 'period'">Periode ({{ catalog.periods.length }})</button>
+    </nav>
 
-    <details>
-      <summary>Buat versi mata kuliah</summary>
-      <form class="catalog-form" @submit.prevent="saveCourse">
-        <label><span>ID mata kuliah</span><input v-model="course.courseId" class="form-control" maxlength="128" placeholder="course-mgt-101" required><small>Gunakan ID yang sama untuk membuat versi berikutnya.</small></label>
-        <label><span>Kode</span><input v-model="course.code" class="form-control text-uppercase" maxlength="30" placeholder="MGT101" required></label>
-        <label class="wide"><span>Nama</span><input v-model="course.name" class="form-control" maxlength="180" required></label>
-        <label><span>Program studi</span><select v-model="course.programStudyId" class="form-select" required><option value="" disabled>Pilih program</option><option v-for="program in catalog.programs" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label>
-        <label><span>SKS</span><input v-model.number="course.credits" class="form-control" type="number" min="1" max="12" required></label>
-        <label><span>Rekomendasi semester</span><input v-model.number="course.semesterRecommendation" class="form-control" type="number" min="1" max="14" required></label>
-        <p class="version-note">Versi berikutnya: {{ latestCourseVersion + 1 }}. Versi yang telah disimpan akan tetap tercatat sebagai arsip kurikulum.</p>
-        <button class="btn btn-outline-primary" type="submit" :disabled="busy || !catalog.programs.length">Buat versi ACTIVE</button>
-      </form>
-    </details>
+    <div class="catalog-split">
+      <section class="editor-box">
+        <template v-if="subTab === 'course'">
+          <div class="editor-head">
+            <h3>{{ editingCourseId ? `Sunting mata kuliah (${course.code})` : 'Tambah mata kuliah baru' }}</h3>
+            <button v-if="editingCourseId" class="btn btn-sm btn-outline-secondary" type="button" @click="resetCourse">+ Buat baru</button>
+          </div>
+          <form class="catalog-form" @submit.prevent="saveCourse">
+            <label><span>Kode mata kuliah</span><input v-model="course.code" class="form-control text-uppercase" maxlength="30" placeholder="TEO101" required></label>
+            <label><span>Program studi</span><select v-model="course.programStudyId" class="form-select" required><option value="" disabled>Pilih program studi</option><option v-for="prog in catalog.programs" :key="prog.id" :value="prog.id">{{ prog.code }} · {{ prog.name }}</option></select></label>
+            <label class="wide"><span>Nama mata kuliah</span><input v-model="course.name" class="form-control" maxlength="180" placeholder="Pengantar Teologi Sistematika" required></label>
+            <label><span>Jumlah SKS</span><input v-model.number="course.credits" class="form-control" type="number" min="1" max="12" required></label>
+            <label><span>Rekomendasi semester</span><input v-model.number="course.semesterRecommendation" class="form-control" type="number" min="1" max="14" required></label>
+            <label class="wide">
+              <span>Kode referensi sistem</span>
+              <input v-model="course.courseId" class="form-control" maxlength="128" placeholder="Otomatis dari kode mata kuliah" :readonly="Boolean(editingCourseId)" required @input="manualCourseId = true">
+              <small>{{ editingCourseId ? 'Revisi baru akan disimpan tanpa menghapus arsip kelas semester sebelumnya.' : 'Terisi otomatis dari kode mata kuliah.' }}</small>
+            </label>
+            <button class="btn btn-primary wide" type="submit" :disabled="busy || !catalog.programs.length">
+              <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
+              {{ editingCourseId ? 'Simpan perubahan mata kuliah' : 'Simpan mata kuliah baru' }}
+            </button>
+          </form>
+        </template>
+
+        <template v-else-if="subTab === 'program'">
+          <div class="editor-head">
+            <h3>{{ editingProgramId ? `Sunting program studi (${program.code})` : 'Tambah program studi baru' }}</h3>
+            <button v-if="editingProgramId" class="btn btn-sm btn-outline-secondary" type="button" @click="resetProgram">+ Buat baru</button>
+          </div>
+          <form class="catalog-form" @submit.prevent="saveProgram">
+            <label><span>Kode program</span><input v-model="program.code" class="form-control text-uppercase" maxlength="20" placeholder="TEOLOGI" required></label>
+            <label><span>Jenjang</span><select v-model="program.level" class="form-select"><option value="D3">D3</option><option value="S1">S1</option><option value="S2">S2</option></select></label>
+            <label class="wide"><span>Nama program studi</span><input v-model="program.name" class="form-control" maxlength="180" placeholder="Sarjana Teologi" required></label>
+            <label><span>Status akreditasi</span><input v-model="program.accreditationStatus" class="form-control" maxlength="80" placeholder="Baik Sekali" required></label>
+            <label><span>Akreditasi berlaku sampai</span><input v-model="program.accreditationExpiresAt" class="form-control" type="date" required></label>
+            <label><span>Unit / Fakultas</span><input v-model="program.facultyId" class="form-control" maxlength="128" placeholder="stt-saint-paul" required></label>
+            <label><span>ID program studi</span><input v-model="program.id" class="form-control" maxlength="128" placeholder="teologi-s1" :readonly="Boolean(editingProgramId)" required @input="manualProgramId = true"></label>
+            <button class="btn btn-primary wide" type="submit" :disabled="busy">
+              <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
+              {{ editingProgramId ? 'Simpan perubahan prodi' : 'Simpan program studi' }}
+            </button>
+          </form>
+        </template>
+
+        <template v-else>
+          <div class="editor-head">
+            <h3>{{ editingPeriodId ? `Sunting periode (${period.academicYear})` : 'Tambah periode akademik' }}</h3>
+            <button v-if="editingPeriodId" class="btn btn-sm btn-outline-secondary" type="button" @click="resetPeriod">+ Buat baru</button>
+          </div>
+          <form class="catalog-form" @submit.prevent="savePeriod">
+            <label><span>Tahun akademik</span><input v-model="period.academicYear" class="form-control" pattern="\d{4}[/-]\d{4}" placeholder="2026/2027" required></label>
+            <label><span>Semester</span><select v-model="period.term" class="form-select"><option value="ODD">Gasal</option><option value="EVEN">Genap</option><option value="SHORT">Pendek</option></select></label>
+            <label class="wide"><span>ID periode</span><input v-model="period.id" class="form-control" maxlength="128" :readonly="Boolean(editingPeriodId)" required></label>
+            <label><span>Mulai kuliah</span><input v-model="period.startsAt" class="form-control" type="date" required></label>
+            <label><span>Akhir kuliah</span><input v-model="period.endsAt" class="form-control" type="date" required></label>
+            <label><span>KRS dibuka</span><input v-model="period.krsOpensAt" class="form-control" type="date" required></label>
+            <label><span>KRS ditutup</span><input v-model="period.krsClosesAt" class="form-control" type="date" required></label>
+            <button class="btn btn-primary wide" type="submit" :disabled="busy">
+              <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
+              {{ editingPeriodId ? 'Simpan perubahan periode' : 'Simpan periode aktif' }}
+            </button>
+          </form>
+        </template>
+      </section>
+
+      <section class="list-box">
+        <h3>{{ subTab === 'course' ? 'Mata kuliah aktif' : subTab === 'program' ? 'Program studi aktif' : 'Periode akademik' }}</h3>
+        <div v-if="subTab === 'course'" class="item-list">
+          <div v-for="item in catalog.courses" :key="item.id" class="item-row" :class="{ active: editingCourseId === item.courseId }">
+            <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · Sem {{ item.semesterRecommendation }}</small></div>
+            <button class="btn btn-sm btn-outline-primary" type="button" @click="editCourse(item)">Sunting</button>
+          </div>
+          <p v-if="!catalog.courses.length" class="empty-note">Belum ada mata kuliah aktif.</p>
+        </div>
+        <div v-else-if="subTab === 'program'" class="item-list">
+          <div v-for="item in catalog.programs" :key="item.id" class="item-row" :class="{ active: editingProgramId === item.id }">
+            <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }}</small></div>
+            <button class="btn btn-sm btn-outline-primary" type="button" @click="editProgram(item)">Sunting</button>
+          </div>
+          <p v-if="!catalog.programs.length" class="empty-note">Belum ada program studi aktif.</p>
+        </div>
+        <div v-else class="item-list">
+          <div v-for="item in catalog.periods" :key="item.id" class="item-row" :class="{ active: editingPeriodId === item.id }">
+            <div><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><small>{{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small></div>
+            <button class="btn btn-sm btn-outline-primary" type="button" @click="editPeriod(item)">Sunting</button>
+          </div>
+          <p v-if="!catalog.periods.length" class="empty-note">Belum ada periode akademik.</p>
+        </div>
+      </section>
+    </div>
   </article>
 </template>
 
 <style scoped>
-.catalog-manager{display:grid;gap:.75rem;padding:1rem;border:1px solid #e6dfd6;border-radius:1rem;background:#fff}.catalog-manager header{margin-bottom:.15rem}.catalog-manager h2{margin:.2rem 0;color:#294c40;font-size:1rem}.catalog-manager header p{margin:0;color:#74877e;font-size:.68rem}.section-kicker{color:#668278;font-size:.65rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}details{border:1px solid #e1e9e4;border-radius:.75rem;background:#fafcfb}summary{padding:.75rem;color:#315449;font-size:.73rem;font-weight:800;cursor:pointer}.catalog-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.7rem;padding:0 .75rem .75rem}.catalog-form label>span,.catalog-form label>small{display:block;margin-bottom:.25rem;color:#5c7269;font-size:.65rem;font-weight:700}.catalog-form label>small{margin:.25rem 0 0;color:#7b8d84;font-weight:500}.wide{grid-column:1/-1}.version-note{align-self:end;margin:0;color:#74877e;font-size:.65rem}.catalog-form .btn{align-self:end}@media(max-width:575.98px){.catalog-form{grid-template-columns:1fr}.wide{grid-column:auto}}
+.catalog-manager{display:grid;gap:.9rem;padding:1.15rem;border:1px solid #e6dfd6;border-radius:1rem;background:#fff;box-shadow:0 6px 20px rgba(30,30,30,.04)}
+.catalog-head{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:.75rem}
+.catalog-head h2{margin:.2rem 0 .2rem;color:#1e1e1e;font-size:1rem}
+.catalog-head p{margin:0;color:#6c6865;font-size:.74rem}
+.section-kicker{color:#775a83;font-size:.66rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.sub-tabs{display:flex;gap:.4rem;flex-wrap:wrap;border-bottom:1px solid #ece6dd;padding-bottom:.6rem}
+.sub-tabs button{padding:.42rem .75rem;border:1px solid #e6dfd6;border-radius:.55rem;background:#faf6ef;color:#4e5462;font-size:.74rem;font-weight:700}
+.sub-tabs button.active{border-color:#593660;background:#593660;color:#fff}
+.catalog-split{display:grid;grid-template-columns:minmax(320px,1.05fr) minmax(260px,.95fr);gap:1rem;align-items:start}
+.editor-box,.list-box{padding:.95rem;border:1px solid #ece6dd;border-radius:.85rem;background:#fdfbf8}
+.editor-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.75rem}
+.editor-box h3,.list-box h3{margin:0;color:#1e1e1e;font-size:.86rem}
+.list-box h3{margin-bottom:.75rem}
+.catalog-form{display:grid;grid-template-columns:1fr 1fr;gap:.7rem}
+.catalog-form label>span,.catalog-form label>small{display:block;margin-bottom:.25rem;color:#4e5462;font-size:.7rem;font-weight:700}
+.catalog-form label>small{margin:.25rem 0 0;color:#6c6865;font-weight:500;font-size:.64rem}
+.wide{grid-column:1/-1}
+.item-list{display:grid;gap:.5rem;max-height:420px;overflow-y:auto}
+.item-row{display:flex;justify-content:space-between;align-items:center;gap:.65rem;padding:.7rem .8rem;border:1px solid #e6dfd6;border-radius:.7rem;background:#fff}
+.item-row.active{border-color:#593660;background:#f5eff7}
+.item-row strong,.item-row small{display:block}
+.item-row strong{color:#1e1e1e;font-size:.78rem}
+.item-row small{color:#6c6865;font-size:.66rem;margin-top:.15rem}
+.empty-note{margin:.5rem 0;color:#6c6865;font-size:.74rem}
+@media(max-width:900px){.catalog-split{grid-template-columns:1fr}}
+@media(max-width:575.98px){.catalog-form{grid-template-columns:1fr}.wide{grid-column:auto}}
 </style>

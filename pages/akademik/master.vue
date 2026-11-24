@@ -24,6 +24,8 @@ const searchQuery = ref('')
 const year = new Date().getFullYear()
 const editingKey = ref('')
 const manualId = ref(false)
+const listMode = ref<'active' | 'trash'>('active')
+const pendingDelete = ref<{ resource: Tab; id: string; label: string } | null>(null)
 
 const program = reactive({
   id: '',
@@ -140,11 +142,19 @@ watch(() => calendar.title, () => {
 
 const latestCourses = computed(() => {
   const map = new Map<string, AcademicCourseVersion>()
-  for (const item of data.value?.courses || []) {
+  for (const item of (data.value?.courses || []).filter(entry => !entry.deletedAt)) {
     const current = map.get(item.courseId)
     if (!current || item.version > current.version) map.set(item.courseId, item)
   }
   return [...map.values()].sort((a, b) => a.code.localeCompare(b.code))
+})
+const deletedCourses = computed(() => {
+  const map = new Map<string, AcademicCourseVersion>()
+  for (const item of (data.value?.courses || []).filter(entry => Boolean(entry.deletedAt))) {
+    const current = map.get(item.courseId)
+    if (!current || item.version > current.version) map.set(item.courseId, item)
+  }
+  return [...map.values()].sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''))
 })
 
 const coursesForSelectedCurriculumProgram = computed(() =>
@@ -157,36 +167,65 @@ const curriculumSelectedCredits = computed(() => {
 
 const latestCurricula = computed(() => {
   const map = new Map<string, CurriculumVersion>()
-  for (const item of data.value?.curricula || []) {
+  for (const item of (data.value?.curricula || []).filter(entry => !entry.deletedAt)) {
     const current = map.get(item.curriculumId)
     if (!current || item.version > current.version) map.set(item.curriculumId, item)
   }
   return [...map.values()]
 })
+const deletedCurricula = computed(() => {
+  const map = new Map<string, CurriculumVersion>()
+  for (const item of (data.value?.curricula || []).filter(entry => Boolean(entry.deletedAt))) {
+    const current = map.get(item.curriculumId)
+    if (!current || item.version > current.version) map.set(item.curriculumId, item)
+  }
+  return [...map.values()].sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''))
+})
+
+const activePrograms = computed(() => (data.value?.programs || []).filter(item => !item.deletedAt))
+const deletedPrograms = computed(() => (data.value?.programs || []).filter(item => Boolean(item.deletedAt)))
+const activePeriods = computed(() => (data.value?.periods || []).filter(item => !item.deletedAt))
+const deletedPeriods = computed(() => (data.value?.periods || []).filter(item => Boolean(item.deletedAt)))
+const activeCalendar = computed(() => (data.value?.calendar || []).filter(item => !item.deletedAt))
+const deletedCalendar = computed(() => (data.value?.calendar || []).filter(item => Boolean(item.deletedAt)))
+
+const currentTrashCount = computed(() => ({
+  program: deletedPrograms.value.length,
+  period: deletedPeriods.value.length,
+  course: deletedCourses.value.length,
+  curriculum: deletedCurricula.value.length,
+  calendar: deletedCalendar.value.length,
+})[tab.value])
 
 const filteredPrograms = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return (data.value?.programs || []).filter(item => !q || item.name.toLowerCase().includes(q) || item.code.toLowerCase().includes(q))
+  const source = listMode.value === 'trash' ? deletedPrograms.value : activePrograms.value
+  return source.filter(item => !q || item.name.toLowerCase().includes(q) || item.code.toLowerCase().includes(q))
 })
 const filteredPeriods = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return (data.value?.periods || []).filter(item => !q || item.academicYear.toLowerCase().includes(q) || item.id.toLowerCase().includes(q))
+  const source = listMode.value === 'trash' ? deletedPeriods.value : activePeriods.value
+  return source.filter(item => !q || item.academicYear.toLowerCase().includes(q) || item.id.toLowerCase().includes(q))
 })
 const filteredCourses = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return latestCourses.value.filter(item => !q || item.code.toLowerCase().includes(q) || item.name.toLowerCase().includes(q))
+  const source = listMode.value === 'trash' ? deletedCourses.value : latestCourses.value
+  return source.filter(item => !q || item.code.toLowerCase().includes(q) || item.name.toLowerCase().includes(q))
 })
 const filteredCurricula = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return latestCurricula.value.filter(item => !q || item.name.toLowerCase().includes(q) || item.curriculumId.toLowerCase().includes(q))
+  const source = listMode.value === 'trash' ? deletedCurricula.value : latestCurricula.value
+  return source.filter(item => !q || item.name.toLowerCase().includes(q) || item.curriculumId.toLowerCase().includes(q))
 })
 const filteredCalendar = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return (data.value?.calendar || []).filter(item => !q || item.title.toLowerCase().includes(q) || item.category.toLowerCase().includes(q))
+  const source = listMode.value === 'trash' ? deletedCalendar.value : activeCalendar.value
+  return source.filter(item => !q || item.title.toLowerCase().includes(q) || item.category.toLowerCase().includes(q))
 })
 
 function switchTab(next: Tab) {
   tab.value = next
+  listMode.value = 'active'
   editingKey.value = ''
   manualId.value = false
   searchQuery.value = ''
@@ -311,8 +350,8 @@ const load = async () => {
   loading.value = true
   try {
     data.value = (await $api.get<AcademicAdministrationWorkspace>('/academic/administration')).data
-    const firstProgram = data.value.programs.find(item => item.active)?.id || ''
-    const firstPeriod = data.value.periods.find(item => item.active)?.id || ''
+    const firstProgram = data.value.programs.find(item => item.active && !item.deletedAt)?.id || ''
+    const firstPeriod = data.value.periods.find(item => item.active && !item.deletedAt)?.id || ''
     if (!course.programStudyId) course.programStudyId = firstProgram
     if (!curriculum.programStudyId) curriculum.programStudyId = firstProgram
     if (!calendar.selectedProgramIds.length && firstProgram) calendar.selectedProgramIds = [firstProgram]
@@ -390,6 +429,40 @@ const saveCalendar = () => run('/academic/master/calendar', {
   description: calendar.description.trim() || undefined,
   expectedVersion: calendar.expectedVersion,
 }, editingKey.value ? 'Agenda kalender berhasil diperbarui.' : 'Agenda kalender baru berhasil disimpan.')
+
+async function confirmDeleteMaster() {
+  const target = pendingDelete.value
+  if (!target) return
+  working.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post('/academic/master/delete', { resource: target.resource, id: target.id })
+    pendingDelete.value = null
+    noticeMessage.value = `"${target.label}" dipindahkan ke Sampah dan dapat dipulihkan sewaktu-waktu.`
+    await load()
+    resetCurrentForm()
+  } catch (error) {
+    errorMessage.value = errorText(error)
+  } finally {
+    working.value = false
+  }
+}
+
+async function restoreMaster(resource: Tab, id: string, label: string) {
+  working.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post('/academic/master/restore', { resource, id })
+    noticeMessage.value = `"${label}" berhasil dipulihkan.`
+    await load()
+  } catch (error) {
+    errorMessage.value = errorText(error)
+  } finally {
+    working.value = false
+  }
+}
 
 onMounted(load)
 </script>
@@ -469,7 +542,7 @@ onMounted(load)
           <form @submit.prevent="saveCourse">
             <div class="form-row">
               <label>Kode mata kuliah<input v-model="course.code" class="form-control text-uppercase" placeholder="TEO101" required></label>
-              <label>Program studi<select v-model="course.programStudyId" class="form-select" required><option v-for="item in data.programs" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+              <label>Program studi<select v-model="course.programStudyId" class="form-select" required><option v-for="item in activePrograms" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
             </div>
             <label>Nama mata kuliah<input v-model="course.name" class="form-control" placeholder="Pengantar Perjanjian Lama" required></label>
             <div class="form-row">
@@ -494,7 +567,7 @@ onMounted(load)
           <form @submit.prevent="saveCurriculum">
             <label>Nama kurikulum<input v-model="curriculum.name" class="form-control" placeholder="Kurikulum Sarjana Teologi 2026" required></label>
             <div class="form-row">
-              <label>Program studi<select v-model="curriculum.programStudyId" class="form-select" required><option v-for="item in data.programs" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+              <label>Program studi<select v-model="curriculum.programStudyId" class="form-select" required><option v-for="item in activePrograms" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
               <label>Status<select v-model="curriculum.status" class="form-select"><option value="ACTIVE">Aktif</option><option value="DRAFT">Draf</option><option value="RETIRED">Nonaktif</option></select></label>
             </div>
             <div class="form-row">
@@ -524,13 +597,13 @@ onMounted(load)
           <form @submit.prevent="saveCalendar">
             <label>Judul agenda<input v-model="calendar.title" class="form-control" placeholder="Ujian Tengah Semester Gasal" required></label>
             <div class="form-row">
-              <label>Periode<select v-model="calendar.periodId" class="form-select" required><option v-for="item in data.periods" :key="item.id" :value="item.id">{{ item.academicYear }} · {{ termLabel(item.term) }}</option></select></label>
+              <label>Periode<select v-model="calendar.periodId" class="form-select" required><option v-for="item in activePeriods" :key="item.id" :value="item.id">{{ item.academicYear }} · {{ termLabel(item.term) }}</option></select></label>
               <label>Kategori<select v-model="calendar.category" class="form-select"><option value="ACADEMIC">Akademik</option><option value="KRS">KRS</option><option value="EXAM">Ujian</option><option value="GRADUATION">Kelulusan</option><option value="HOLIDAY">Libur</option><option value="DEADLINE">Batas waktu</option></select></label>
             </div>
             <div class="picker-box">
               <div class="picker-box__head"><span>Berlaku untuk program studi</span><strong>{{ calendar.selectedProgramIds.length }} dipilih</strong></div>
               <div class="picker-chips">
-                <label v-for="prog in data.programs" :key="prog.id" class="picker-chip" :class="{ selected: calendar.selectedProgramIds.includes(prog.id) }">
+                <label v-for="prog in activePrograms" :key="prog.id" class="picker-chip" :class="{ selected: calendar.selectedProgramIds.includes(prog.id) }">
                   <input type="checkbox" class="form-check-input" :checked="calendar.selectedProgramIds.includes(prog.id)" @change="toggleCalendarProgram(prog.id)">
                   <span>{{ prog.code }} · {{ prog.name }}</span>
                 </label>
@@ -546,45 +619,111 @@ onMounted(load)
 
       <section class="surface-card inventory">
         <header class="inventory-head">
-          <div><span>Daftar data</span><h2>{{ tabs.find(item => item.id === tab)?.label }}</h2></div>
-          <input v-model="searchQuery" class="form-control form-control-sm" type="search" placeholder="Cari data..." aria-label="Cari data master">
+          <div>
+            <span>{{ listMode === 'trash' ? 'Sampah (dapat dipulihkan)' : 'Daftar data' }}</span>
+            <h2>{{ tabs.find(item => item.id === tab)?.label }}</h2>
+          </div>
+          <div class="inventory-controls">
+            <div class="mode-switch">
+              <button type="button" :class="{ active: listMode === 'active' }" @click="listMode = 'active'">Aktif</button>
+              <button type="button" :class="{ active: listMode === 'trash' }" @click="listMode = 'trash'">Sampah ({{ currentTrashCount }})</button>
+            </div>
+            <input v-model="searchQuery" class="form-control form-control-sm" type="search" placeholder="Cari data..." aria-label="Cari data master">
+          </div>
         </header>
 
         <template v-if="tab === 'program'">
-          <article v-for="item in filteredPrograms" :key="item.id" :class="{ editing: editingKey === item.id }">
+          <article v-for="item in filteredPrograms" :key="item.id" :class="{ editing: editingKey === item.id, deleted: Boolean(item.deletedAt) }">
             <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }} · s.d. {{ item.accreditationExpiresAt.slice(0, 10) }}</small></div>
-            <button class="btn btn-sm btn-outline-primary" type="button" @click="selectProgram(item)">Sunting</button>
+            <div class="row-actions">
+              <template v-if="listMode === 'trash'">
+                <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('program', item.id, `${item.code} · ${item.name}`)"><i class="uil uil-history me-1" />Pulihkan</button>
+              </template>
+              <template v-else>
+                <button class="btn btn-sm btn-outline-primary" type="button" @click="selectProgram(item)">Sunting</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="working" @click="pendingDelete = { resource: 'program', id: item.id, label: `${item.code} · ${item.name}` }">Hapus</button>
+              </template>
+            </div>
           </article>
+          <p v-if="!filteredPrograms.length" class="empty-note">{{ listMode === 'trash' ? 'Tidak ada program studi di Sampah.' : 'Belum ada program studi.' }}</p>
         </template>
 
         <template v-else-if="tab === 'period'">
-          <article v-for="item in filteredPeriods" :key="item.id" :class="{ editing: editingKey === item.id }">
+          <article v-for="item in filteredPeriods" :key="item.id" :class="{ editing: editingKey === item.id, deleted: Boolean(item.deletedAt) }">
             <div><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><small>{{ krsStatusLabel(item.krsStatus) }} · {{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small></div>
-            <button class="btn btn-sm btn-outline-primary" type="button" @click="selectPeriod(item)">Sunting</button>
+            <div class="row-actions">
+              <template v-if="listMode === 'trash'">
+                <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('period', item.id, `${item.academicYear} · ${termLabel(item.term)}`)"><i class="uil uil-history me-1" />Pulihkan</button>
+              </template>
+              <template v-else>
+                <button class="btn btn-sm btn-outline-primary" type="button" @click="selectPeriod(item)">Sunting</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="working" @click="pendingDelete = { resource: 'period', id: item.id, label: `${item.academicYear} · ${termLabel(item.term)}` }">Hapus</button>
+              </template>
+            </div>
           </article>
+          <p v-if="!filteredPeriods.length" class="empty-note">{{ listMode === 'trash' ? 'Tidak ada periode di Sampah.' : 'Belum ada periode akademik.' }}</p>
         </template>
 
         <template v-else-if="tab === 'course'">
-          <article v-for="item in filteredCourses" :key="item.id" :class="{ editing: editingKey === item.courseId }">
+          <article v-for="item in filteredCourses" :key="item.id" :class="{ editing: editingKey === item.courseId, deleted: Boolean(item.deletedAt) }">
             <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · {{ courseStatusLabel(item.status) }}</small></div>
-            <button class="btn btn-sm btn-outline-primary" type="button" @click="selectCourse(item)">Sunting</button>
+            <div class="row-actions">
+              <template v-if="listMode === 'trash'">
+                <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('course', item.courseId, `${item.code} · ${item.name}`)"><i class="uil uil-history me-1" />Pulihkan</button>
+              </template>
+              <template v-else>
+                <button class="btn btn-sm btn-outline-primary" type="button" @click="selectCourse(item)">Sunting</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="working" @click="pendingDelete = { resource: 'course', id: item.courseId, label: `${item.code} · ${item.name}` }">Hapus</button>
+              </template>
+            </div>
           </article>
+          <p v-if="!filteredCourses.length" class="empty-note">{{ listMode === 'trash' ? 'Tidak ada mata kuliah di Sampah.' : 'Belum ada mata kuliah.' }}</p>
         </template>
 
         <template v-else-if="tab === 'curriculum'">
-          <article v-for="item in filteredCurricula" :key="item.id" :class="{ editing: editingKey === item.curriculumId }">
+          <article v-for="item in filteredCurricula" :key="item.id" :class="{ editing: editingKey === item.curriculumId, deleted: Boolean(item.deletedAt) }">
             <div><strong>{{ item.name }}</strong><small>{{ programName(item.programStudyId) }} · {{ item.totalCredits }} SKS · Angkatan {{ item.effectiveCohortFrom }}–{{ item.effectiveCohortTo }}</small></div>
-            <button class="btn btn-sm btn-outline-primary" type="button" @click="selectCurriculum(item)">Sunting</button>
+            <div class="row-actions">
+              <template v-if="listMode === 'trash'">
+                <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('curriculum', item.curriculumId, item.name)"><i class="uil uil-history me-1" />Pulihkan</button>
+              </template>
+              <template v-else>
+                <button class="btn btn-sm btn-outline-primary" type="button" @click="selectCurriculum(item)">Sunting</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="working" @click="pendingDelete = { resource: 'curriculum', id: item.curriculumId, label: item.name }">Hapus</button>
+              </template>
+            </div>
           </article>
+          <p v-if="!filteredCurricula.length" class="empty-note">{{ listMode === 'trash' ? 'Tidak ada kurikulum di Sampah.' : 'Belum ada kurikulum.' }}</p>
         </template>
 
         <template v-else>
-          <article v-for="item in filteredCalendar" :key="item.id" :class="{ editing: editingKey === item.id }">
+          <article v-for="item in filteredCalendar" :key="item.id" :class="{ editing: editingKey === item.id, deleted: Boolean(item.deletedAt) }">
             <div><strong>{{ item.title }}</strong><small>{{ categoryLabel(item.category) }} · {{ item.startsAt.slice(0, 10) }}</small></div>
-            <button class="btn btn-sm btn-outline-primary" type="button" @click="selectCalendar(item)">Sunting</button>
+            <div class="row-actions">
+              <template v-if="listMode === 'trash'">
+                <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('calendar', item.id, item.title)"><i class="uil uil-history me-1" />Pulihkan</button>
+              </template>
+              <template v-else>
+                <button class="btn btn-sm btn-outline-primary" type="button" @click="selectCalendar(item)">Sunting</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="working" @click="pendingDelete = { resource: 'calendar', id: item.id, label: item.title }">Hapus</button>
+              </template>
+            </div>
           </article>
+          <p v-if="!filteredCalendar.length" class="empty-note">{{ listMode === 'trash' ? 'Tidak ada agenda di Sampah.' : 'Belum ada agenda kalender.' }}</p>
         </template>
       </section>
+    </div>
+
+    <div v-if="pendingDelete" class="confirm-overlay" role="dialog" aria-modal="true" @click.self="pendingDelete = null">
+      <div class="confirm-dialog">
+        <span class="section-kicker">Konfirmasi penghapusan</span>
+        <h3>Hapus "{{ pendingDelete.label }}"?</h3>
+        <p class="confirm-copy">Data akan dipindahkan ke tab <strong>Sampah</strong> dan tidak muncul di pilihan aktif. Anda dapat memulihkannya kembali kapan saja.</p>
+        <div class="confirm-actions">
+          <button class="btn btn-outline-secondary btn-sm" type="button" :disabled="working" @click="pendingDelete = null">Batal</button>
+          <button class="btn btn-danger btn-sm" type="button" :disabled="working" @click="confirmDeleteMaster"><span v-if="working" class="spinner-border spinner-border-sm me-2" />Pindahkan ke Sampah</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -620,7 +759,19 @@ onMounted(load)
 .picker-chip{display:inline-flex!important;align-items:center;gap:.4rem;padding:.38rem .65rem;border:1px solid #e6dfd6;border-radius:.55rem;background:#fff;font-size:.72rem;cursor:pointer}
 .picker-chip.selected{border-color:#593660;background:#f5eff7;color:#3e2344}
 .inventory article{display:flex;justify-content:space-between;align-items:center;gap:.7rem;padding:.75rem .7rem;border-top:1px solid #ece6dd;border-radius:.5rem}
+.inventory-controls{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.mode-switch{display:inline-flex;border:1px solid #e6dfd6;border-radius:.55rem;overflow:hidden;background:#faf6ef}
+.mode-switch button{border:0;padding:.32rem .65rem;background:transparent;color:#4e5462;font-size:.7rem;font-weight:700}
+.mode-switch button.active{background:#593660;color:#fff}
+.row-actions{display:flex;gap:.35rem;flex-shrink:0}
+.empty-note{margin:.75rem 0;color:#6c6865;font-size:.74rem}
 .inventory article.editing{background:#f5eff7;border-color:#d8c4e0}
+.inventory article.deleted{background:#fffaf8}
+.confirm-overlay{position:fixed;inset:0;z-index:1080;display:grid;place-items:center;padding:1rem;background:rgba(30,20,34,.55);backdrop-filter:blur(4px)}
+.confirm-dialog{width:min(100%,450px);padding:1.3rem;border-radius:1rem;background:#fff;box-shadow:0 24px 70px rgba(30,20,34,.28)}
+.confirm-dialog h3{margin:.2rem 0 .45rem;color:#1e1e1e;font-size:1rem}
+.confirm-copy{margin:0 0 1rem;color:#4e5462;font-size:.75rem;line-height:1.55}
+.confirm-actions{display:flex;justify-content:flex-end;gap:.5rem}
 .inventory strong,.inventory small{display:block}
 .inventory strong{color:#1e1e1e;font-size:.8rem}
 .inventory small{color:#6c6865;font-size:.68rem;margin-top:.15rem}

@@ -22,6 +22,8 @@ const editingCourseId = ref('')
 const editingPeriodId = ref('')
 const manualProgramId = ref(false)
 const manualCourseId = ref(false)
+const showTrash = ref(false)
+const pendingDelete = ref<{ resource: 'program' | 'period' | 'course'; id: string; label: string } | null>(null)
 
 const defaultFaculty = computed(() => props.catalog.programs[0]?.facultyId || 'stt-saint-paul')
 
@@ -80,6 +82,12 @@ const latestCourseVersion = computed(() => Math.max(
 const existingPeriodVersion = computed(() => props.catalog.periods.find(item => item.id === period.id.trim())?.version ?? 0)
 const existingProgramVersion = computed(() => props.catalog.programs.find(item => item.id === program.id.trim())?.version ?? 0)
 
+const deletedPrograms = computed(() => props.catalog.deleted?.programs ?? [])
+const deletedPeriods = computed(() => props.catalog.deleted?.periods ?? [])
+const deletedCourses = computed(() => props.catalog.deleted?.courses ?? [])
+const currentTrashCount = computed(() => (
+  subTab.value === 'course' ? deletedCourses.value.length : subTab.value === 'program' ? deletedPrograms.value.length : deletedPeriods.value.length
+))
 const termLabel = (term: string) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
 const programName = (id: string) => props.catalog.programs.find(item => item.id === id)?.name || id
 const requestKey = (purpose: string) => `${purpose}-${globalThis.crypto.randomUUID()}`
@@ -221,6 +229,39 @@ async function saveProgram() {
   }
 }
 
+async function confirmDeleteCatalogItem() {
+  const target = pendingDelete.value
+  if (!target) return
+  busy.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post('/academic/master/delete', { resource: target.resource, id: target.id })
+    pendingDelete.value = null
+    noticeMessage.value = `"${target.label}" dipindahkan ke Sampah dan dapat dipulihkan.`
+    emit('created')
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function restoreCatalogItem(resource: 'program' | 'period' | 'course', id: string, label: string) {
+  busy.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post('/academic/master/restore', { resource, id })
+    noticeMessage.value = `"${label}" berhasil dipulihkan.`
+    emit('created')
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    busy.value = false
+  }
+}
+
 async function saveCourse() {
   busy.value = true
   errorMessage.value = ''
@@ -334,29 +375,82 @@ async function saveCourse() {
       </section>
 
       <section class="list-box">
-        <h3>{{ subTab === 'course' ? 'Mata kuliah aktif' : subTab === 'program' ? 'Program studi aktif' : 'Periode akademik' }}</h3>
-        <div v-if="subTab === 'course'" class="item-list">
-          <div v-for="item in catalog.courses" :key="item.id" class="item-row" :class="{ active: editingCourseId === item.courseId }">
-            <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · Sem {{ item.semesterRecommendation }}</small></div>
-            <button class="btn btn-sm btn-outline-primary" type="button" @click="editCourse(item)">Sunting</button>
-          </div>
-          <p v-if="!catalog.courses.length" class="empty-note">Belum ada mata kuliah aktif.</p>
+        <div class="list-box-head">
+          <h3>{{ showTrash ? 'Sampah (dapat dipulihkan)' : subTab === 'course' ? 'Mata kuliah aktif' : subTab === 'program' ? 'Program studi aktif' : 'Periode akademik' }}</h3>
+          <button class="btn btn-sm" :class="showTrash ? 'btn-primary' : 'btn-outline-secondary'" type="button" @click="showTrash = !showTrash">
+            <i class="uil me-1" :class="showTrash ? 'uil-list-ul' : 'uil-trash-alt'" />{{ showTrash ? 'Lihat aktif' : `Sampah (${currentTrashCount})` }}
+          </button>
         </div>
-        <div v-else-if="subTab === 'program'" class="item-list">
-          <div v-for="item in catalog.programs" :key="item.id" class="item-row" :class="{ active: editingProgramId === item.id }">
-            <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }}</small></div>
-            <button class="btn btn-sm btn-outline-primary" type="button" @click="editProgram(item)">Sunting</button>
+
+        <template v-if="showTrash">
+          <div v-if="subTab === 'course'" class="item-list">
+            <div v-for="item in deletedCourses" :key="item.id" class="item-row item-row--deleted">
+              <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS</small></div>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="restoreCatalogItem('course', item.courseId, `${item.code} · ${item.name}`)">Pulihkan</button>
+            </div>
+            <p v-if="!deletedCourses.length" class="empty-note">Tidak ada mata kuliah terhapus.</p>
           </div>
-          <p v-if="!catalog.programs.length" class="empty-note">Belum ada program studi aktif.</p>
-        </div>
-        <div v-else class="item-list">
-          <div v-for="item in catalog.periods" :key="item.id" class="item-row" :class="{ active: editingPeriodId === item.id }">
-            <div><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><small>{{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small></div>
-            <button class="btn btn-sm btn-outline-primary" type="button" @click="editPeriod(item)">Sunting</button>
+          <div v-else-if="subTab === 'program'" class="item-list">
+            <div v-for="item in deletedPrograms" :key="item.id" class="item-row item-row--deleted">
+              <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ item.level }} · {{ item.accreditationStatus }}</small></div>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="restoreCatalogItem('program', item.id, `${item.code} · ${item.name}`)">Pulihkan</button>
+            </div>
+            <p v-if="!deletedPrograms.length" class="empty-note">Tidak ada program studi terhapus.</p>
           </div>
-          <p v-if="!catalog.periods.length" class="empty-note">Belum ada periode akademik.</p>
-        </div>
+          <div v-else class="item-list">
+            <div v-for="item in deletedPeriods" :key="item.id" class="item-row item-row--deleted">
+              <div><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><small>{{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small></div>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="restoreCatalogItem('period', item.id, `${item.academicYear} · ${termLabel(item.term)}`)">Pulihkan</button>
+            </div>
+            <p v-if="!deletedPeriods.length" class="empty-note">Tidak ada periode terhapus.</p>
+          </div>
+        </template>
+
+        <template v-else>
+          <div v-if="subTab === 'course'" class="item-list">
+            <div v-for="item in catalog.courses" :key="item.id" class="item-row" :class="{ active: editingCourseId === item.courseId }">
+              <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · Sem {{ item.semesterRecommendation }}</small></div>
+              <div class="row-actions">
+                <button class="btn btn-sm btn-outline-primary" type="button" @click="editCourse(item)">Sunting</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy" @click="pendingDelete = { resource: 'course', id: item.courseId, label: `${item.code} · ${item.name}` }">Hapus</button>
+              </div>
+            </div>
+            <p v-if="!catalog.courses.length" class="empty-note">Belum ada mata kuliah aktif.</p>
+          </div>
+          <div v-else-if="subTab === 'program'" class="item-list">
+            <div v-for="item in catalog.programs" :key="item.id" class="item-row" :class="{ active: editingProgramId === item.id }">
+              <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }}</small></div>
+              <div class="row-actions">
+                <button class="btn btn-sm btn-outline-primary" type="button" @click="editProgram(item)">Sunting</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy" @click="pendingDelete = { resource: 'program', id: item.id, label: `${item.code} · ${item.name}` }">Hapus</button>
+              </div>
+            </div>
+            <p v-if="!catalog.programs.length" class="empty-note">Belum ada program studi aktif.</p>
+          </div>
+          <div v-else class="item-list">
+            <div v-for="item in catalog.periods" :key="item.id" class="item-row" :class="{ active: editingPeriodId === item.id }">
+              <div><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><small>{{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small></div>
+              <div class="row-actions">
+                <button class="btn btn-sm btn-outline-primary" type="button" @click="editPeriod(item)">Sunting</button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy" @click="pendingDelete = { resource: 'period', id: item.id, label: `${item.academicYear} · ${termLabel(item.term)}` }">Hapus</button>
+              </div>
+            </div>
+            <p v-if="!catalog.periods.length" class="empty-note">Belum ada periode akademik.</p>
+          </div>
+        </template>
       </section>
+    </div>
+
+    <div v-if="pendingDelete" class="confirm-overlay" role="dialog" aria-modal="true" @click.self="pendingDelete = null">
+      <div class="confirm-dialog">
+        <span class="section-kicker">Konfirmasi penghapusan</span>
+        <h3>Hapus "{{ pendingDelete.label }}"?</h3>
+        <p class="confirm-copy">Data akan dipindahkan ke <strong>Sampah</strong> dan disembunyikan dari daftar aktif. Anda dapat memulihkannya kembali jika terhapus tanpa sengaja.</p>
+        <div class="confirm-actions">
+          <button class="btn btn-outline-secondary btn-sm" type="button" :disabled="busy" @click="pendingDelete = null">Batal</button>
+          <button class="btn btn-danger btn-sm" type="button" :disabled="busy" @click="confirmDeleteCatalogItem">Pindahkan ke Sampah</button>
+        </div>
+      </div>
     </div>
   </article>
 </template>
@@ -385,6 +479,15 @@ async function saveCourse() {
 .item-row strong,.item-row small{display:block}
 .item-row strong{color:#1e1e1e;font-size:.78rem}
 .item-row small{color:#6c6865;font-size:.66rem;margin-top:.15rem}
+.list-box-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.75rem}
+.list-box-head h3{margin:0}
+.row-actions{display:flex;gap:.35rem;flex-shrink:0}
+.item-row--deleted{background:#fffaf8;border-color:#efd6d2}
+.confirm-overlay{position:fixed;inset:0;z-index:1080;display:grid;place-items:center;padding:1rem;background:rgba(30,20,34,.55);backdrop-filter:blur(4px)}
+.confirm-dialog{width:min(100%,440px);padding:1.25rem;border-radius:1rem;background:#fff;box-shadow:0 24px 70px rgba(30,20,34,.28)}
+.confirm-dialog h3{margin:.2rem 0 .4rem;color:#1e1e1e;font-size:.98rem}
+.confirm-copy{margin:0 0 1rem;color:#4e5462;font-size:.74rem;line-height:1.5}
+.confirm-actions{display:flex;justify-content:flex-end;gap:.5rem}
 .empty-note{margin:.5rem 0;color:#6c6865;font-size:.74rem}
 @media(max-width:900px){.catalog-split{grid-template-columns:1fr}}
 @media(max-width:575.98px){.catalog-form{grid-template-columns:1fr}.wide{grid-column:auto}}

@@ -41,6 +41,7 @@ export interface AcademicClassListQuery {
   programStudyId?: string
   cursor?: string
   limit?: number
+  includeDeleted?: boolean
 }
 
 export interface AcademicClassPage {
@@ -1317,6 +1318,140 @@ async function pageClassEnrollments(
   return { items, ...(hasMore && items.length ? { nextCursor: encodeEnrollmentCursor(items.at(-1)!) } : {}) }
 }
 
+export async function deleteAcademicClass(
+  context: AuthContext,
+  classId: string,
+  value: unknown,
+  event?: H3Event,
+  clock = new Date(),
+): Promise<{ classRecord: AcademicClassRecord; auditId: string }> {
+  requirePermission(context, 'classes:manage')
+  const safeId = safeClassId(classId)
+  const body = value && typeof value === 'object' ? requireRecord(value) : {}
+  const expectedVersion = body.expectedVersion === undefined ? undefined : requireInteger(body.expectedVersion, 'expectedVersion', 1)
+  const now = clock.toISOString()
+
+  const buildDeleted = (current: AcademicClassRecord): AcademicClassRecord => {
+    if (!canManageClassProgram(context, current.programStudyId)) forbidden('Kelas berada di luar lingkup pengelolaan Anda.')
+    const currentVersion = current.version ?? 1
+    if (expectedVersion !== undefined && currentVersion !== expectedVersion) {
+      conflict('VERSION_CONFLICT', 'Kelas telah berubah. Muat ulang sebelum menghapus.', { currentVersion })
+    }
+    if (current.deletedAt) conflict('CLASS_ALREADY_DELETED', 'Kelas sudah berada di daftar terhapus.')
+    return {
+      ...current,
+      previousStatus: current.status,
+      status: 'CLOSED',
+      deletedAt: now,
+      deletedBy: context.uid,
+      version: currentVersion + 1,
+      updatedAt: now,
+      updatedBy: context.uid,
+    }
+  }
+
+  let updated!: AcademicClassRecord
+  if (dataMode() === 'mock') {
+    const before = await loadClass(safeId)
+    updated = buildDeleted(before)
+    const existingSpace = [...learningMockState().spaces.values()].find(space => space.academicClassId === safeId)
+    const space = { ...learningSpaceForClass(updated, context.uid, now), createdAt: existingSpace?.createdAt ?? updated.createdAt ?? now, createdBy: existingSpace?.createdBy ?? updated.createdBy ?? context.uid }
+    state.classes.set(safeId, clone(updated))
+    learningMockState().spaces.set(safeId, clone(space))
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan kelas tidak tersedia.')
+    const classRef = db.collection('academicClasses').doc(safeId)
+    const spaceRef = db.collection('learningSpaces').doc(safeId)
+    updated = await db.runTransaction(async transaction => {
+      const [classSnapshot, spaceSnapshot] = await Promise.all([transaction.get(classRef), transaction.get(spaceRef)])
+      if (!classSnapshot.exists) notFound('Kelas')
+      const current = { id: classSnapshot.id, ...classSnapshot.data() } as AcademicClassRecord
+      const next = buildDeleted(current)
+      const currentSpace = spaceSnapshot.exists ? ({ id: spaceSnapshot.id, ...spaceSnapshot.data() } as LearningSpace) : undefined
+      const space = { ...learningSpaceForClass(next, context.uid, now), createdAt: currentSpace?.createdAt ?? next.createdAt ?? now, createdBy: currentSpace?.createdBy ?? next.createdBy ?? context.uid }
+      transaction.set(classRef, next)
+      transaction.set(spaceRef, space)
+      return next
+    })
+  }
+  const audit = await appendAudit({
+    actor: context,
+    action: 'ACADEMIC_CLASS_DELETED',
+    resourceType: 'academic_class',
+    resourceId: safeId,
+    after: { deletedAt: updated.deletedAt, previousStatus: updated.previousStatus, version: updated.version },
+    event,
+  })
+  return { classRecord: updated, auditId: audit.id }
+}
+
+export async function restoreAcademicClass(
+  context: AuthContext,
+  classId: string,
+  value: unknown,
+  event?: H3Event,
+  clock = new Date(),
+): Promise<{ classRecord: AcademicClassRecord; auditId: string }> {
+  requirePermission(context, 'classes:manage')
+  const safeId = safeClassId(classId)
+  const body = value && typeof value === 'object' ? requireRecord(value) : {}
+  const expectedVersion = body.expectedVersion === undefined ? undefined : requireInteger(body.expectedVersion, 'expectedVersion', 1)
+  const now = clock.toISOString()
+
+  const buildRestored = (current: AcademicClassRecord): AcademicClassRecord => {
+    if (!canManageClassProgram(context, current.programStudyId)) forbidden('Kelas berada di luar lingkup pengelolaan Anda.')
+    const currentVersion = current.version ?? 1
+    if (expectedVersion !== undefined && currentVersion !== expectedVersion) {
+      conflict('VERSION_CONFLICT', 'Kelas telah berubah. Muat ulang sebelum memulihkan.', { currentVersion })
+    }
+    if (!current.deletedAt) conflict('CLASS_NOT_DELETED', 'Kelas tidak berada di daftar terhapus.')
+    const { deletedAt: _d, deletedBy: _b, previousStatus, ...rest } = current
+    return {
+      ...rest,
+      status: previousStatus ?? 'ACTIVE',
+      version: currentVersion + 1,
+      updatedAt: now,
+      updatedBy: context.uid,
+    }
+  }
+
+  let updated!: AcademicClassRecord
+  if (dataMode() === 'mock') {
+    const before = await loadClass(safeId)
+    updated = buildRestored(before)
+    const existingSpace = [...learningMockState().spaces.values()].find(space => space.academicClassId === safeId)
+    const space = { ...learningSpaceForClass(updated, context.uid, now), createdAt: existingSpace?.createdAt ?? updated.createdAt ?? now, createdBy: existingSpace?.createdBy ?? updated.createdBy ?? context.uid }
+    state.classes.set(safeId, clone(updated))
+    learningMockState().spaces.set(safeId, clone(space))
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan kelas tidak tersedia.')
+    const classRef = db.collection('academicClasses').doc(safeId)
+    const spaceRef = db.collection('learningSpaces').doc(safeId)
+    updated = await db.runTransaction(async transaction => {
+      const [classSnapshot, spaceSnapshot] = await Promise.all([transaction.get(classRef), transaction.get(spaceRef)])
+      if (!classSnapshot.exists) notFound('Kelas')
+      const current = { id: classSnapshot.id, ...classSnapshot.data() } as AcademicClassRecord
+      const next = buildRestored(current)
+      const currentSpace = spaceSnapshot.exists ? ({ id: spaceSnapshot.id, ...spaceSnapshot.data() } as LearningSpace) : undefined
+      const space = { ...learningSpaceForClass(next, context.uid, now), createdAt: currentSpace?.createdAt ?? next.createdAt ?? now, createdBy: currentSpace?.createdBy ?? next.createdBy ?? context.uid }
+      transaction.set(classRef, next)
+      transaction.set(spaceRef, space)
+      return next
+    })
+  }
+  const audit = await appendAudit({
+    actor: context,
+    action: 'ACADEMIC_CLASS_RESTORED',
+    resourceType: 'academic_class',
+    resourceId: safeId,
+    after: { status: updated.status, version: updated.version },
+    event,
+  })
+  return { classRecord: updated, auditId: audit.id }
+}
+
 export async function listClassEnrollments(
   context: AuthContext,
   classId: string,
@@ -1610,7 +1745,9 @@ export async function listAcademicClassesPage(context: AuthContext, query: Acade
       records = snapshot.docs.map(document => ({ id: document.id, ...document.data() }) as AcademicClassRecord)
     } else records = []
   }
+  const includeDeleted = Boolean(query.includeDeleted && can(context, 'classes:manage'))
   const candidates = records
+    .filter(record => includeDeleted ? true : !record.deletedAt)
     .filter(record => !cursor || record.id > cursor.id)
     .filter(record => !query.periodId || record.periodId === query.periodId)
     .filter(record => !query.programStudyId || record.programStudyId === query.programStudyId)
@@ -1631,6 +1768,7 @@ export async function listAcademicClasses(context: AuthContext, query: AcademicC
 export async function getAcademicClassDetail(context: AuthContext, classId: string): Promise<AcademicClassDetail> {
   const safeId = safeClassId(classId)
   const record = await loadClass(safeId)
+  if (record.deletedAt && !canManageClass(context, record)) notFound('Kelas')
   await requireClassRead(context, record)
   const ownEnrollment = hasRole(context, 'student') && !canManageClass(context, record)
     ? await requireActiveStudentEnrollment(context, safeId)

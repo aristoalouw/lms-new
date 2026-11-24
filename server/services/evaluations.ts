@@ -349,11 +349,11 @@ export async function updateEvaluationForm(
   return result
 }
 
-export async function listEvaluationForms(context: AuthContext, programStudyId?: string): Promise<EvaluationFormRecord[]> {
+export async function listEvaluationForms(context: AuthContext, programStudyId?: string, includeDeleted = false): Promise<EvaluationFormRecord[]> {
   const requestedProgram = programStudyId ? normalizeEvaluationId(programStudyId, 'programStudyId') : undefined
   if (!context.roles.includes('administrator') && !requestedProgram) {
     if (context.roles.includes('academic_staff') && context.scope.programStudyIds.length === 1) {
-      return listEvaluationForms(context, context.scope.programStudyIds[0])
+      return listEvaluationForms(context, context.scope.programStudyIds[0], includeDeleted)
     }
     forbidden('programStudyId wajib dipilih.')
   }
@@ -362,6 +362,7 @@ export async function listEvaluationForms(context: AuthContext, programStudyId?:
   if (dataMode() === 'mock') {
     return [...evaluationMockState().forms.values()]
       .filter(form => !requestedProgram || form.programStudyId === requestedProgram)
+      .filter(form => includeDeleted ? true : !form.deletedAt)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .map(cloneEvaluationValue)
   }
@@ -370,7 +371,83 @@ export async function listEvaluationForms(context: AuthContext, programStudyId?:
   let query: FirebaseFirestore.Query = db.collection('evaluationForms')
   if (requestedProgram) query = query.where('programStudyId', '==', requestedProgram)
   const snapshot = await query.orderBy('updatedAt', 'desc').limit(100).get()
-  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as EvaluationFormRecord))
+  return snapshot.docs
+    .map(doc => ({ ...doc.data(), id: doc.id } as EvaluationFormRecord))
+    .filter(form => includeDeleted ? true : !form.deletedAt)
+}
+
+export async function deleteEvaluationForm(
+  context: AuthContext,
+  formId: string,
+  expectedVersion?: number,
+  event?: H3Event,
+): Promise<{ form: EvaluationFormRecord; auditId: string }> {
+  const safeId = normalizeEvaluationId(formId, 'formId', /^evalform_[a-f0-9]{24}$/)
+  const now = new Date().toISOString()
+  let after!: EvaluationFormRecord
+  if (dataMode() === 'mock') {
+    const current = await getEvaluationFormRecord(safeId)
+    requireEvaluationConfigurationAccess(context, current.programStudyId)
+    if (expectedVersion !== undefined && current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Formulir telah diperbarui oleh pengguna lain.')
+    if (current.deletedAt) conflict('EVALUATION_FORM_ALREADY_DELETED', 'Formulir sudah berada di daftar terhapus.')
+    after = { ...current, previousStatus: current.status, status: 'ARCHIVED', deletedAt: now, deletedBy: context.uid, version: current.version + 1, updatedAt: now, updatedBy: context.uid }
+    evaluationMockState().forms.set(safeId, cloneEvaluationValue(after))
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan evaluasi tidak tersedia.')
+    const ref = db.collection('evaluationForms').doc(safeId)
+    after = await db.runTransaction(async transaction => {
+      const snap = await transaction.get(ref)
+      if (!snap.exists) notFound('Formulir evaluasi')
+      const current = { ...snap.data(), id: snap.id } as EvaluationFormRecord
+      requireEvaluationConfigurationAccess(context, current.programStudyId)
+      if (expectedVersion !== undefined && current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Formulir telah diperbarui oleh pengguna lain.')
+      if (current.deletedAt) conflict('EVALUATION_FORM_ALREADY_DELETED', 'Formulir sudah berada di daftar terhapus.')
+      const next: EvaluationFormRecord = { ...current, previousStatus: current.status, status: 'ARCHIVED', deletedAt: now, deletedBy: context.uid, version: current.version + 1, updatedAt: now, updatedBy: context.uid }
+      transaction.set(ref, next)
+      return next
+    })
+  }
+  const audit = await appendAudit({ actor: context, action: 'EVALUATION_FORM_DELETED', resourceType: 'evaluation_form', resourceId: safeId, after: { deletedAt: after.deletedAt, version: after.version }, event })
+  return { form: after, auditId: audit.id }
+}
+
+export async function restoreEvaluationForm(
+  context: AuthContext,
+  formId: string,
+  expectedVersion?: number,
+  event?: H3Event,
+): Promise<{ form: EvaluationFormRecord; auditId: string }> {
+  const safeId = normalizeEvaluationId(formId, 'formId', /^evalform_[a-f0-9]{24}$/)
+  const now = new Date().toISOString()
+  let after!: EvaluationFormRecord
+  if (dataMode() === 'mock') {
+    const current = await getEvaluationFormRecord(safeId)
+    requireEvaluationConfigurationAccess(context, current.programStudyId)
+    if (expectedVersion !== undefined && current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Formulir telah diperbarui oleh pengguna lain.')
+    if (!current.deletedAt) conflict('EVALUATION_FORM_NOT_DELETED', 'Formulir tidak berada di daftar terhapus.')
+    const { deletedAt: _d, deletedBy: _b, previousStatus, ...rest } = current
+    after = { ...rest, status: previousStatus ?? 'ACTIVE', version: current.version + 1, updatedAt: now, updatedBy: context.uid }
+    evaluationMockState().forms.set(safeId, cloneEvaluationValue(after))
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan evaluasi tidak tersedia.')
+    const ref = db.collection('evaluationForms').doc(safeId)
+    after = await db.runTransaction(async transaction => {
+      const snap = await transaction.get(ref)
+      if (!snap.exists) notFound('Formulir evaluasi')
+      const current = { ...snap.data(), id: snap.id } as EvaluationFormRecord
+      requireEvaluationConfigurationAccess(context, current.programStudyId)
+      if (expectedVersion !== undefined && current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Formulir telah diperbarui oleh pengguna lain.')
+      if (!current.deletedAt) conflict('EVALUATION_FORM_NOT_DELETED', 'Formulir tidak berada di daftar terhapus.')
+      const { deletedAt: _d, deletedBy: _b, previousStatus, ...rest } = current
+      const next: EvaluationFormRecord = { ...rest, status: previousStatus ?? 'ACTIVE', version: current.version + 1, updatedAt: now, updatedBy: context.uid }
+      transaction.set(ref, next)
+      return next
+    })
+  }
+  const audit = await appendAudit({ actor: context, action: 'EVALUATION_FORM_RESTORED', resourceType: 'evaluation_form', resourceId: safeId, after: { status: after.status, version: after.version }, event })
+  return { form: after, auditId: audit.id }
 }
 
 export async function getEvaluationFormDetail(context: AuthContext, formId: string): Promise<{ form: EvaluationFormRecord; versions: EvaluationFormVersion[] }> {
@@ -517,19 +594,21 @@ export async function updateEvaluationPeriod(
   return { period: after, auditId: audit.id }
 }
 
-export async function listEvaluationPeriods(context: AuthContext, programStudyId?: string): Promise<EvaluationPeriodRecord[]> {
+export async function listEvaluationPeriods(context: AuthContext, programStudyId?: string, includeDeleted = false): Promise<EvaluationPeriodRecord[]> {
   const requestedProgram = programStudyId ? normalizeEvaluationId(programStudyId, 'programStudyId') : undefined
   const privileged = context.roles.some(role => role === 'administrator' || role === 'leader')
+  const allowDeleted = includeDeleted && (context.roles.includes('administrator') || context.roles.includes('academic_staff'))
   if (requestedProgram) {
     if (!privileged && !(context.roles.includes('academic_staff') && context.scope.programStudyIds.includes(requestedProgram))) forbidden()
   } else if (!privileged) {
-    if (context.roles.includes('academic_staff') && context.scope.programStudyIds.length === 1) return listEvaluationPeriods(context, context.scope.programStudyIds[0])
+    if (context.roles.includes('academic_staff') && context.scope.programStudyIds.length === 1) return listEvaluationPeriods(context, context.scope.programStudyIds[0], includeDeleted)
     if (context.roles.includes('lecturer')) return listEvaluationPeriodsForLecturer(context)
     forbidden('programStudyId wajib dipilih.')
   }
   if (dataMode() === 'mock') {
     return [...evaluationMockState().periods.values()]
       .filter(period => !requestedProgram || period.programStudyId === requestedProgram)
+      .filter(period => allowDeleted ? true : !period.deletedAt)
       .sort((left, right) => right.opensAt.localeCompare(left.opensAt))
       .map(cloneEvaluationValue)
   }
@@ -538,7 +617,83 @@ export async function listEvaluationPeriods(context: AuthContext, programStudyId
   let query: FirebaseFirestore.Query = db.collection('evaluationPeriods')
   if (requestedProgram) query = query.where('programStudyId', '==', requestedProgram)
   const snapshot = await query.orderBy('opensAt', 'desc').limit(100).get()
-  return snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as EvaluationPeriodRecord))
+  return snapshot.docs
+    .map(doc => ({ ...doc.data(), id: doc.id } as EvaluationPeriodRecord))
+    .filter(period => allowDeleted ? true : !period.deletedAt)
+}
+
+export async function deleteEvaluationPeriod(
+  context: AuthContext,
+  periodId: string,
+  expectedVersion?: number,
+  event?: H3Event,
+): Promise<{ period: EvaluationPeriodRecord; auditId: string }> {
+  const safeId = normalizeEvaluationId(periodId, 'periodId', /^evalperiod_[a-f0-9]{24}$/)
+  const now = new Date().toISOString()
+  let after!: EvaluationPeriodRecord
+  if (dataMode() === 'mock') {
+    const current = await getEvaluationPeriodRecord(safeId)
+    requireEvaluationConfigurationAccess(context, current.programStudyId)
+    if (expectedVersion !== undefined && current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Periode telah diperbarui oleh pengguna lain.')
+    if (current.deletedAt) conflict('EVALUATION_PERIOD_ALREADY_DELETED', 'Periode evaluasi sudah berada di daftar terhapus.')
+    after = { ...current, deletedAt: now, deletedBy: context.uid, version: current.version + 1, updatedAt: now, updatedBy: context.uid }
+    evaluationMockState().periods.set(safeId, cloneEvaluationValue(after))
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan evaluasi tidak tersedia.')
+    const ref = db.collection('evaluationPeriods').doc(safeId)
+    after = await db.runTransaction(async transaction => {
+      const snap = await transaction.get(ref)
+      if (!snap.exists) notFound('Periode evaluasi')
+      const current = { ...snap.data(), id: snap.id } as EvaluationPeriodRecord
+      requireEvaluationConfigurationAccess(context, current.programStudyId)
+      if (expectedVersion !== undefined && current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Periode telah diperbarui oleh pengguna lain.')
+      if (current.deletedAt) conflict('EVALUATION_PERIOD_ALREADY_DELETED', 'Periode evaluasi sudah berada di daftar terhapus.')
+      const next: EvaluationPeriodRecord = { ...current, deletedAt: now, deletedBy: context.uid, version: current.version + 1, updatedAt: now, updatedBy: context.uid }
+      transaction.set(ref, next)
+      return next
+    })
+  }
+  const audit = await appendAudit({ actor: context, action: 'EVALUATION_PERIOD_DELETED', resourceType: 'evaluation_period', resourceId: safeId, after: { deletedAt: after.deletedAt, version: after.version }, event })
+  return { period: after, auditId: audit.id }
+}
+
+export async function restoreEvaluationPeriod(
+  context: AuthContext,
+  periodId: string,
+  expectedVersion?: number,
+  event?: H3Event,
+): Promise<{ period: EvaluationPeriodRecord; auditId: string }> {
+  const safeId = normalizeEvaluationId(periodId, 'periodId', /^evalperiod_[a-f0-9]{24}$/)
+  const now = new Date().toISOString()
+  let after!: EvaluationPeriodRecord
+  if (dataMode() === 'mock') {
+    const current = await getEvaluationPeriodRecord(safeId)
+    requireEvaluationConfigurationAccess(context, current.programStudyId)
+    if (expectedVersion !== undefined && current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Periode telah diperbarui oleh pengguna lain.')
+    if (!current.deletedAt) conflict('EVALUATION_PERIOD_NOT_DELETED', 'Periode evaluasi tidak berada di daftar terhapus.')
+    const { deletedAt: _d, deletedBy: _b, ...rest } = current
+    after = { ...rest, version: current.version + 1, updatedAt: now, updatedBy: context.uid }
+    evaluationMockState().periods.set(safeId, cloneEvaluationValue(after))
+  } else {
+    const db = firestoreAdmin()
+    if (!db) serviceUnavailable('Penyimpanan evaluasi tidak tersedia.')
+    const ref = db.collection('evaluationPeriods').doc(safeId)
+    after = await db.runTransaction(async transaction => {
+      const snap = await transaction.get(ref)
+      if (!snap.exists) notFound('Periode evaluasi')
+      const current = { ...snap.data(), id: snap.id } as EvaluationPeriodRecord
+      requireEvaluationConfigurationAccess(context, current.programStudyId)
+      if (expectedVersion !== undefined && current.version !== expectedVersion) conflict('VERSION_CONFLICT', 'Periode telah diperbarui oleh pengguna lain.')
+      if (!current.deletedAt) conflict('EVALUATION_PERIOD_NOT_DELETED', 'Periode evaluasi tidak berada di daftar terhapus.')
+      const { deletedAt: _d, deletedBy: _b, ...rest } = current
+      const next: EvaluationPeriodRecord = { ...rest, version: current.version + 1, updatedAt: now, updatedBy: context.uid }
+      transaction.set(ref, next)
+      return next
+    })
+  }
+  const audit = await appendAudit({ actor: context, action: 'EVALUATION_PERIOD_RESTORED', resourceType: 'evaluation_period', resourceId: safeId, after: { version: after.version }, event })
+  return { period: after, auditId: audit.id }
 }
 
 async function listEvaluationPeriodsForLecturer(context: AuthContext): Promise<EvaluationPeriodRecord[]> {
@@ -720,6 +875,7 @@ export async function submitStudentEvaluation(
     getEnrollment(enrollmentId),
   ])
   if (enrollment.studentUid !== context.uid || enrollment.status !== 'ENROLLED') forbidden('Anda tidak terdaftar aktif pada kelas ini.')
+  if (period.deletedAt) notFound('Periode evaluasi')
   if (period.academicPeriodId !== enrollment.academicPeriodId || period.programStudyId !== enrollment.programStudyId) {
     forbidden('Kelas tidak termasuk dalam periode evaluasi ini.')
   }

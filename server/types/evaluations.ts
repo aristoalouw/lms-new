@@ -22,6 +22,9 @@ export interface EvaluationFormRecord {
   createdBy: string
   updatedAt: string
   updatedBy: string
+  deletedAt?: string
+  deletedBy?: string
+  previousStatus?: 'ACTIVE' | 'ARCHIVED'
 }
 
 export interface EvaluationFormVersion {
@@ -51,6 +54,8 @@ export interface EvaluationPeriodRecord {
   createdBy: string
   updatedAt: string
   updatedBy: string
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export interface EvaluationEnrollment {

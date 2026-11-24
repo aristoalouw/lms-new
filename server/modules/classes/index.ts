@@ -6,6 +6,8 @@ export {
   listClassEnrollmentsForExportPage,
   listAcademicClasses,
   listAcademicClassesPage,
+  deleteAcademicClass,
+  restoreAcademicClass,
   updateAcademicClass,
 } from '../../services/academic-classes'
 export { exportLmsClassDataCsv } from '../../services/lms-class-export'

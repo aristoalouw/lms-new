@@ -8,5 +8,5 @@ export default defineCampusHandler(async (event) => {
   markPrivateResponse(event)
   const context = await requireAuth(event)
   const query = getQuery(event)
-  return { periods: await listEvaluationPeriods(context, optionalString(query.programStudyId, 'programStudyId', 100)) }
+  return { periods: await listEvaluationPeriods(context, optionalString(query.programStudyId, 'programStudyId', 100), query.includeDeleted === 'true') }
 })

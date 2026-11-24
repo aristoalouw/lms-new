@@ -10,6 +10,9 @@ export interface AcademicProgramStudy {
   accreditationStatus: string
   accreditationExpiresAt: string
   version: number
+  deletedAt?: string
+  deletedBy?: string
+  previousActive?: boolean
 }
 
 export interface AcademicPeriodDefinition {
@@ -24,6 +27,10 @@ export interface AcademicPeriodDefinition {
   krsStatus: 'DRAFT' | 'KRS_OPEN' | 'KRS_CLOSED' | 'CLOSED'
   active: boolean
   version: number
+  deletedAt?: string
+  deletedBy?: string
+  previousActive?: boolean
+  previousKrsStatus?: 'DRAFT' | 'KRS_OPEN' | 'KRS_CLOSED' | 'CLOSED'
 }
 
 export interface AcademicCourseVersion {
@@ -41,12 +48,20 @@ export interface AcademicCourseVersion {
   createdAt: string
   createdBy: string
   immutable: true
+  deletedAt?: string
+  deletedBy?: string
+  previousStatus?: 'DRAFT' | 'ACTIVE' | 'RETIRED'
 }
 
 export interface LmsAcademicCatalog {
   programs: AcademicProgramStudy[]
   periods: AcademicPeriodDefinition[]
   courses: AcademicCourseVersion[]
+  deleted?: {
+    programs: AcademicProgramStudy[]
+    periods: AcademicPeriodDefinition[]
+    courses: AcademicCourseVersion[]
+  }
 }
 
 export interface CurriculumVersion {
@@ -63,6 +78,9 @@ export interface CurriculumVersion {
   createdAt: string
   createdBy: string
   immutable: true
+  deletedAt?: string
+  deletedBy?: string
+  previousStatus?: 'DRAFT' | 'ACTIVE' | 'RETIRED'
 }
 
 export interface StudentAcademicStatusEvent {
@@ -108,6 +126,8 @@ export interface AcademicCalendarEvent {
   version: number
   createdAt: string
   createdBy: string
+  deletedAt?: string
+  deletedBy?: string
 }
 
 export interface LeaveRequest {
@@ -176,6 +196,9 @@ export interface RpsVersion {
   createdAt: string
   createdBy: string
   immutable: true
+  deletedAt?: string
+  deletedBy?: string
+  previousStatus?: 'DRAFT' | 'ACTIVE' | 'RETIRED'
 }
 
 export interface RpsHead {

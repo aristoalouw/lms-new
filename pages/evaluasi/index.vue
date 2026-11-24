@@ -27,6 +27,7 @@ interface EvaluationForm {
   version: number
   status: 'ACTIVE' | 'ARCHIVED'
   updatedAt: string
+  deletedAt?: string
 }
 
 interface EvaluationPeriod {
@@ -40,6 +41,7 @@ interface EvaluationPeriod {
   closesAt: string
   minimumResponses: number
   version: number
+  deletedAt?: string
 }
 
 interface Assignment {
@@ -123,8 +125,15 @@ const submitting = ref(false)
 const submitError = ref('')
 const submissionKey = ref('')
 
-const forms = ref<EvaluationForm[]>([])
-const periods = ref<EvaluationPeriod[]>([])
+const allForms = ref<EvaluationForm[]>([])
+const allPeriods = ref<EvaluationPeriod[]>([])
+const forms = computed(() => allForms.value.filter(item => !item.deletedAt))
+const deletedForms = computed(() => allForms.value.filter(item => Boolean(item.deletedAt)))
+const periods = computed(() => allPeriods.value.filter(item => !item.deletedAt))
+const deletedPeriods = computed(() => allPeriods.value.filter(item => Boolean(item.deletedAt)))
+const totalDeletedEvaluationItems = computed(() => deletedForms.value.length + deletedPeriods.value.length)
+const showTrashPanel = ref(false)
+const pendingDeleteEvaluation = ref<{ kind: 'form' | 'period'; id: string; version: number; label: string } | null>(null)
 const savingForm = ref(false)
 const savingPeriod = ref(false)
 const formError = ref('')
@@ -216,8 +225,8 @@ async function loadStudentAssignments() {
 
 async function loadAcademicCatalog() {
   const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
-  academicPrograms.value = data.programs.filter(program => program.active)
-  academicPeriods.value = data.periods.filter(period => period.active)
+  academicPrograms.value = data.programs.filter(program => program.active && !program.deletedAt)
+  academicPeriods.value = data.periods.filter(period => period.active && !period.deletedAt)
   if (!academicPrograms.value.some(program => program.id === programStudyId.value)) {
     const scopedProgram = user.value?.programStudyId
     programStudyId.value = academicPrograms.value.find(program => program.id === scopedProgram)?.id
@@ -229,14 +238,17 @@ async function loadAcademicCatalog() {
 }
 
 async function loadManagementData() {
-  const params = programStudyId.value ? { programStudyId: programStudyId.value } : {}
+  const params: Record<string, string> = {
+    ...(programStudyId.value ? { programStudyId: programStudyId.value } : {}),
+    ...(canConfigure.value ? { includeDeleted: 'true' } : {}),
+  }
   const requests: Promise<unknown>[] = []
   if (canConfigure.value) {
-    requests.push($api.get<{ forms: EvaluationForm[] }>('/evaluations/forms', { params: { programStudyId: programStudyId.value } })
-      .then(({ data }) => { forms.value = data.forms }))
+    requests.push($api.get<{ forms: EvaluationForm[] }>('/evaluations/forms', { params: { programStudyId: programStudyId.value, includeDeleted: 'true' } })
+      .then(({ data }) => { allForms.value = data.forms }))
   }
   requests.push($api.get<{ periods: EvaluationPeriod[] }>('/evaluations/periods', { params })
-    .then(({ data }) => { periods.value = data.periods }))
+    .then(({ data }) => { allPeriods.value = data.periods }))
   await Promise.all(requests)
   if (!forms.value.some(form => form.id === periodDraft.formId)) periodDraft.formId = forms.value[0]?.id || ''
   if (!periods.value.some(period => period.id === selectedPeriodId.value)) selectedPeriodId.value = periods.value[0]?.id || ''
@@ -486,6 +498,45 @@ async function savePeriod() {
   }
 }
 
+async function confirmDeleteEvaluation() {
+  const target = pendingDeleteEvaluation.value
+  if (!target) return
+  savingForm.value = true
+  pageError.value = ''
+  try {
+    const path = target.kind === 'form'
+      ? `/evaluations/forms/${target.id}/delete`
+      : `/evaluations/periods/${target.id}/delete`
+    await $api.post(path, { expectedVersion: target.version })
+    if (target.kind === 'form' && editingForm.value?.id === target.id) resetFormDraft()
+    if (target.kind === 'period' && editingPeriod.value?.id === target.id) resetPeriodDraft()
+    pendingDeleteEvaluation.value = null
+    notice.value = { tone: 'success', message: `"${target.label}" dipindahkan ke Sampah dan dapat dipulihkan sewaktu-waktu.` }
+    await loadManagementData()
+  } catch (error) {
+    pageError.value = errorMessage(error)
+  } finally {
+    savingForm.value = false
+  }
+}
+
+async function restoreEvaluation(kind: 'form' | 'period', id: string, version: number, label: string) {
+  savingForm.value = true
+  pageError.value = ''
+  try {
+    const path = kind === 'form'
+      ? `/evaluations/forms/${id}/restore`
+      : `/evaluations/periods/${id}/restore`
+    await $api.post(path, { expectedVersion: version })
+    notice.value = { tone: 'success', message: `"${label}" berhasil dipulihkan.` }
+    await loadManagementData()
+  } catch (error) {
+    pageError.value = errorMessage(error)
+  } finally {
+    savingForm.value = false
+  }
+}
+
 async function loadReport() {
   if (!selectedPeriodId.value) return
   reportLoading.value = true
@@ -595,11 +646,35 @@ onMounted(() => {
       </section>
 
       <nav class="evaluation-tabs" aria-label="Area evaluasi">
-        <button v-if="canConfigure" type="button" :class="{ active: activeTab === 'setup' }" @click="activeTab = 'setup'"><i class="uil uil-setting" />Instrumen &amp; periode</button>
-        <button v-if="canReport" type="button" :class="{ active: activeTab === 'report' }" @click="activeTab = 'report'"><i class="uil uil-chart-bar" />Laporan hasil</button>
+        <button v-if="canConfigure" type="button" :class="{ active: activeTab === 'setup' && !showTrashPanel }" @click="activeTab = 'setup'; showTrashPanel = false"><i class="uil uil-setting" />Instrumen &amp; periode</button>
+        <button v-if="canReport" type="button" :class="{ active: activeTab === 'report' && !showTrashPanel }" @click="activeTab = 'report'; showTrashPanel = false"><i class="uil uil-chart-bar" />Laporan hasil</button>
+        <button v-if="canConfigure" type="button" :class="{ active: showTrashPanel }" @click="showTrashPanel = true"><i class="uil uil-trash-alt" />Sampah ({{ totalDeletedEvaluationItems }})</button>
       </nav>
 
       <div v-if="loading" class="loading-state management-loading"><span class="spinner-border spinner-border-sm" />Memuat konfigurasi evaluasi…</div>
+
+      <section v-else-if="showTrashPanel && canConfigure" class="trash-grid">
+        <article class="config-surface">
+          <header><div><span class="section-kicker">Pemulihan formulir</span><h2>Formulir evaluasi terhapus</h2><p>Formulir yang dihapus tetap menyimpan seluruh versinya dan dapat dipulihkan kembali.</p></div><span class="record-pill">{{ deletedForms.length }}</span></header>
+          <div class="trash-list">
+            <div v-for="form in deletedForms" :key="form.id" class="trash-row">
+              <div><strong>{{ form.name }}</strong><small>{{ programLabel(form.programStudyId) }} · v{{ form.currentVersion }} · dihapus {{ form.deletedAt ? formatDate(form.deletedAt) : '' }}</small></div>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="savingForm" @click="restoreEvaluation('form', form.id, form.version, form.name)"><i class="uil uil-history me-1" />Pulihkan</button>
+            </div>
+            <EmptyState v-if="!deletedForms.length" title="Tidak ada formulir terhapus" description="Formulir evaluasi yang Anda hapus akan muncul di sini." icon="uil-file-check-alt" />
+          </div>
+        </article>
+        <article class="config-surface">
+          <header><div><span class="section-kicker">Pemulihan jadwal</span><h2>Periode evaluasi terhapus</h2><p>Periode yang dihapus tidak ditampilkan kepada mahasiswa, namun tanggapan yang sudah masuk tetap aman jika dipulihkan.</p></div><span class="record-pill">{{ deletedPeriods.length }}</span></header>
+          <div class="trash-list">
+            <div v-for="period in deletedPeriods" :key="period.id" class="trash-row">
+              <div><strong>{{ period.name }}</strong><small>{{ academicPeriodLabel(period.academicPeriodId) }} · dihapus {{ period.deletedAt ? formatDate(period.deletedAt) : '' }}</small></div>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="savingForm" @click="restoreEvaluation('period', period.id, period.version, period.name)"><i class="uil uil-history me-1" />Pulihkan</button>
+            </div>
+            <EmptyState v-if="!deletedPeriods.length" title="Tidak ada periode terhapus" description="Periode evaluasi yang Anda hapus akan muncul di sini." icon="uil-calendar-slash" />
+          </div>
+        </article>
+      </section>
 
       <section v-else-if="activeTab === 'setup' && canConfigure" class="setup-grid">
         <article class="config-surface form-builder">
@@ -711,7 +786,10 @@ onMounted(() => {
             <ul>
               <li v-for="form in forms" :key="form.id" :class="{ active: editingForm?.id === form.id }">
                 <span><strong>{{ form.name }}</strong><small>{{ programLabel(form.programStudyId) }} · v{{ form.currentVersion }}</small></span>
-                <button class="btn btn-sm btn-outline-primary" type="button" @click="editForm(form)">Sunting</button>
+                <div class="row-actions">
+                  <button class="btn btn-sm btn-outline-primary" type="button" @click="editForm(form)">Sunting</button>
+                  <button class="btn btn-sm btn-outline-danger" type="button" :disabled="savingForm" @click="pendingDeleteEvaluation = { kind: 'form', id: form.id, version: form.version, label: form.name }">Hapus</button>
+                </div>
               </li>
               <li v-if="!forms.length" class="empty-list">Belum ada formulir untuk program studi ini.</li>
             </ul>
@@ -731,7 +809,7 @@ onMounted(() => {
                   <td><small>{{ formatDate(period.opensAt) }}</small><span>s.d.</span><small>{{ formatDate(period.closesAt) }}</small></td>
                   <td>{{ period.minimumResponses }} responden</td>
                   <td><StatusBadge :status="periodState(period).badge" :label="periodState(period).label" /></td>
-                  <td class="text-end"><button class="btn btn-sm btn-outline-primary" type="button" @click="editPeriod(period)">Sunting</button></td>
+                  <td class="text-end"><div class="row-actions justify-content-end"><button class="btn btn-sm btn-outline-primary" type="button" @click="editPeriod(period)">Sunting</button><button class="btn btn-sm btn-outline-danger" type="button" :disabled="savingForm" @click="pendingDeleteEvaluation = { kind: 'period', id: period.id, version: period.version, label: period.name }">Hapus</button></div></td>
                 </tr>
               </tbody>
             </table>
@@ -761,6 +839,18 @@ onMounted(() => {
         </div>
       </section>
     </template>
+
+    <div v-if="pendingDeleteEvaluation" class="confirm-overlay" role="dialog" aria-modal="true" @click.self="pendingDeleteEvaluation = null">
+      <div class="confirm-dialog">
+        <span class="section-kicker">Konfirmasi penghapusan</span>
+        <h3>Hapus "{{ pendingDeleteEvaluation.label }}"?</h3>
+        <p class="confirm-copy">Item akan dipindahkan ke tab <strong>Sampah</strong> dan dapat dipulihkan sewaktu-waktu tanpa menghilangkan riwayat data.</p>
+        <div class="confirm-actions">
+          <button class="btn btn-outline-secondary btn-sm" type="button" :disabled="savingForm" @click="pendingDeleteEvaluation = null">Batal</button>
+          <button class="btn btn-danger btn-sm" type="button" :disabled="savingForm" @click="confirmDeleteEvaluation"><span v-if="savingForm" class="spinner-border spinner-border-sm me-2" />Pindahkan ke Sampah</button>
+        </div>
+      </div>
+    </div>
 
     <div v-if="selectedAssignment" class="evaluation-modal" @click.self="closeAssignment">
       <section role="dialog" aria-modal="true" aria-labelledby="evaluation-form-title">
@@ -864,6 +954,19 @@ onMounted(() => {
 .compact-list li strong,.compact-list li small { display: block; }
 .compact-list li strong { color: #1e1e1e; font-size: .76rem; }
 .compact-list li small { margin-top: .14rem; color: #6c6865; font-size: .64rem; }
+.row-actions { display: flex; gap: .35rem; flex-shrink: 0; }
+.trash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
+.trash-list { display: grid; gap: .55rem; padding: 1rem 1.15rem; }
+.trash-row { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .75rem .85rem; border: 1px solid #efd6d2; border-radius: .75rem; background: #fffaf8; }
+.trash-row strong,.trash-row small { display: block; }
+.trash-row strong { color: #1e1e1e; font-size: .8rem; }
+.trash-row small { color: #6c6865; font-size: .66rem; margin-top: .15rem; }
+.confirm-overlay { position: fixed; inset: 0; z-index: 1080; display: grid; place-items: center; padding: 1rem; background: rgba(30,20,34,.55); backdrop-filter: blur(4px); }
+.confirm-dialog { width: min(100%,450px); padding: 1.3rem; border-radius: 1rem; background: #fff; box-shadow: 0 24px 70px rgba(30,20,34,.28); }
+.confirm-dialog h3 { margin: .2rem 0 .45rem; color: #1e1e1e; font-size: 1rem; }
+.confirm-copy { margin: 0 0 1rem; color: #4e5462; font-size: .75rem; line-height: 1.55; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: .5rem; }
+@media (max-width:991.98px) { .trash-grid { grid-template-columns: 1fr; } }
 .compact-list .empty-list { justify-content: center; color: #6c6865; font-size: .72rem; }
 .period-table { overflow-x: auto; }
 .period-table table { width: 100%; min-width: 820px; border-collapse: collapse; }

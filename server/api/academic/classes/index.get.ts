@@ -19,6 +19,7 @@ export default defineCampusHandler(async (event) => {
     programStudyId: scalar(query.programStudyId, 'programStudyId'),
     cursor: query.cursor === undefined ? undefined : requireString(String(query.cursor), 'cursor', { max: 500, pattern: /^[A-Za-z0-9_-]+$/ }),
     limit: query.limit === undefined ? 50 : requireInteger(Number(query.limit), 'limit', 1, 50),
+    includeDeleted: query.includeDeleted === 'true',
   })
   return { ...page, classes: page.items }
 })

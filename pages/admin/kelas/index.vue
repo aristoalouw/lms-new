@@ -21,12 +21,13 @@ const lecturers = ref<AccountOption[]>([])
 const selectedLecturers = ref<string[]>([])
 const catalog = ref<LmsAcademicCatalog>({ programs: [], periods: [], courses: [] })
 
-const activePanel = ref<'list' | 'create' | 'catalog'>('list')
+const activePanel = ref<'list' | 'create' | 'catalog' | 'trash'>('list')
 const searchQuery = ref('')
 const periodFilter = ref('ALL')
 const programFilter = ref('ALL')
-const statusFilter = ref<'ALL' | 'ACTIVE' | 'CLOSED'>('ACTIVE')
+const statusFilter = ref<'ALL' | 'ACTIVE' | 'CLOSED'>('ALL')
 const courseProgramFilter = ref('ALL')
+const pendingDeleteClass = ref<AcademicClassRecord | null>(null)
 
 const firstMeeting = new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 16)
 const form = reactive({
@@ -47,9 +48,11 @@ const filteredCoursesForCreate = computed(() => (
 const selectedCourse = computed(() => catalog.value.courses.find(item => item.id === form.courseVersionId))
 const selectedProgram = computed(() => catalog.value.programs.find(item => item.id === selectedCourse.value?.programStudyId))
 
+const nonDeletedClasses = computed(() => classes.value.filter(item => !item.deletedAt))
+const deletedClasses = computed(() => classes.value.filter(item => Boolean(item.deletedAt)))
 const filteredClasses = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  return classes.value.filter(item =>
+  return nonDeletedClasses.value.filter(item =>
     (statusFilter.value === 'ALL' || item.status === statusFilter.value)
     && (periodFilter.value === 'ALL' || item.periodId === periodFilter.value)
     && (programFilter.value === 'ALL' || item.programStudyId === programFilter.value)
@@ -61,8 +64,8 @@ const filteredClasses = computed(() => {
   )
 })
 
-const activeCount = computed(() => classes.value.filter(item => item.status === 'ACTIVE').length)
-const totalEnrolled = computed(() => classes.value.reduce((sum, item) => sum + (item.enrollmentCount ?? 0), 0))
+const activeCount = computed(() => nonDeletedClasses.value.length)
+const totalEnrolled = computed(() => nonDeletedClasses.value.reduce((sum, item) => sum + (item.enrollmentCount ?? 0), 0))
 
 const key = (purpose: string) => `${purpose}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const messageFor = (error: unknown) => {
@@ -106,9 +109,9 @@ async function load(reset = true) {
   errorMessage.value = ''
   try {
     const [classResponse, lecturerResponse, catalogResponse] = await Promise.all([
-      $api.get<{ items: AcademicClassRecord[]; nextCursor?: string }>('/academic/classes', { params: { limit: 50, ...(!reset && nextCursor.value ? { cursor: nextCursor.value } : {}) } }),
+      $api.get<{ items: AcademicClassRecord[]; nextCursor?: string }>('/academic/classes', { params: { limit: 50, includeDeleted: 'true', ...(!reset && nextCursor.value ? { cursor: nextCursor.value } : {}) } }),
       $api.get<AccountPage>('/accounts', { params: { role: 'lecturer', status: 'active', pageSize: 50 } }),
-      $api.get<LmsAcademicCatalog>('/academic/classes/catalog'),
+      $api.get<LmsAcademicCatalog>('/academic/classes/catalog', { params: { includeDeleted: 'true' } }),
     ])
     classes.value = reset ? classResponse.data.items : [...classes.value, ...classResponse.data.items]
     nextCursor.value = classResponse.data.nextCursor
@@ -176,6 +179,43 @@ async function toggleClassStatus(item: AcademicClassRecord) {
   }
 }
 
+async function confirmDeleteClass() {
+  const item = pendingDeleteClass.value
+  if (!item) return
+  saving.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post(`/academic/classes/${encodeURIComponent(item.id)}/delete`, {
+      expectedVersion: item.version ?? 1,
+    })
+    pendingDeleteClass.value = null
+    noticeMessage.value = `Kelas ${item.courseCode} (${item.section}) dipindahkan ke Sampah dan dapat dipulihkan sewaktu-waktu.`
+    await load()
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function restoreClass(item: AcademicClassRecord) {
+  saving.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post(`/academic/classes/${encodeURIComponent(item.id)}/restore`, {
+      expectedVersion: item.version ?? 1,
+    })
+    noticeMessage.value = `Kelas ${item.courseCode} (${item.section}) berhasil dipulihkan.`
+    await load()
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    saving.value = false
+  }
+}
+
 onMounted(() => load())
 </script>
 
@@ -206,9 +246,40 @@ onMounted(() => load())
         <button type="button" :class="{ active: activePanel === 'catalog' }" @click="activePanel = 'catalog'">
           <i class="uil uil-book-open" />Katalog prodi &amp; mata kuliah <span class="tab-count">{{ catalog.courses.length }}</span>
         </button>
+        <button type="button" :class="{ active: activePanel === 'trash' }" @click="activePanel = 'trash'">
+          <i class="uil uil-trash-alt" />Sampah <span class="tab-count">{{ deletedClasses.length }}</span>
+        </button>
       </nav>
 
       <AcademicCatalogManager v-if="activePanel === 'catalog'" :catalog="catalog" @created="load()" />
+
+      <article v-else-if="activePanel === 'trash'" class="surface-card">
+        <header class="card-head">
+          <div><span class="section-kicker">Pemulihan data</span><h2>Kelas terhapus ({{ deletedClasses.length }})</h2><p>Kelas di bawah ini disembunyikan dari KRS, ruang belajar, dan pelaksanaan kelas, namun dapat dipulihkan kembali beserta seluruh pesertanya.</p></div>
+        </header>
+        <div v-if="deletedClasses.length" class="class-list">
+          <article v-for="item in deletedClasses" :key="item.id" class="class-item class-item--deleted">
+            <div class="class-item__main">
+              <div class="class-item__title">
+                <strong>{{ item.courseCode }} · {{ item.courseName }}</strong>
+                <span class="section-pill">Kelas {{ item.section }}</span>
+              </div>
+              <div class="class-item__meta">
+                <span><i class="uil uil-calendar-alt" /> {{ periodLabel(item.periodId) }}</span>
+                <span><i class="uil uil-university" /> {{ programLabel(item.programStudyId) }}</span>
+                <span><i class="uil uil-trash-alt" /> Dihapus {{ item.deletedAt ? new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Jakarta' }).format(new Date(item.deletedAt)) : '' }}</span>
+              </div>
+            </div>
+            <div class="class-item__side">
+              <StatusBadge status="blocked" label="Terhapus" />
+              <div class="class-actions">
+                <button class="btn btn-sm btn-primary" type="button" :disabled="saving" @click="restoreClass(item)"><i class="uil uil-history me-1" />Pulihkan kelas</button>
+              </div>
+            </div>
+          </article>
+        </div>
+        <EmptyState v-else title="Sampah kelas kosong" description="Kelas yang dihapus akan muncul di sini dan dapat dipulihkan sewaktu-waktu." icon="uil-trash-alt" />
+      </article>
 
       <article v-else-if="activePanel === 'create'" class="surface-card">
         <header class="card-head">
@@ -322,8 +393,11 @@ onMounted(() => load())
               <div class="class-actions">
                 <NuxtLink class="btn btn-sm btn-primary" :to="`/admin/kelas/${item.id}`"><i class="uil uil-edit-alt me-1" />Kelola &amp; peserta</NuxtLink>
                 <NuxtLink class="btn btn-sm btn-outline-secondary" :to="`/pembelajaran/${item.id}`"><i class="uil uil-book-open me-1" />Ruang LMS</NuxtLink>
-                <button class="btn btn-sm" :class="item.status === 'ACTIVE' ? 'btn-outline-danger' : 'btn-outline-primary'" type="button" :disabled="saving" @click="toggleClassStatus(item)">
+                <button class="btn btn-sm btn-outline-secondary" type="button" :disabled="saving" @click="toggleClassStatus(item)">
                   {{ item.status === 'ACTIVE' ? 'Arsipkan' : 'Aktifkan' }}
+                </button>
+                <button class="btn btn-sm btn-outline-danger" type="button" :disabled="saving" @click="pendingDeleteClass = item">
+                  <i class="uil uil-trash-alt me-1" />Hapus
                 </button>
               </div>
             </div>
@@ -332,6 +406,18 @@ onMounted(() => load())
         </div>
         <EmptyState v-else title="Belum ada kelas sesuai filter" description="Ubah filter pencarian atau buat kelas baru untuk memulai perkuliahan." />
       </article>
+
+      <div v-if="pendingDeleteClass" class="confirm-overlay" role="dialog" aria-modal="true" @click.self="pendingDeleteClass = null">
+        <div class="confirm-dialog">
+          <span class="section-kicker">Konfirmasi penghapusan</span>
+          <h3>Hapus kelas {{ pendingDeleteClass.courseCode }} ({{ pendingDeleteClass.section }})?</h3>
+          <p class="confirm-copy">Kelas akan dipindahkan ke tab <strong>Sampah</strong> dan disembunyikan dari daftar aktif, KRS, serta pelaksanaan kelas. Data peserta dan nilai tetap aman dan dapat dipulihkan sewaktu-waktu.</p>
+          <div class="form-actions mt-3">
+            <button class="btn btn-outline-secondary" type="button" :disabled="saving" @click="pendingDeleteClass = null">Batal</button>
+            <button class="btn btn-danger" type="button" :disabled="saving" @click="confirmDeleteClass"><span v-if="saving" class="spinner-border spinner-border-sm me-2" />Pindahkan ke Sampah</button>
+          </div>
+        </div>
+      </div>
     </template>
   </div>
 </template>
@@ -376,6 +462,11 @@ onMounted(() => load())
 .class-item__meta i{color:#775a83;margin-right:.18rem}
 .class-item__side{display:flex;flex-direction:column;align-items:flex-end;gap:.55rem;flex-shrink:0}
 .class-actions{display:flex;gap:.45rem;flex-wrap:wrap;justify-content:flex-end}
+.class-item--deleted{background:#fffaf8;border-color:#efd6d2}
+.confirm-overlay{position:fixed;inset:0;z-index:1080;display:grid;place-items:center;padding:1rem;background:rgba(30,20,34,.55);backdrop-filter:blur(4px)}
+.confirm-dialog{width:min(100%,460px);padding:1.3rem;border-radius:1rem;background:#fff;box-shadow:0 24px 70px rgba(30,20,34,.28)}
+.confirm-dialog h3{margin:.2rem 0 .45rem;color:#1e1e1e;font-size:1.02rem}
+.confirm-copy{margin:0;color:#4e5462;font-size:.76rem;line-height:1.55}
 .loading-state{display:flex;gap:.5rem;align-items:center;min-height:140px;justify-content:center;color:#6c6865}
 @media(max-width:991.98px){.class-item{flex-direction:column;align-items:stretch}.class-item__side{align-items:flex-start}.class-actions{justify-content:flex-start}}
 @media(max-width:640px){.class-form,.inline-two,.catalog-summary{grid-template-columns:1fr}.span-2{grid-column:auto}.filter-bar{width:100%}.filter-bar input,.filter-bar select{width:100%;min-width:0}}

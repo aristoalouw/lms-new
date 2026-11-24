@@ -65,22 +65,35 @@ async function masterById<T>(collection: string, id: string, mockValues: Map<str
   return snapshot.exists ? ({ id: snapshot.id, ...snapshot.data() } as T) : undefined
 }
 
-export async function listLmsAcademicCatalog(context: AuthContext): Promise<LmsAcademicCatalog> {
+export async function listLmsAcademicCatalog(context: AuthContext, includeDeleted = false): Promise<LmsAcademicCatalog> {
   requirePermission(context, 'classes:manage')
   const [programs, periods, courses] = await Promise.all([
     all<AcademicProgramStudy>('academicProgramStudies', () => [...academicAdministrationState().programs.values()]),
     all<AcademicPeriodDefinition>('academicPeriodDefinitions', () => [...academicAdministrationState().periods.values()]),
     all<AcademicCourseVersion>('academicCourseVersions', () => [...academicAdministrationState().courses.values()]),
   ])
-  const activePrograms = programs.filter(program => program.active)
+  const activePrograms = programs.filter(program => program.active && !program.deletedAt)
   const activeProgramIds = new Set(activePrograms.map(program => program.id))
-  return {
+  const result: LmsAcademicCatalog = {
     programs: activePrograms.sort((left, right) => left.code.localeCompare(right.code, 'id')),
-    periods: periods.filter(period => period.active).sort((left, right) => right.startsAt.localeCompare(left.startsAt) || left.id.localeCompare(right.id)),
+    periods: periods.filter(period => period.active && !period.deletedAt).sort((left, right) => right.startsAt.localeCompare(left.startsAt) || left.id.localeCompare(right.id)),
     courses: courses
-      .filter(course => course.status === 'ACTIVE' && course.immutable === true && activeProgramIds.has(course.programStudyId))
+      .filter(course => !course.deletedAt && course.status === 'ACTIVE' && course.immutable === true && activeProgramIds.has(course.programStudyId))
       .sort((left, right) => left.code.localeCompare(right.code, 'id') || right.version - left.version),
   }
+  if (includeDeleted) {
+    const deletedCourseMap = new Map<string, AcademicCourseVersion>()
+    for (const c of courses.filter(item => Boolean(item.deletedAt))) {
+      const existing = deletedCourseMap.get(c.courseId)
+      if (!existing || c.version > existing.version) deletedCourseMap.set(c.courseId, c)
+    }
+    result.deleted = {
+      programs: programs.filter(item => Boolean(item.deletedAt)).sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || '')),
+      periods: periods.filter(item => Boolean(item.deletedAt)).sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || '')),
+      courses: [...deletedCourseMap.values()].sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || '')),
+    }
+  }
+  return result
 }
 
 export interface LmsClassCatalogSelection {
@@ -102,14 +115,14 @@ export async function resolveLmsClassCatalogSelection(
     masterById<AcademicCourseVersion>('academicCourseVersions', safeCourseVersionId, state.courses),
     masterById<AcademicPeriodDefinition>('academicPeriodDefinitions', safePeriodId, state.periods),
   ])
-  if (!course) notFound('Versi mata kuliah')
+  if (!course || course.deletedAt) notFound('Versi mata kuliah')
   if (course.status !== 'ACTIVE' || course.immutable !== true) {
     conflict('COURSE_VERSION_NOT_ACTIVE', 'Kelas LMS hanya dapat memakai versi mata kuliah ACTIVE yang immutable.')
   }
-  if (!period) notFound('Periode akademik')
+  if (!period || period.deletedAt) notFound('Periode akademik')
   if (!period.active) conflict('ACADEMIC_PERIOD_NOT_ACTIVE', 'Kelas LMS hanya dapat memakai periode akademik aktif.')
   const program = await masterById<AcademicProgramStudy>('academicProgramStudies', course.programStudyId, state.programs)
-  if (!program) notFound('Program studi mata kuliah')
+  if (!program || program.deletedAt) notFound('Program studi mata kuliah')
   if (!program.active) conflict('PROGRAM_STUDY_NOT_ACTIVE', 'Program studi mata kuliah tidak aktif.')
   return { course, period, program }
 }
@@ -522,4 +535,282 @@ export async function upsertAcademicCalendarEvent(context: AuthContext, value: u
   const futureWindow = { maxFutureMs: 10 * 365 * 86_400_000 }, startsAt = normalizeIsoInstant(body.startsAt, 'startsAt', futureWindow), endsAt = normalizeIsoInstant(body.endsAt, 'endsAt', futureWindow); if (startsAt >= endsAt) invalidInput('Waktu selesai kalender harus setelah waktu mulai.'); const description = optionalString(body.description, 'description', 2_000), expectedVersion = requireInteger(body.expectedVersion, 'expectedVersion', 0), now = clock.toISOString(), normalized = { id, periodId, programStudyIds, title, category, startsAt, endsAt, description, expectedVersion }, namespace = `academic:master:calendar:${context.uid}:${key}`
   const result = await persistStableMaster({ collection: 'academicCalendarEvents', map: academicAdministrationState().calendar, id, expectedVersion, namespace, hash: requestHash(normalized), build: current => { optimistic(current, expectedVersion, 'Agenda akademik'); return { id, periodId, programStudyIds, title, category, startsAt, endsAt, ...(description ? { description } : {}), version: expectedVersion + 1, createdAt: current?.createdAt || now, createdBy: current?.createdBy || context.uid } } })
   if (result.replayed) return result; const audit = await appendAudit({ actor: context, action: 'ACADEMIC_CALENDAR_UPSERTED', resourceType: 'academic_calendar', resourceId: id, before: { version: expectedVersion }, after: { version: result.value.version, periodId, category, programStudyIds }, event }); return { ...result, auditId: audit.id }
+}
+
+
+export type AcademicMasterResource = 'program' | 'period' | 'course' | 'curriculum' | 'calendar'
+
+function parseMasterTrashInput(value: unknown): { resource: AcademicMasterResource; id: string } {
+  const body = requireRecord(value)
+  rejectUnknown(body, ['resource', 'id'])
+  const resource = requireString(body.resource, 'resource', { max: 20 }) as AcademicMasterResource
+  if (!['program', 'period', 'course', 'curriculum', 'calendar'].includes(resource)) {
+    invalidInput('Jenis master data akademik tidak valid.')
+  }
+  const id = safeId(body.id, 'id')
+  return { resource, id }
+}
+
+export async function deleteAcademicMaster(
+  context: AuthContext,
+  value: unknown,
+  event?: H3Event,
+  clock = new Date(),
+): Promise<{ resource: AcademicMasterResource; id: string; deletedAt: string; auditId: string }> {
+  const { resource, id } = parseMasterTrashInput(value)
+  const now = clock.toISOString()
+
+  if (resource === 'program') {
+    requireMasterStaff(context, id)
+    if (dataMode() === 'mock') {
+      const current = academicAdministrationState().programs.get(id)
+      if (!current) notFound('Program studi')
+      if (current.deletedAt) conflict('ALREADY_DELETED', 'Program studi sudah berada di daftar terhapus.')
+      academicAdministrationState().programs.set(id, { ...current, previousActive: current.active, active: false, deletedAt: now, deletedBy: context.uid, version: current.version + 1 })
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const ref = db.collection('academicProgramStudies').doc(id)
+      await db.runTransaction(async transaction => {
+        const snap = await transaction.get(ref); if (!snap.exists) notFound('Program studi')
+        const current = { id: snap.id, ...snap.data() } as AcademicProgramStudy
+        if (current.deletedAt) conflict('ALREADY_DELETED', 'Program studi sudah berada di daftar terhapus.')
+        transaction.set(ref, { ...current, previousActive: current.active, active: false, deletedAt: now, deletedBy: context.uid, version: current.version + 1 })
+      })
+    }
+  } else if (resource === 'period') {
+    requireMasterStaff(context)
+    if (dataMode() === 'mock') {
+      const current = academicAdministrationState().periods.get(id)
+      if (!current) notFound('Periode akademik')
+      if (current.deletedAt) conflict('ALREADY_DELETED', 'Periode akademik sudah berada di daftar terhapus.')
+      const next: AcademicPeriodDefinition = { ...current, previousActive: current.active, previousKrsStatus: current.krsStatus, active: false, krsStatus: 'CLOSED', deletedAt: now, deletedBy: context.uid, version: current.version + 1 }
+      academicAdministrationState().periods.set(id, next)
+      krsModuleState().periods.set(id, { id, status: 'CLOSED', krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const defRef = db.collection('academicPeriodDefinitions').doc(id)
+      const policyRef = db.collection('academicPeriods').doc(id)
+      await db.runTransaction(async transaction => {
+        const snap = await transaction.get(defRef); if (!snap.exists) notFound('Periode akademik')
+        const current = { id: snap.id, ...snap.data() } as AcademicPeriodDefinition
+        if (current.deletedAt) conflict('ALREADY_DELETED', 'Periode akademik sudah berada di daftar terhapus.')
+        const next: AcademicPeriodDefinition = { ...current, previousActive: current.active, previousKrsStatus: current.krsStatus, active: false, krsStatus: 'CLOSED', deletedAt: now, deletedBy: context.uid, version: current.version + 1 }
+        transaction.set(defRef, next)
+        transaction.set(policyRef, { id, status: 'CLOSED', krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
+      })
+    }
+  } else if (resource === 'course') {
+    if (dataMode() === 'mock') {
+      const matches = [...academicAdministrationState().courses.values()].filter(item => item.courseId === id || item.id === id)
+      if (!matches.length) notFound('Mata kuliah')
+      requireMasterStaff(context, matches[0]!.programStudyId)
+      const activeMatches = matches.filter(item => !item.deletedAt)
+      if (!activeMatches.length) conflict('ALREADY_DELETED', 'Mata kuliah sudah berada di daftar terhapus.')
+      for (const item of activeMatches) {
+        academicAdministrationState().courses.set(item.id, { ...item, previousStatus: item.status, status: 'RETIRED', deletedAt: now, deletedBy: context.uid })
+      }
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const allCourses = await all<AcademicCourseVersion>('academicCourseVersions', () => [])
+      const targetCourseId = allCourses.find(item => item.id === id)?.courseId ?? id
+      const matches = allCourses.filter(item => item.courseId === targetCourseId)
+      if (!matches.length) notFound('Mata kuliah')
+      requireMasterStaff(context, matches[0]!.programStudyId)
+      const activeMatches = matches.filter(item => !item.deletedAt)
+      if (!activeMatches.length) conflict('ALREADY_DELETED', 'Mata kuliah sudah berada di daftar terhapus.')
+      const batch = db.batch()
+      for (const item of activeMatches) {
+        batch.set(db.collection('academicCourseVersions').doc(item.id), { ...item, previousStatus: item.status, status: 'RETIRED', deletedAt: now, deletedBy: context.uid })
+      }
+      await batch.commit()
+    }
+  } else if (resource === 'curriculum') {
+    if (dataMode() === 'mock') {
+      const matches = [...academicAdministrationState().curricula.values()].filter(item => item.curriculumId === id || item.id === id)
+      if (!matches.length) notFound('Kurikulum')
+      requireMasterStaff(context, matches[0]!.programStudyId)
+      const activeMatches = matches.filter(item => !item.deletedAt)
+      if (!activeMatches.length) conflict('ALREADY_DELETED', 'Kurikulum sudah berada di daftar terhapus.')
+      for (const item of activeMatches) {
+        academicAdministrationState().curricula.set(item.id, { ...item, previousStatus: item.status, status: 'RETIRED', deletedAt: now, deletedBy: context.uid })
+      }
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const allCurricula = await all<CurriculumVersion>('academicCurriculumVersions', () => [])
+      const targetCurriculumId = allCurricula.find(item => item.id === id)?.curriculumId ?? id
+      const matches = allCurricula.filter(item => item.curriculumId === targetCurriculumId)
+      if (!matches.length) notFound('Kurikulum')
+      requireMasterStaff(context, matches[0]!.programStudyId)
+      const activeMatches = matches.filter(item => !item.deletedAt)
+      if (!activeMatches.length) conflict('ALREADY_DELETED', 'Kurikulum sudah berada di daftar terhapus.')
+      const batch = db.batch()
+      for (const item of activeMatches) {
+        batch.set(db.collection('academicCurriculumVersions').doc(item.id), { ...item, previousStatus: item.status, status: 'RETIRED', deletedAt: now, deletedBy: context.uid })
+      }
+      await batch.commit()
+    }
+  } else {
+    requireMasterStaff(context)
+    if (dataMode() === 'mock') {
+      const current = academicAdministrationState().calendar.get(id)
+      if (!current) notFound('Agenda kalender')
+      if (current.deletedAt) conflict('ALREADY_DELETED', 'Agenda kalender sudah berada di daftar terhapus.')
+      academicAdministrationState().calendar.set(id, { ...current, deletedAt: now, deletedBy: context.uid, version: current.version + 1 })
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const ref = db.collection('academicCalendarEvents').doc(id)
+      await db.runTransaction(async transaction => {
+        const snap = await transaction.get(ref); if (!snap.exists) notFound('Agenda kalender')
+        const current = { id: snap.id, ...snap.data() } as AcademicCalendarEvent
+        if (current.deletedAt) conflict('ALREADY_DELETED', 'Agenda kalender sudah berada di daftar terhapus.')
+        transaction.set(ref, { ...current, deletedAt: now, deletedBy: context.uid, version: current.version + 1 })
+      })
+    }
+  }
+
+  const audit = await appendAudit({
+    actor: context,
+    action: `ACADEMIC_MASTER_${resource.toUpperCase()}_DELETED`,
+    resourceType: `academic_${resource}`,
+    resourceId: id,
+    after: { deletedAt: now },
+    event,
+  })
+  return { resource, id, deletedAt: now, auditId: audit.id }
+}
+
+export async function restoreAcademicMaster(
+  context: AuthContext,
+  value: unknown,
+  event?: H3Event,
+): Promise<{ resource: AcademicMasterResource; id: string; auditId: string }> {
+  const { resource, id } = parseMasterTrashInput(value)
+
+  if (resource === 'program') {
+    requireMasterStaff(context, id)
+    if (dataMode() === 'mock') {
+      const current = academicAdministrationState().programs.get(id)
+      if (!current) notFound('Program studi')
+      if (!current.deletedAt) conflict('NOT_DELETED', 'Program studi tidak berada di daftar terhapus.')
+      const { deletedAt: _d, deletedBy: _b, previousActive, ...rest } = current
+      academicAdministrationState().programs.set(id, { ...rest, active: previousActive ?? true, version: current.version + 1 })
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const ref = db.collection('academicProgramStudies').doc(id)
+      await db.runTransaction(async transaction => {
+        const snap = await transaction.get(ref); if (!snap.exists) notFound('Program studi')
+        const current = { id: snap.id, ...snap.data() } as AcademicProgramStudy
+        if (!current.deletedAt) conflict('NOT_DELETED', 'Program studi tidak berada di daftar terhapus.')
+        const { deletedAt: _d, deletedBy: _b, previousActive, ...rest } = current
+        transaction.set(ref, { ...rest, active: previousActive ?? true, version: current.version + 1 })
+      })
+    }
+  } else if (resource === 'period') {
+    requireMasterStaff(context)
+    if (dataMode() === 'mock') {
+      const current = academicAdministrationState().periods.get(id)
+      if (!current) notFound('Periode akademik')
+      if (!current.deletedAt) conflict('NOT_DELETED', 'Periode akademik tidak berada di daftar terhapus.')
+      const { deletedAt: _d, deletedBy: _b, previousActive, previousKrsStatus, ...rest } = current
+      const next: AcademicPeriodDefinition = { ...rest, active: previousActive ?? true, krsStatus: previousKrsStatus ?? 'DRAFT', version: current.version + 1 }
+      academicAdministrationState().periods.set(id, next)
+      krsModuleState().periods.set(id, { id, status: next.krsStatus, krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const defRef = db.collection('academicPeriodDefinitions').doc(id)
+      const policyRef = db.collection('academicPeriods').doc(id)
+      await db.runTransaction(async transaction => {
+        const snap = await transaction.get(defRef); if (!snap.exists) notFound('Periode akademik')
+        const current = { id: snap.id, ...snap.data() } as AcademicPeriodDefinition
+        if (!current.deletedAt) conflict('NOT_DELETED', 'Periode akademik tidak berada di daftar terhapus.')
+        const { deletedAt: _d, deletedBy: _b, previousActive, previousKrsStatus, ...rest } = current
+        const next: AcademicPeriodDefinition = { ...rest, active: previousActive ?? true, krsStatus: previousKrsStatus ?? 'DRAFT', version: current.version + 1 }
+        transaction.set(defRef, next)
+        transaction.set(policyRef, { id, status: next.krsStatus, krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
+      })
+    }
+  } else if (resource === 'course') {
+    if (dataMode() === 'mock') {
+      const matches = [...academicAdministrationState().courses.values()].filter(item => item.courseId === id || item.id === id)
+      if (!matches.length) notFound('Mata kuliah')
+      requireMasterStaff(context, matches[0]!.programStudyId)
+      const deletedMatches = matches.filter(item => Boolean(item.deletedAt))
+      if (!deletedMatches.length) conflict('NOT_DELETED', 'Mata kuliah tidak berada di daftar terhapus.')
+      for (const item of deletedMatches) {
+        const { deletedAt: _d, deletedBy: _b, previousStatus, ...rest } = item
+        academicAdministrationState().courses.set(item.id, { ...rest, status: previousStatus ?? 'ACTIVE' })
+      }
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const allCourses = await all<AcademicCourseVersion>('academicCourseVersions', () => [])
+      const targetCourseId = allCourses.find(item => item.id === id)?.courseId ?? id
+      const matches = allCourses.filter(item => item.courseId === targetCourseId)
+      if (!matches.length) notFound('Mata kuliah')
+      requireMasterStaff(context, matches[0]!.programStudyId)
+      const deletedMatches = matches.filter(item => Boolean(item.deletedAt))
+      if (!deletedMatches.length) conflict('NOT_DELETED', 'Mata kuliah tidak berada di daftar terhapus.')
+      const batch = db.batch()
+      for (const item of deletedMatches) {
+        const { deletedAt: _d, deletedBy: _b, previousStatus, ...rest } = item
+        batch.set(db.collection('academicCourseVersions').doc(item.id), { ...rest, status: previousStatus ?? 'ACTIVE' })
+      }
+      await batch.commit()
+    }
+  } else if (resource === 'curriculum') {
+    if (dataMode() === 'mock') {
+      const matches = [...academicAdministrationState().curricula.values()].filter(item => item.curriculumId === id || item.id === id)
+      if (!matches.length) notFound('Kurikulum')
+      requireMasterStaff(context, matches[0]!.programStudyId)
+      const deletedMatches = matches.filter(item => Boolean(item.deletedAt))
+      if (!deletedMatches.length) conflict('NOT_DELETED', 'Kurikulum tidak berada di daftar terhapus.')
+      for (const item of deletedMatches) {
+        const { deletedAt: _d, deletedBy: _b, previousStatus, ...rest } = item
+        academicAdministrationState().curricula.set(item.id, { ...rest, status: previousStatus ?? 'ACTIVE' })
+      }
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const allCurricula = await all<CurriculumVersion>('academicCurriculumVersions', () => [])
+      const targetCurriculumId = allCurricula.find(item => item.id === id)?.curriculumId ?? id
+      const matches = allCurricula.filter(item => item.curriculumId === targetCurriculumId)
+      if (!matches.length) notFound('Kurikulum')
+      requireMasterStaff(context, matches[0]!.programStudyId)
+      const deletedMatches = matches.filter(item => Boolean(item.deletedAt))
+      if (!deletedMatches.length) conflict('NOT_DELETED', 'Kurikulum tidak berada di daftar terhapus.')
+      const batch = db.batch()
+      for (const item of deletedMatches) {
+        const { deletedAt: _d, deletedBy: _b, previousStatus, ...rest } = item
+        batch.set(db.collection('academicCurriculumVersions').doc(item.id), { ...rest, status: previousStatus ?? 'ACTIVE' })
+      }
+      await batch.commit()
+    }
+  } else {
+    requireMasterStaff(context)
+    if (dataMode() === 'mock') {
+      const current = academicAdministrationState().calendar.get(id)
+      if (!current) notFound('Agenda kalender')
+      if (!current.deletedAt) conflict('NOT_DELETED', 'Agenda kalender tidak berada di daftar terhapus.')
+      const { deletedAt: _d, deletedBy: _b, ...rest } = current
+      academicAdministrationState().calendar.set(id, { ...rest, version: current.version + 1 })
+    } else {
+      const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
+      const ref = db.collection('academicCalendarEvents').doc(id)
+      await db.runTransaction(async transaction => {
+        const snap = await transaction.get(ref); if (!snap.exists) notFound('Agenda kalender')
+        const current = { id: snap.id, ...snap.data() } as AcademicCalendarEvent
+        if (!current.deletedAt) conflict('NOT_DELETED', 'Agenda kalender tidak berada di daftar terhapus.')
+        const { deletedAt: _d, deletedBy: _b, ...rest } = current
+        transaction.set(ref, { ...rest, version: current.version + 1 })
+      })
+    }
+  }
+
+  const audit = await appendAudit({
+    actor: context,
+    action: `ACADEMIC_MASTER_${resource.toUpperCase()}_RESTORED`,
+    resourceType: `academic_${resource}`,
+    resourceId: id,
+    after: { restored: true },
+    event,
+  })
+  return { resource, id, auditId: audit.id }
 }

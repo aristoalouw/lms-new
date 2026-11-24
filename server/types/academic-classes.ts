@@ -47,6 +47,9 @@ export interface AcademicClassRecord {
   createdAt?: string
   createdBy?: string
   version?: number
+  deletedAt?: string
+  deletedBy?: string
+  previousStatus?: AcademicClassStatus
 }
 
 export interface ClassEnrollment {

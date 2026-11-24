@@ -38,6 +38,7 @@ const rosterSearch = ref('')
 const rosterStatusFilter = ref<'ALL' | 'ACTIVE' | 'WITHDRAWN'>('ALL')
 const pendingStatusItem = ref<ClassEnrollment | null>(null)
 const pendingStatusReason = ref('')
+const showDeleteClassModal = ref(false)
 
 const edit = reactive({
   courseName: '',
@@ -283,6 +284,31 @@ async function confirmStatusChange() {
   } catch (error) { errorMessage.value = messageFor(error) } finally { saving.value = false }
 }
 
+async function deleteThisClass() {
+  if (!detail.value) return
+  saving.value = true; errorMessage.value = ''; noticeMessage.value = ''
+  try {
+    await $api.post(`/academic/classes/${encodeURIComponent(classId.value)}/delete`, {
+      expectedVersion: detail.value.classRecord.version ?? 1,
+    })
+    showDeleteClassModal.value = false
+    noticeMessage.value = 'Kelas dipindahkan ke Sampah. Anda dapat memulihkannya kapan saja.'
+    await load()
+  } catch (error) { errorMessage.value = messageFor(error) } finally { saving.value = false }
+}
+
+async function restoreThisClass() {
+  if (!detail.value) return
+  saving.value = true; errorMessage.value = ''; noticeMessage.value = ''
+  try {
+    await $api.post(`/academic/classes/${encodeURIComponent(classId.value)}/restore`, {
+      expectedVersion: detail.value.classRecord.version ?? 1,
+    })
+    noticeMessage.value = 'Kelas berhasil dipulihkan.'
+    await load()
+  } catch (error) { errorMessage.value = messageFor(error) } finally { saving.value = false }
+}
+
 onMounted(load)
 </script>
 
@@ -297,6 +323,7 @@ onMounted(load)
     >
       <template #actions>
         <NuxtLink v-if="detail" class="btn btn-outline-primary" :to="`/pembelajaran/${detail.classRecord.id}`"><i class="uil uil-book-open me-1" />Buka ruang LMS</NuxtLink>
+        <NuxtLink v-if="detail" class="btn btn-outline-secondary" :to="`/akademik/kelas?classId=${detail.classRecord.id}`"><i class="uil uil-presentation-check me-1" />Pelaksanaan kelas</NuxtLink>
         <button class="btn btn-outline-secondary" type="button" :disabled="loading || exporting" @click="exportClassCsv">
           <span v-if="exporting" class="spinner-border spinner-border-sm me-2" aria-hidden="true" />
           <i v-else class="uil uil-file-download me-1" aria-hidden="true" />
@@ -311,6 +338,10 @@ onMounted(load)
     <div v-if="loading" class="loading-state" role="status"><span class="spinner-border" /> Memuat data kelas dan peserta…</div>
 
     <template v-else-if="detail">
+      <div v-if="detail.classRecord.deletedAt" class="alert alert-warning d-flex align-items-center justify-content-between flex-wrap gap-2" role="status">
+        <span><strong>Kelas ini berada di Sampah.</strong> Pulihkan untuk mengembalikannya ke daftar aktif, KRS, dan ruang belajar.</span>
+        <button class="btn btn-sm btn-primary" type="button" :disabled="saving" @click="restoreThisClass"><i class="uil uil-history me-1" />Pulihkan kelas</button>
+      </div>
       <section class="summary-strip">
         <div><small>Peserta aktif</small><strong>{{ activeEnrollmentCount }} / {{ detail.classRecord.capacity || '∞' }}</strong></div>
         <div><small>Masuk dari KRS</small><strong>{{ krsEnrollmentCount }} mahasiswa</strong></div>
@@ -445,6 +476,8 @@ onMounted(load)
           </div>
 
           <div class="span-2 form-actions">
+            <button v-if="!detail.classRecord.deletedAt" class="btn btn-outline-danger me-auto" type="button" :disabled="saving" @click="showDeleteClassModal = true"><i class="uil uil-trash-alt me-1" />Hapus kelas</button>
+            <button v-else class="btn btn-outline-primary me-auto" type="button" :disabled="saving" @click="restoreThisClass"><i class="uil uil-history me-1" />Pulihkan kelas</button>
             <button class="btn btn-outline-secondary" type="button" @click="syncEdit">Atur ulang</button>
             <button class="btn btn-primary" type="submit" :disabled="saving || !selectedLecturerIds.length">
               <span v-if="saving" class="spinner-border spinner-border-sm me-2" />Simpan perubahan kelas
@@ -469,6 +502,17 @@ onMounted(load)
             </button>
           </div>
         </form>
+      </div>
+      <div v-if="showDeleteClassModal" class="confirm-overlay" role="dialog" aria-modal="true" @click.self="showDeleteClassModal = false">
+        <div class="confirm-dialog">
+          <span class="section-kicker">Hapus kelas</span>
+          <h3>Pindahkan {{ detail.classRecord.courseCode }} ({{ detail.classRecord.section }}) ke Sampah?</h3>
+          <p class="field-help">Kelas akan disembunyikan dari daftar aktif, KRS, dan pelaksanaan kelas. Seluruh data peserta dan nilai tetap tersimpan sehingga kelas dapat dipulihkan kapan saja.</p>
+          <div class="form-actions mt-3">
+            <button class="btn btn-outline-secondary" type="button" :disabled="saving" @click="showDeleteClassModal = false">Batal</button>
+            <button class="btn btn-danger" type="button" :disabled="saving" @click="deleteThisClass"><span v-if="saving" class="spinner-border spinner-border-sm me-2" />Pindahkan ke Sampah</button>
+          </div>
+        </div>
       </div>
     </template>
   </div>

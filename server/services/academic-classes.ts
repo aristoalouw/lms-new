@@ -1012,8 +1012,11 @@ export async function createAcademicClass(
   if (dataMode() === 'mock') {
     const replay = mockReplay<{ classRecord: AcademicClassRecord; learningSpace: LearningSpace }>(namespace, hash)
     if (replay) return replay
-    if ([...state.classes.values()].some(existing => classKey(existing) === classKey(record))) {
-      conflict('ACADEMIC_CLASS_DUPLICATE', 'Kelas dengan periode, mata kuliah, dan section yang sama sudah ada.')
+    const duplicateClass = [...state.classes.values()].find(existing => classKey(existing) === classKey(record))
+    if (duplicateClass) {
+      conflict('ACADEMIC_CLASS_DUPLICATE', duplicateClass.deletedAt
+        ? `Kelas ${record.courseCode} (${record.section}) pada periode ini sudah ada di tab Sampah. Pulihkan dari tab Sampah atau gunakan section lain (mis. B).`
+        : 'Kelas dengan periode, mata kuliah, dan section yang sama sudah ada.')
     }
     state.classes.set(id, clone(record))
     state.rosters.set(id, new Map())
@@ -1070,7 +1073,10 @@ export async function createAcademicClass(
         }
       }
       if (existingKey.exists || existingClass.exists || existingSpace.exists) {
-        conflict('ACADEMIC_CLASS_DUPLICATE', 'Kelas dengan periode, mata kuliah, dan section yang sama sudah ada.')
+        const trashed = Boolean(existingClass.exists && existingClass.data()?.deletedAt)
+        conflict('ACADEMIC_CLASS_DUPLICATE', trashed
+          ? `Kelas ${record.courseCode} (${record.section}) pada periode ini sudah ada di tab Sampah. Pulihkan dari tab Sampah atau gunakan section lain (mis. B).`
+          : 'Kelas dengan periode, mata kuliah, dan section yang sama sudah ada.')
       }
       const response: AcademicWriteResult<{ classRecord: AcademicClassRecord; learningSpace: LearningSpace }> = {
         value: { classRecord: record, learningSpace }, replayed: false,

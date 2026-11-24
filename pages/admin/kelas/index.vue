@@ -66,6 +66,15 @@ const filteredClasses = computed(() => {
 
 const activeCount = computed(() => nonDeletedClasses.value.length)
 const totalEnrolled = computed(() => nonDeletedClasses.value.reduce((sum, item) => sum + (item.enrollmentCount ?? 0), 0))
+const inactivePrograms = computed(() => (catalog.value.allPrograms ?? []).filter(item => !item.active))
+const inactivePeriods = computed(() => (catalog.value.allPeriods ?? []).filter(item => !item.active))
+const trashedPeriods = computed(() => catalog.value.deleted?.periods ?? [])
+const trashedPrograms = computed(() => catalog.value.deleted?.programs ?? [])
+const coursesUnderInactivePrograms = computed(() => {
+  const inactiveIds = new Set(inactivePrograms.value.map(item => item.id))
+  return (catalog.value.allCourses ?? []).filter(item => item.status === 'ACTIVE' && inactiveIds.has(item.programStudyId))
+})
+const hasCreateBlockers = computed(() => !catalog.value.programs.length || !catalog.value.periods.length || !catalog.value.courses.length || !lecturers.value.length)
 
 const key = (purpose: string) => `${purpose}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const messageFor = (error: unknown) => {
@@ -112,13 +121,13 @@ async function load(reset = true) {
   try {
     const [classResponse, lecturerResponse, catalogResponse] = await Promise.all([
       $api.get<{ items: AcademicClassRecord[]; nextCursor?: string }>('/academic/classes', { params: { limit: 50, includeDeleted: 'true', ...(!reset && nextCursor.value ? { cursor: nextCursor.value } : {}) } }),
-      $api.get<AccountPage>('/accounts', { params: { role: 'lecturer', status: 'active', pageSize: 50 } }),
+      $api.get<AccountPage>('/accounts', { params: { role: 'lecturer', status: 'active', pageSize: 50 } }).catch(() => ({ data: { items: [] as AccountOption[] } })),
       $api.get<LmsAcademicCatalog>('/academic/classes/catalog', { params: { includeDeleted: 'true' } }),
     ])
     classes.value = reset ? classResponse.data.items : [...classes.value, ...classResponse.data.items]
     nextCursor.value = classResponse.data.nextCursor
-    lecturers.value = lecturerResponse.data.items
     catalog.value = catalogResponse.data
+    lecturers.value = lecturerResponse.data.items.length ? lecturerResponse.data.items : (catalogResponse.data.lecturers ?? [])
     if (!filteredCoursesForCreate.value.some(item => item.id === form.courseVersionId)) {
       form.courseVersionId = filteredCoursesForCreate.value[0]?.id || ''
     }
@@ -143,9 +152,10 @@ async function createClass() {
   noticeMessage.value = ''
   try {
     const selected = selectedLecturers.value.map(id => lecturers.value.find(item => item.id === id)).filter(Boolean) as AccountOption[]
+    const rawStart = form.firstMeetingStartsAt.length === 16 ? `${form.firstMeetingStartsAt}:00` : form.firstMeetingStartsAt
     await $api.post('/academic/classes', {
       ...form,
-      firstMeetingStartsAt: new Date(`${form.firstMeetingStartsAt}:00+07:00`).toISOString(),
+      firstMeetingStartsAt: new Date(`${rawStart}+07:00`).toISOString(),
       lecturerIds: selected.map(item => item.id),
       lecturerNames: selected.map(item => item.displayName),
     }, { headers: { 'Idempotency-Key': key('class-create') } })
@@ -193,6 +203,46 @@ async function confirmDeleteClass() {
     })
     pendingDeleteClass.value = null
     noticeMessage.value = `Kelas ${item.courseCode} (${item.section}) dipindahkan ke Sampah dan dapat dipulihkan sewaktu-waktu.`
+    await load()
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function quickActivateProgram(item: NonNullable<LmsAcademicCatalog['allPrograms']>[number]) {
+  saving.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post('/academic/classes/catalog/programs', {
+      id: item.id,
+      facultyId: item.facultyId,
+      code: item.code,
+      name: item.name,
+      level: item.level,
+      accreditationStatus: item.accreditationStatus,
+      accreditationExpiresAt: item.accreditationExpiresAt.slice(0, 10),
+      active: true,
+      expectedVersion: item.version,
+    }, { headers: { 'Idempotency-Key': key('quick-activate-program') } })
+    noticeMessage.value = `Program studi "${item.name}" berhasil diaktifkan dan siap digunakan untuk membuat kelas.`
+    await load()
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    saving.value = false
+  }
+}
+
+async function quickRestoreMaster(resource: 'program' | 'period', id: string, label: string) {
+  saving.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post('/academic/master/restore', { resource, id })
+    noticeMessage.value = `"${label}" berhasil dipulihkan dari Sampah.`
     await load()
   } catch (error) {
     errorMessage.value = messageFor(error)
@@ -289,8 +339,33 @@ onMounted(() => load())
           <button class="btn btn-sm btn-outline-secondary" type="button" @click="activePanel = 'catalog'"><i class="uil uil-sliders-v-alt me-1" />Kelola mata kuliah</button>
         </header>
 
-        <div v-if="!loading && (!catalog.courses.length || !catalog.periods.length)" class="alert alert-warning mb-3" role="alert">
-          Tambahkan minimal satu mata kuliah aktif dan periode akademik di tab <strong>Katalog prodi &amp; mata kuliah</strong> sebelum membuat kelas.
+        <div v-if="!loading && hasCreateBlockers" class="readiness-box mb-3" role="alert">
+          <strong>Persiapan sebelum membuat kelas</strong>
+          <ul class="readiness-list">
+            <li v-if="!catalog.programs.length">
+              <span v-if="inactivePrograms.length">Program studi <strong>{{ inactivePrograms[0]!.code }} · {{ inactivePrograms[0]!.name }}</strong> masih berstatus <em>Nonaktif</em>{{ coursesUnderInactivePrograms.length ? ` (menahan ${coursesUnderInactivePrograms.length} mata kuliah aktif)` : '' }}.</span>
+              <span v-else-if="trashedPrograms.length">Semua program studi berada di Sampah.</span>
+              <span v-else>Belum ada program studi aktif.</span>
+              <button v-if="inactivePrograms.length" class="btn btn-sm btn-primary" type="button" :disabled="saving" @click="quickActivateProgram(inactivePrograms[0]!)">Aktifkan sekarang</button>
+              <button v-else-if="trashedPrograms.length" class="btn btn-sm btn-primary" type="button" :disabled="saving" @click="quickRestoreMaster('program', trashedPrograms[0]!.id, `${trashedPrograms[0]!.code} · ${trashedPrograms[0]!.name}`)">Pulihkan {{ trashedPrograms[0]!.name }}</button>
+              <button v-else class="btn btn-sm btn-outline-primary" type="button" @click="activePanel = 'catalog'">Tambah prodi</button>
+            </li>
+            <li v-if="!catalog.periods.length">
+              <span v-if="trashedPeriods.length">Belum ada periode aktif — <strong>{{ trashedPeriods[0]!.academicYear }} · {{ termLabel(trashedPeriods[0]!.term) }}</strong> ada di Sampah.</span>
+              <span v-else-if="inactivePeriods.length">Periode <strong>{{ inactivePeriods[0]!.academicYear }} · {{ termLabel(inactivePeriods[0]!.term) }}</strong> masih Nonaktif.</span>
+              <span v-else>Belum ada periode akademik aktif.</span>
+              <button v-if="trashedPeriods.length" class="btn btn-sm btn-primary" type="button" :disabled="saving" @click="quickRestoreMaster('period', trashedPeriods[0]!.id, `${trashedPeriods[0]!.academicYear} · ${termLabel(trashedPeriods[0]!.term)}`)">Pulihkan periode</button>
+              <button v-else class="btn btn-sm btn-outline-primary" type="button" @click="activePanel = 'catalog'">Kelola periode</button>
+            </li>
+            <li v-if="catalog.programs.length && !catalog.courses.length">
+              <span>Belum ada mata kuliah aktif pada program studi aktif.</span>
+              <button class="btn btn-sm btn-outline-primary" type="button" @click="activePanel = 'catalog'">Tambah mata kuliah</button>
+            </li>
+            <li v-if="!lecturers.length">
+              <span>Belum ada akun dosen pengampu aktif.</span>
+              <NuxtLink class="btn btn-sm btn-outline-primary" to="/admin/pengguna">Buka Pengguna &amp; akses</NuxtLink>
+            </li>
+          </ul>
         </div>
 
         <form class="class-form" @submit.prevent="createClass">
@@ -470,6 +545,10 @@ onMounted(() => load())
 .confirm-dialog h3{margin:.2rem 0 .45rem;color:#1e1e1e;font-size:1.02rem}
 .confirm-copy{margin:0;color:#4e5462;font-size:.76rem;line-height:1.55}
 .loading-state{display:flex;gap:.5rem;align-items:center;min-height:140px;justify-content:center;color:#6c6865}
+.readiness-box{display:grid;gap:.6rem;padding:.9rem 1rem;border:1px solid #e7d4b5;border-radius:.85rem;background:#fdf8ef;color:#5c3f18;font-size:.76rem}
+.readiness-box>strong{font-size:.8rem;color:#3d280d}
+.readiness-list{display:grid;gap:.5rem;margin:0;padding:0;list-style:none}
+.readiness-list li{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;padding:.55rem .7rem;border:1px solid #efe0c6;border-radius:.65rem;background:#fff}
 @media(max-width:991.98px){.class-item{flex-direction:column;align-items:stretch}.class-item__side{align-items:flex-start}.class-actions{justify-content:flex-start}}
 @media(max-width:640px){.class-form,.inline-two,.catalog-summary{grid-template-columns:1fr}.span-2{grid-column:auto}.filter-bar{width:100%}.filter-bar input,.filter-bar select{width:100%;min-width:0}}
 </style>

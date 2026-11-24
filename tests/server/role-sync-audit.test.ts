@@ -165,4 +165,44 @@ describe('audit regressions: catalog sync, campus-wide multi-role scope, and del
     const afterCatalog = await listKrsCatalog(student, period.id)
     expect(afterCatalog.classes.some(entry => entry.classRecord.id === target!.id)).toBe(false)
   })
+  it('returns active lecturers in catalog for pure academic_staff and explains Sampah conflicts clearly', async () => {
+    const pureAcademic = authContext('acad-only', ['academic_staff'], ['management-s1'])
+    const catalog = await listLmsAcademicCatalog(pureAcademic, true)
+    expect(Array.isArray(catalog.lecturers)).toBe(true)
+
+    const adminStaff = authContext('admin-001', ['administrator', 'academic_staff'], [])
+    await upsertAcademicPeriod(adminStaff, {
+      id: '2029-2030-1',
+      academicYear: '2029/2030',
+      term: 'ODD',
+      startsAt: '2029-08-01T00:00:00.000Z',
+      endsAt: '2030-01-31T23:59:59.000Z',
+      krsOpensAt: '2029-07-01T00:00:00.000Z',
+      krsClosesAt: '2029-08-15T23:59:59.000Z',
+      krsRevisionClosesAt: '2029-08-31T23:59:59.000Z',
+      krsStatus: 'KRS_OPEN',
+      active: true,
+      expectedVersion: 0,
+    }, 'trash-conflict-period-0001')
+    await deleteAcademicMaster(adminStaff, { resource: 'period', id: '2029-2030-1' })
+
+    await expect(upsertAcademicPeriod(adminStaff, {
+      id: '2029-2030-1',
+      academicYear: '2029/2030',
+      term: 'ODD',
+      startsAt: '2029-08-01T00:00:00.000Z',
+      endsAt: '2030-01-31T23:59:59.000Z',
+      krsOpensAt: '2029-07-01T00:00:00.000Z',
+      krsClosesAt: '2029-08-15T23:59:59.000Z',
+      krsRevisionClosesAt: '2029-08-31T23:59:59.000Z',
+      krsStatus: 'KRS_OPEN',
+      active: true,
+      expectedVersion: 0,
+    }, 'trash-conflict-period-0002')).rejects.toMatchObject({
+      statusCode: 409,
+      code: 'VERSION_CONFLICT',
+      message: expect.stringContaining('Sampah'),
+    })
+  })
+
 })

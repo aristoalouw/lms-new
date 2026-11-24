@@ -22,6 +22,7 @@ const editingCourseId = ref('')
 const editingPeriodId = ref('')
 const manualProgramId = ref(false)
 const manualCourseId = ref(false)
+const manualPeriodId = ref(false)
 const showTrash = ref(false)
 const pendingDelete = ref<{ resource: 'program' | 'period' | 'course'; id: string; label: string } | null>(null)
 
@@ -64,20 +65,52 @@ const course = reactive({
   equivalentCourseCodes: [] as string[],
 })
 
-const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const deletedPrograms = computed(() => props.catalog.deleted?.programs ?? [])
+const deletedPeriods = computed(() => props.catalog.deleted?.periods ?? [])
+const deletedCourses = computed(() => props.catalog.deleted?.courses ?? [])
 
-watch([() => program.code, () => program.level], () => {
+const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const sanitizeCode = (value: string, max: number) => value.trim().toUpperCase().replace(/[^A-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max)
+const uniqueId = (base: string, taken: Set<string>) => {
+  if (!base || !taken.has(base)) return base
+  let suffix = 2
+  while (taken.has(`${base}-${suffix}`)) suffix += 1
+  return `${base}-${suffix}`
+}
+const allProgramIds = computed(() => new Set([...managedPrograms.value, ...deletedPrograms.value].map(item => item.id)))
+const allPeriodIds = computed(() => new Set([...managedPeriods.value, ...deletedPeriods.value].map(item => item.id)))
+const allCourseIds = computed(() => new Set([...managedCourses.value, ...deletedCourses.value].map(item => item.courseId)))
+
+const suggestedPeriodId = (academicYear: string, term: 'ODD' | 'EVEN' | 'SHORT') => {
+  const years = academicYear.replace('/', '-').replace(/[^0-9-]/g, '')
+  const termNum = term === 'ODD' ? '1' : term === 'EVEN' ? '2' : '3'
+  return years ? `${years}-${termNum}` : ''
+}
+
+watch([() => program.code, () => program.name, () => program.level], () => {
   if (!editingProgramId.value && !manualProgramId.value) {
-    const base = slugify(program.code)
-    program.id = base ? `${base}-${program.level.toLowerCase()}` : ''
+    const base = slugify(program.code || program.name)
+    program.id = base ? uniqueId(`${base}-${program.level.toLowerCase()}`, allProgramIds.value) : ''
   }
 })
-watch(() => course.code, () => {
+watch([() => course.code, () => course.name], () => {
   if (!editingCourseId.value && !manualCourseId.value) {
-    const base = slugify(course.code)
-    course.courseId = base ? `course-${base}` : ''
+    const base = slugify(course.code || course.name)
+    course.courseId = base ? uniqueId(`course-${base}`, allCourseIds.value) : ''
   }
 })
+watch([() => period.academicYear, () => period.term], () => {
+  if (!editingPeriodId.value && !manualPeriodId.value) {
+    const base = suggestedPeriodId(period.academicYear, period.term)
+    if (base) period.id = uniqueId(base, allPeriodIds.value)
+  }
+})
+watch(allPeriodIds, () => {
+  if (!editingPeriodId.value && !manualPeriodId.value) {
+    const base = suggestedPeriodId(period.academicYear, period.term)
+    if (base && allPeriodIds.value.has(period.id)) period.id = uniqueId(base, allPeriodIds.value)
+  }
+}, { immediate: true })
 watch(managedPrograms, (programs) => {
   if (!course.programStudyId && programs.length) {
     course.programStudyId = programs.find(item => item.active)?.id || programs[0]!.id
@@ -85,18 +118,26 @@ watch(managedPrograms, (programs) => {
   if (!editingProgramId.value && !program.facultyId) program.facultyId = defaultFaculty.value
 }, { immediate: true })
 
-const latestCourseVersion = computed(() => Math.max(
-  0,
-  ...[...props.catalog.courses, ...managedCourses.value]
-    .filter(item => item.courseId === course.courseId.trim())
-    .map(item => item.version),
-))
-const existingPeriodVersion = computed(() => managedPeriods.value.find(item => item.id === period.id.trim())?.version ?? 0)
-const existingProgramVersion = computed(() => managedPrograms.value.find(item => item.id === program.id.trim())?.version ?? 0)
+const selectedCourseProgram = computed(() => managedPrograms.value.find(item => item.id === course.programStudyId))
+const trashedProgramConflict = computed(() => !editingProgramId.value ? deletedPrograms.value.find(item => item.id === program.id.trim()) : undefined)
+const trashedPeriodConflict = computed(() => !editingPeriodId.value ? deletedPeriods.value.find(item => item.id === period.id.trim()) : undefined)
+const trashedCourseConflict = computed(() => !editingCourseId.value ? deletedCourses.value.find(item => item.courseId === course.courseId.trim()) : undefined)
 
-const deletedPrograms = computed(() => props.catalog.deleted?.programs ?? [])
-const deletedPeriods = computed(() => props.catalog.deleted?.periods ?? [])
-const deletedCourses = computed(() => props.catalog.deleted?.courses ?? [])
+const latestCourseVersion = computed(() => {
+  if (!editingCourseId.value) return 0
+  return Math.max(
+    0,
+    ...[...props.catalog.courses, ...managedCourses.value]
+      .filter(item => item.courseId === editingCourseId.value)
+      .map(item => item.version),
+  )
+})
+const existingPeriodVersion = computed(() => (
+  editingPeriodId.value ? (managedPeriods.value.find(item => item.id === editingPeriodId.value)?.version ?? 0) : 0
+))
+const existingProgramVersion = computed(() => (
+  editingProgramId.value ? (managedPrograms.value.find(item => item.id === editingProgramId.value)?.version ?? 0) : 0
+))
 const currentTrashCount = computed(() => (
   subTab.value === 'course' ? deletedCourses.value.length : subTab.value === 'program' ? deletedPrograms.value.length : deletedPeriods.value.length
 ))
@@ -177,8 +218,10 @@ function editCourse(item: AcademicCourseVersion) {
 
 function resetPeriod() {
   editingPeriodId.value = ''
+  manualPeriodId.value = false
+  const nextId = uniqueId(`${year}-${year + 1}-1`, allPeriodIds.value)
   Object.assign(period, {
-    id: `${year}-${year + 1}-1`,
+    id: nextId,
     academicYear: `${year}/${year + 1}`,
     term: 'ODD',
     startsAt: `${year}-08-01`,
@@ -194,6 +237,7 @@ function resetPeriod() {
 function editPeriod(item: AcademicPeriodDefinition) {
   subTab.value = 'period'
   editingPeriodId.value = item.id
+  manualPeriodId.value = true
   Object.assign(period, {
     id: item.id,
     academicYear: item.academicYear,
@@ -245,7 +289,7 @@ async function saveProgram() {
     await $api.post('/academic/classes/catalog/programs', {
       id: program.id.trim(),
       facultyId: program.facultyId.trim(),
-      code: program.code.trim().toUpperCase(),
+      code: sanitizeCode(program.code, 20),
       name: program.name.trim(),
       level: program.level,
       accreditationStatus: program.accreditationStatus.trim(),
@@ -281,6 +325,64 @@ async function confirmDeleteCatalogItem() {
   }
 }
 
+async function toggleProgramActive(item: AcademicProgramStudy) {
+  busy.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    await $api.post('/academic/classes/catalog/programs', {
+      id: item.id,
+      facultyId: item.facultyId,
+      code: item.code,
+      name: item.name,
+      level: item.level,
+      accreditationStatus: item.accreditationStatus,
+      accreditationExpiresAt: item.accreditationExpiresAt.slice(0, 10),
+      active: !item.active,
+      expectedVersion: item.version,
+    }, { headers: { 'Idempotency-Key': requestKey('catalog-program-toggle') } })
+    noticeMessage.value = !item.active
+      ? `Program studi "${item.name}" berhasil diaktifkan.`
+      : `Program studi "${item.name}" dinonaktifkan.`
+    emit('created')
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    busy.value = false
+  }
+}
+
+async function togglePeriodActive(item: AcademicPeriodDefinition) {
+  busy.value = true
+  errorMessage.value = ''
+  noticeMessage.value = ''
+  try {
+    const nextActive = !item.active
+    const nextKrsStatus = nextActive ? (item.krsStatus === 'CLOSED' ? 'KRS_OPEN' : item.krsStatus) : (item.krsStatus === 'KRS_OPEN' ? 'KRS_CLOSED' : item.krsStatus)
+    await $api.post('/academic/classes/catalog/periods', {
+      id: item.id,
+      academicYear: item.academicYear,
+      term: item.term,
+      startsAt: item.startsAt,
+      endsAt: item.endsAt,
+      krsOpensAt: item.krsOpensAt,
+      krsClosesAt: item.krsClosesAt,
+      krsRevisionClosesAt: item.krsRevisionClosesAt || item.endsAt,
+      krsStatus: nextKrsStatus,
+      active: nextActive,
+      expectedVersion: item.version,
+    }, { headers: { 'Idempotency-Key': requestKey('catalog-period-toggle') } })
+    noticeMessage.value = nextActive
+      ? `Periode "${item.academicYear} · ${termLabel(item.term)}" berhasil diaktifkan.`
+      : `Periode "${item.academicYear} · ${termLabel(item.term)}" dinonaktifkan.`
+    emit('created')
+  } catch (error) {
+    errorMessage.value = messageFor(error)
+  } finally {
+    busy.value = false
+  }
+}
+
 async function restoreCatalogItem(resource: 'program' | 'period' | 'course', id: string, label: string) {
   busy.value = true
   errorMessage.value = ''
@@ -303,7 +405,7 @@ async function saveCourse() {
   try {
     await $api.post('/academic/classes/catalog/courses', {
       courseId: course.courseId.trim(),
-      code: course.code.trim().toUpperCase(),
+      code: sanitizeCode(course.code, 30),
       name: course.name.trim(),
       programStudyId: course.programStudyId,
       credits: course.credits,
@@ -362,6 +464,14 @@ async function saveCourse() {
               <span>Kode referensi sistem</span>
               <input v-model="course.courseId" class="form-control" maxlength="128" placeholder="Otomatis dari kode mata kuliah" :readonly="Boolean(editingCourseId)" required @input="manualCourseId = true">
             </label>
+            <div v-if="selectedCourseProgram && !selectedCourseProgram.active" class="inline-hint wide">
+              <span>Program studi <strong>{{ selectedCourseProgram.name }}</strong> masih Nonaktif, sehingga mata kuliah ini belum bisa dipilih di pembuatan kelas.</span>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="toggleProgramActive(selectedCourseProgram)">Aktifkan prodi</button>
+            </div>
+            <div v-if="trashedCourseConflict" class="inline-hint wide">
+              <span>ID <strong>{{ trashedCourseConflict.courseId }}</strong> ada di Sampah.</span>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="restoreCatalogItem('course', trashedCourseConflict.courseId, `${trashedCourseConflict.code} · ${trashedCourseConflict.name}`)">Pulihkan</button>
+            </div>
             <button class="btn btn-primary wide" type="submit" :disabled="busy || !managedPrograms.length">
               <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
               {{ editingCourseId ? 'Simpan perubahan mata kuliah' : 'Simpan mata kuliah baru' }}
@@ -383,6 +493,10 @@ async function saveCourse() {
             <label><span>Unit / Fakultas</span><input v-model="program.facultyId" class="form-control" maxlength="128" placeholder="stt-saint-paul" required></label>
             <label><span>ID program studi</span><input v-model="program.id" class="form-control" maxlength="128" placeholder="teologi-s1" :readonly="Boolean(editingProgramId)" required @input="manualProgramId = true"></label>
             <label class="check-row wide"><input v-model="program.active" class="form-check-input" type="checkbox"><span>Program studi aktif (tersedia untuk kelas &amp; KRS)</span></label>
+            <div v-if="trashedProgramConflict" class="inline-hint wide">
+              <span>ID <strong>{{ trashedProgramConflict.id }}</strong> ada di Sampah.</span>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="restoreCatalogItem('program', trashedProgramConflict.id, `${trashedProgramConflict.code} · ${trashedProgramConflict.name}`)">Pulihkan</button>
+            </div>
             <button class="btn btn-primary wide" type="submit" :disabled="busy">
               <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
               {{ editingProgramId ? 'Simpan perubahan prodi' : 'Simpan program studi' }}
@@ -398,7 +512,7 @@ async function saveCourse() {
           <form class="catalog-form" @submit.prevent="savePeriod">
             <label><span>Tahun akademik</span><input v-model="period.academicYear" class="form-control" pattern="\d{4}[/-]\d{4}" placeholder="2026/2027" required></label>
             <label><span>Semester</span><select v-model="period.term" class="form-select"><option value="ODD">Gasal</option><option value="EVEN">Genap</option><option value="SHORT">Pendek</option></select></label>
-            <label><span>ID periode</span><input v-model="period.id" class="form-control" maxlength="128" :readonly="Boolean(editingPeriodId)" required></label>
+            <label><span>ID periode</span><input v-model="period.id" class="form-control" maxlength="128" :readonly="Boolean(editingPeriodId)" required @input="manualPeriodId = true"></label>
             <label><span>Status pengisian KRS</span><select v-model="period.krsStatus" class="form-select"><option value="DRAFT">Draf</option><option value="KRS_OPEN">KRS dibuka</option><option value="KRS_CLOSED">Pengisian ditutup</option><option value="CLOSED">Periode selesai</option></select></label>
             <label><span>Mulai kuliah</span><input v-model="period.startsAt" class="form-control" type="date" required></label>
             <label><span>Akhir kuliah</span><input v-model="period.endsAt" class="form-control" type="date" required></label>
@@ -406,6 +520,10 @@ async function saveCourse() {
             <label><span>KRS ditutup</span><input v-model="period.krsClosesAt" class="form-control" type="date" required></label>
             <label class="wide"><span>Batas revisi KRS</span><input v-model="period.krsRevisionClosesAt" class="form-control" type="date" required></label>
             <label class="check-row wide"><input v-model="period.active" class="form-check-input" type="checkbox"><span>Periode aktif (tersedia untuk kelas &amp; KRS)</span></label>
+            <div v-if="trashedPeriodConflict" class="inline-hint wide">
+              <span>Periode <strong>{{ trashedPeriodConflict.id }}</strong> ada di Sampah.</span>
+              <button class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="restoreCatalogItem('period', trashedPeriodConflict.id, `${trashedPeriodConflict.academicYear} · ${termLabel(trashedPeriodConflict.term)}`)">Pulihkan</button>
+            </div>
             <button class="btn btn-primary wide" type="submit" :disabled="busy">
               <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
               {{ editingPeriodId ? 'Simpan perubahan periode' : 'Simpan periode akademik' }}
@@ -467,6 +585,7 @@ async function saveCourse() {
                 <small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }}</small>
               </div>
               <div class="row-actions">
+                <button v-if="!item.active" class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="toggleProgramActive(item)">Aktifkan</button>
                 <button class="btn btn-sm btn-outline-primary" type="button" @click="editProgram(item)">Sunting</button>
                 <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy" @click="pendingDelete = { resource: 'program', id: item.id, label: `${item.code} · ${item.name}` }">Hapus</button>
               </div>
@@ -480,6 +599,7 @@ async function saveCourse() {
                 <small>{{ krsStatusLabel(item.krsStatus) }} · {{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small>
               </div>
               <div class="row-actions">
+                <button v-if="!item.active" class="btn btn-sm btn-primary" type="button" :disabled="busy" @click="togglePeriodActive(item)">Aktifkan</button>
                 <button class="btn btn-sm btn-outline-primary" type="button" @click="editPeriod(item)">Sunting</button>
                 <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy" @click="pendingDelete = { resource: 'period', id: item.id, label: `${item.academicYear} · ${termLabel(item.term)}` }">Hapus</button>
               </div>
@@ -539,6 +659,7 @@ async function saveCourse() {
 .state-pill--inactive{background:#f3ece2;color:#7a5628}
 .check-row{display:flex;align-items:center;gap:.45rem;cursor:pointer}
 .check-row>span{margin:0!important;font-weight:600!important;color:#1e1e1e!important}
+.inline-hint{display:flex;align-items:center;justify-content:space-between;gap:.65rem;padding:.6rem .75rem;border:1px solid #e7d4b5;border-radius:.65rem;background:#fdf8ef;color:#6c4b1e;font-size:.72rem}
 .confirm-overlay{position:fixed;inset:0;z-index:1080;display:grid;place-items:center;padding:1rem;background:rgba(30,20,34,.55);backdrop-filter:blur(4px)}
 .confirm-dialog{width:min(100%,440px);padding:1.25rem;border-radius:1rem;background:#fff;box-shadow:0 24px 70px rgba(30,20,34,.28)}
 .confirm-dialog h3{margin:.2rem 0 .4rem;color:#1e1e1e;font-size:.98rem}

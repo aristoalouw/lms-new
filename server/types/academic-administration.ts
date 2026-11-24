@@ -60,6 +60,7 @@ export interface LmsAcademicCatalog {
   allPrograms?: AcademicProgramStudy[]
   allPeriods?: AcademicPeriodDefinition[]
   allCourses?: AcademicCourseVersion[]
+  lecturers?: Array<{ id: string; displayName: string; roles: string[] }>
   deleted?: {
     programs: AcademicProgramStudy[]
     periods: AcademicPeriodDefinition[]

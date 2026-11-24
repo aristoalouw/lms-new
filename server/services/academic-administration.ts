@@ -31,6 +31,7 @@ import { hasProgramAccess, hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { normalizeIsoInstant, optionalString, requireInteger, requireRecord, requireString } from '../utils/validation'
 import { academicAdministrationState, resetAcademicAdministrationStateForTests } from './academic-administration-state'
+import { accountRuntimeForTests } from './accounts'
 import { getPrivateFileDetail } from './files'
 import { krsModuleState } from './krs-state'
 import { validateSafeRichContent } from './learning-validation'
@@ -100,6 +101,21 @@ export async function listLmsAcademicCatalog(context: AuthContext, includeDelete
       periods: periods.filter(item => Boolean(item.deletedAt)).sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || '')),
       courses: [...deletedCourseMap.values()].sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || '')),
     }
+    if (dataMode() === 'mock') {
+      result.lecturers = accountRuntimeForTests().accounts
+        .filter(account => account.status === 'active' && account.roles.includes('lecturer'))
+        .map(account => ({ id: account.id, displayName: account.displayName, roles: [...account.roles] }))
+        .sort((left, right) => left.displayName.localeCompare(right.displayName, 'id'))
+    } else {
+      const db = firestoreAdmin()
+      if (db) {
+        const snapshot = await db.collection('accounts').where('status', '==', 'active').limit(200).get()
+        result.lecturers = snapshot.docs
+          .map(doc => ({ id: doc.id, displayName: String(doc.data().displayName || doc.id), roles: Array.isArray(doc.data().roles) ? doc.data().roles.map(String) : [] }))
+          .filter(account => account.roles.includes('lecturer'))
+          .sort((left, right) => left.displayName.localeCompare(right.displayName, 'id'))
+      }
+    }
   }
   return result
 }
@@ -128,10 +144,10 @@ export async function resolveLmsClassCatalogSelection(
     conflict('COURSE_VERSION_NOT_ACTIVE', 'Kelas LMS hanya dapat memakai versi mata kuliah ACTIVE yang immutable.')
   }
   if (!period || period.deletedAt) notFound('Periode akademik')
-  if (!period.active) conflict('ACADEMIC_PERIOD_NOT_ACTIVE', 'Kelas LMS hanya dapat memakai periode akademik aktif.')
+  if (!period.active) conflict('ACADEMIC_PERIOD_NOT_ACTIVE', 'Periode akademik masih berstatus Nonaktif. Aktifkan periode terlebih dahulu di tab Katalog.')
   const program = await masterById<AcademicProgramStudy>('academicProgramStudies', course.programStudyId, state.programs)
   if (!program || program.deletedAt) notFound('Program studi mata kuliah')
-  if (!program.active) conflict('PROGRAM_STUDY_NOT_ACTIVE', 'Program studi mata kuliah tidak aktif.')
+  if (!program.active) conflict('PROGRAM_STUDY_NOT_ACTIVE', 'Program studi mata kuliah masih berstatus Nonaktif. Aktifkan program studi terlebih dahulu di tab Katalog.')
   return { course, period, program }
 }
 
@@ -444,8 +460,16 @@ function cleanMasterList(value: unknown, label: string, max: number): string[] {
   if (!Array.isArray(value) || value.length > max) invalidInput(`${label} tidak valid.`)
   return [...new Set(value.map((item, index) => safeId(item, `${label}[${index}]`)))]
 }
-function optimistic<T extends { version: number }>(current: T | undefined, expectedVersion: number, label: string): void {
-  const currentVersion = current?.version || 0; if (currentVersion !== expectedVersion) conflict('VERSION_CONFLICT', `${label} telah berubah.`, { currentVersion })
+function optimistic<T extends { id?: string; version: number; deletedAt?: string }>(current: T | undefined, expectedVersion: number, label: string): void {
+  const currentVersion = current?.version || 0
+  if (currentVersion === expectedVersion) return
+  if (expectedVersion === 0 && current) {
+    if (current.deletedAt) {
+      conflict('VERSION_CONFLICT', `${label} dengan ID "${current.id || ''}" sudah ada di tab Sampah. Pulihkan dari Sampah atau gunakan ID lain.`, { currentVersion, inTrash: true })
+    }
+    conflict('VERSION_CONFLICT', `${label} dengan ID "${current.id || ''}" sudah ada. Klik Sunting pada daftar untuk mengubahnya atau gunakan ID lain.`, { currentVersion })
+  }
+  conflict('VERSION_CONFLICT', `${label} telah berubah.`, { currentVersion })
 }
 
 export async function upsertAcademicProgram(context: AuthContext, value: unknown, key: string, event?: H3Event, _clock = new Date()): Promise<{ value: AcademicProgramStudy; replayed: boolean; auditId?: string }> {
@@ -492,8 +516,8 @@ export async function createAcademicCourseVersion(context: AuthContext, value: u
   const courseId = safeId(body.courseId, 'courseId'), code = requireString(body.code, 'code', { max: 30, pattern: /^[A-Z0-9._-]+$/ }), name = requireString(body.name, 'name', { min: 3, max: 180 }), programStudyId = safeId(body.programStudyId, 'programStudyId'), credits = requireInteger(body.credits, 'credits', 1, 12), semesterRecommendation = requireInteger(body.semesterRecommendation, 'semesterRecommendation', 1, 14), prerequisiteCourseCodes = cleanMasterList(body.prerequisiteCourseCodes, 'prerequisiteCourseCodes', 20), equivalentCourseCodes = cleanMasterList(body.equivalentCourseCodes, 'equivalentCourseCodes', 20), status = requireString(body.status, 'status', { max: 20 }) as AcademicCourseVersion['status']; if (!['DRAFT', 'ACTIVE', 'RETIRED'].includes(status)) invalidInput('Status versi mata kuliah tidak valid.')
   requireMasterStaff(context, programStudyId); const expectedCurrentVersion = requireInteger(body.expectedCurrentVersion, 'expectedCurrentVersion', 0), normalized = { courseId, code, name, programStudyId, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, expectedCurrentVersion }, hash = requestHash(normalized), namespace = `academic:master:course:${context.uid}:${key}`, now = clock.toISOString()
   let result: { value: AcademicCourseVersion; replayed: boolean }
-  if (dataMode() === 'mock') { const state = academicAdministrationState(), prior = state.idempotency.get(namespace); if (prior) { if (prior.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk versi mata kuliah berbeda.'); return { value: clone(prior.response as AcademicCourseVersion), replayed: true } }; const current = Math.max(0, ...[...state.courses.values()].filter(item => item.courseId === courseId).map(item => item.version)); if (current !== expectedCurrentVersion) conflict('VERSION_CONFLICT', 'Versi mata kuliah telah berubah.', { currentVersion: current }); const version = current + 1, record: AcademicCourseVersion = { id: `${courseId}_v${version}`, courseId, code, name, programStudyId, version, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, createdAt: now, createdBy: context.uid, immutable: true }; state.courses.set(record.id, clone(record)); state.idempotency.set(namespace, { requestHash: hash, response: record, createdAt: now }); result = { value: record, replayed: false } }
-  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan versi mata kuliah tidak tersedia.'); const headRef = db.collection('academicCourseHeads').doc(courseId), idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace)); result = await db.runTransaction(async transaction => { const [head, prior] = await Promise.all([transaction.get(headRef), transaction.get(idemRef)]); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: AcademicCourseVersion }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk versi mata kuliah berbeda.'); return { value: stored.response, replayed: true } }; const current = head.exists ? Number(head.data()?.currentVersion || 0) : 0; if (current !== expectedCurrentVersion) conflict('VERSION_CONFLICT', 'Versi mata kuliah telah berubah.', { currentVersion: current }); const version = current + 1, record: AcademicCourseVersion = { id: `${courseId}_v${version}`, courseId, code, name, programStudyId, version, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, createdAt: now, createdBy: context.uid, immutable: true }; transaction.create(db.collection('academicCourseVersions').doc(record.id), record); transaction.set(headRef, { courseId, programStudyId, currentVersion: version, currentVersionId: record.id, updatedAt: now, updatedBy: context.uid }); transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: hash, response: record, createdAt: now }, now, IDEM_TTL_MS)); return { value: record, replayed: false } }) }
+  if (dataMode() === 'mock') { const state = academicAdministrationState(), prior = state.idempotency.get(namespace); if (prior) { if (prior.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk versi mata kuliah berbeda.'); return { value: clone(prior.response as AcademicCourseVersion), replayed: true } }; const current = Math.max(0, ...[...state.courses.values()].filter(item => item.courseId === courseId).map(item => item.version)); if (current !== expectedCurrentVersion) conflict('VERSION_CONFLICT', expectedCurrentVersion === 0 && current > 0 ? `Mata kuliah dengan ID "${courseId}" sudah ada (termasuk di tab Sampah). Pulihkan dari Sampah, sunting dari daftar, atau gunakan ID lain.` : 'Versi mata kuliah telah berubah.', { currentVersion: current }); const version = current + 1, record: AcademicCourseVersion = { id: `${courseId}_v${version}`, courseId, code, name, programStudyId, version, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, createdAt: now, createdBy: context.uid, immutable: true }; state.courses.set(record.id, clone(record)); state.idempotency.set(namespace, { requestHash: hash, response: record, createdAt: now }); result = { value: record, replayed: false } }
+  else { const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan versi mata kuliah tidak tersedia.'); const headRef = db.collection('academicCourseHeads').doc(courseId), idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace)); result = await db.runTransaction(async transaction => { const [head, prior] = await Promise.all([transaction.get(headRef), transaction.get(idemRef)]); if (prior.exists) { const stored = prior.data() as { requestHash: string; response: AcademicCourseVersion }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk versi mata kuliah berbeda.'); return { value: stored.response, replayed: true } }; const current = head.exists ? Number(head.data()?.currentVersion || 0) : 0; if (current !== expectedCurrentVersion) conflict('VERSION_CONFLICT', expectedCurrentVersion === 0 && current > 0 ? `Mata kuliah dengan ID "${courseId}" sudah ada (termasuk di tab Sampah). Pulihkan dari Sampah, sunting dari daftar, atau gunakan ID lain.` : 'Versi mata kuliah telah berubah.', { currentVersion: current }); const version = current + 1, record: AcademicCourseVersion = { id: `${courseId}_v${version}`, courseId, code, name, programStudyId, version, credits, semesterRecommendation, prerequisiteCourseCodes, equivalentCourseCodes, status, createdAt: now, createdBy: context.uid, immutable: true }; transaction.create(db.collection('academicCourseVersions').doc(record.id), record); transaction.set(headRef, { courseId, programStudyId, currentVersion: version, currentVersionId: record.id, updatedAt: now, updatedBy: context.uid }); transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: hash, response: record, createdAt: now }, now, IDEM_TTL_MS)); return { value: record, replayed: false } }) }
   if (result.replayed) return result; const audit = await appendAudit({ actor: context, action: 'ACADEMIC_COURSE_VERSION_CREATED', resourceType: 'academic_course', resourceId: courseId, after: { versionId: result.value.id, version: result.value.version, code, programStudyId, status }, event }); return { ...result, auditId: audit.id }
 }
 

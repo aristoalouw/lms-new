@@ -99,6 +99,13 @@ const courseStatusLabel = (status: string) => ({ ACTIVE: 'Aktif', DRAFT: 'Draf',
 const categoryLabel = (category: string) => ({ ACADEMIC: 'Akademik', KRS: 'KRS', EXAM: 'Ujian', GRADUATION: 'Kelulusan', HOLIDAY: 'Libur', DEADLINE: 'Batas waktu' })[category] || category
 const programName = (id: string) => data.value?.programs.find(item => item.id === id)?.name || id
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+const sanitizeCode = (value: string, max: number) => value.trim().toUpperCase().replace(/[^A-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, max)
+const uniqueId = (base: string, taken: Set<string>) => {
+  if (!base || !taken.has(base)) return base
+  let suffix = 2
+  while (taken.has(`${base}-${suffix}`)) suffix += 1
+  return `${base}-${suffix}`
+}
 
 const key = (purpose: string) => `${purpose}-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const iso = (value: string) => new Date(/[zZ]|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}+07:00`).toISOString()
@@ -115,16 +122,26 @@ const toLocalInput = (isoString: string) => {
   return `${get('year')}-${get('month')}-${get('day')}T${get('hour')}:${get('minute')}`
 }
 
-watch([() => program.code, () => program.level], () => {
+watch([() => program.code, () => program.name, () => program.level], () => {
   if (!editingKey.value && !manualId.value && tab.value === 'program') {
-    const base = slugify(program.code)
-    program.id = base ? `${base}-${program.level.toLowerCase()}` : ''
+    const base = slugify(program.code || program.name)
+    const taken = new Set((data.value?.programs || []).map(item => item.id))
+    program.id = base ? uniqueId(`${base}-${program.level.toLowerCase()}`, taken) : ''
   }
 })
-watch(() => course.code, () => {
+watch([() => period.academicYear, () => period.term], () => {
+  if (!editingKey.value && !manualId.value && tab.value === 'period') {
+    const years = period.academicYear.replace('/', '-').replace(/[^0-9-]/g, '')
+    const termNum = period.term === 'ODD' ? '1' : period.term === 'EVEN' ? '2' : '3'
+    const taken = new Set((data.value?.periods || []).map(item => item.id))
+    if (years) period.id = uniqueId(`${years}-${termNum}`, taken)
+  }
+})
+watch([() => course.code, () => course.name], () => {
   if (!editingKey.value && !manualId.value && tab.value === 'course') {
-    const base = slugify(course.code)
-    course.courseId = base ? `course-${base}` : ''
+    const base = slugify(course.code || course.name)
+    const taken = new Set((data.value?.courses || []).map(item => item.courseId))
+    course.courseId = base ? uniqueId(`course-${base}`, taken) : ''
   }
 })
 watch([() => curriculum.programStudyId, () => curriculum.effectiveCohortFrom], () => {
@@ -242,7 +259,8 @@ function resetCurrentForm() {
   if (tab.value === 'program') {
     Object.assign(program, { id: '', facultyId: defaultFaculty, code: '', name: '', level: 'S1', active: true, accreditationStatus: 'Baik Sekali', accreditationExpiresAt: `${year + 5}-12-31`, expectedVersion: 0 })
   } else if (tab.value === 'period') {
-    Object.assign(period, { id: `${year}-${year + 1}-1`, academicYear: `${year}/${year + 1}`, term: 'ODD', startsAt: `${year}-08-01T08:00`, endsAt: `${year + 1}-01-31T17:00`, krsOpensAt: `${year}-07-01T08:00`, krsClosesAt: `${year}-08-15T23:59`, krsRevisionClosesAt: `${year}-08-31T23:59`, krsStatus: 'KRS_OPEN', active: true, expectedVersion: 0 })
+    const taken = new Set((data.value?.periods || []).map(item => item.id))
+    Object.assign(period, { id: uniqueId(`${year}-${year + 1}-1`, taken), academicYear: `${year}/${year + 1}`, term: 'ODD', startsAt: `${year}-08-01T08:00`, endsAt: `${year + 1}-01-31T17:00`, krsOpensAt: `${year}-07-01T08:00`, krsClosesAt: `${year}-08-15T23:59`, krsRevisionClosesAt: `${year}-08-31T23:59`, krsStatus: 'KRS_OPEN', active: true, expectedVersion: 0 })
   } else if (tab.value === 'course') {
     Object.assign(course, { courseId: '', code: '', name: '', programStudyId: firstProgram, credits: 3, semesterRecommendation: 1, prerequisiteCourseCodes: '', equivalentCourseCodes: '', status: 'ACTIVE', expectedCurrentVersion: 0 })
   } else if (tab.value === 'curriculum') {
@@ -383,9 +401,35 @@ const saveProgram = () => run('/academic/master/programs', {
   ...program,
   id: program.id.trim(),
   facultyId: program.facultyId.trim(),
-  code: program.code.trim().toUpperCase(),
+  code: sanitizeCode(program.code, 20),
   name: program.name.trim(),
 }, editingKey.value ? 'Program studi berhasil diperbarui.' : 'Program studi baru berhasil disimpan.')
+
+const quickActivateProgram = (item: AcademicProgramStudy) => run('/academic/master/programs', {
+  id: item.id,
+  facultyId: item.facultyId,
+  code: item.code,
+  name: item.name,
+  level: item.level,
+  active: true,
+  accreditationStatus: item.accreditationStatus,
+  accreditationExpiresAt: item.accreditationExpiresAt.slice(0, 10),
+  expectedVersion: item.version,
+}, `Program studi "${item.name}" berhasil diaktifkan.`)
+
+const quickActivatePeriod = (item: AcademicPeriodDefinition) => run('/academic/master/periods', {
+  id: item.id,
+  academicYear: item.academicYear,
+  term: item.term,
+  startsAt: item.startsAt,
+  endsAt: item.endsAt,
+  krsOpensAt: item.krsOpensAt,
+  krsClosesAt: item.krsClosesAt,
+  krsRevisionClosesAt: item.krsRevisionClosesAt || item.endsAt,
+  krsStatus: item.krsStatus === 'CLOSED' ? 'KRS_OPEN' : item.krsStatus,
+  active: true,
+  expectedVersion: item.version,
+}, `Periode "${item.academicYear} · ${termLabel(item.term)}" berhasil diaktifkan.`)
 
 const savePeriod = () => run('/academic/master/periods', {
   ...period,
@@ -399,7 +443,7 @@ const savePeriod = () => run('/academic/master/periods', {
 const saveCourse = () => run('/academic/master/courses', {
   ...course,
   courseId: course.courseId.trim(),
-  code: course.code.trim().toUpperCase(),
+  code: sanitizeCode(course.code, 30),
   name: course.name.trim(),
   credits: Number(course.credits),
   semesterRecommendation: Number(course.semesterRecommendation),
@@ -523,7 +567,7 @@ onMounted(load)
               <label>Semester<select v-model="period.term" class="form-select"><option value="ODD">Gasal</option><option value="EVEN">Genap</option><option value="SHORT">Pendek</option></select></label>
             </div>
             <div class="form-row">
-              <label>ID periode<input v-model="period.id" class="form-control" :readonly="Boolean(editingKey)" required></label>
+              <label>ID periode<input v-model="period.id" class="form-control" :readonly="Boolean(editingKey)" required @input="manualId = true"></label>
               <label>Status pengisian KRS<select v-model="period.krsStatus" class="form-select"><option value="DRAFT">Draf</option><option value="KRS_OPEN">KRS dibuka</option><option value="KRS_CLOSED">Pengisian ditutup</option><option value="CLOSED">Periode selesai</option></select></label>
             </div>
             <div class="form-row"><label>Mulai semester<input v-model="period.startsAt" type="datetime-local" class="form-control" required></label><label>Selesai semester<input v-model="period.endsAt" type="datetime-local" class="form-control" required></label></div>
@@ -640,6 +684,7 @@ onMounted(load)
                 <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('program', item.id, `${item.code} · ${item.name}`)"><i class="uil uil-history me-1" />Pulihkan</button>
               </template>
               <template v-else>
+                <button v-if="!item.active" class="btn btn-sm btn-primary" type="button" :disabled="working" @click="quickActivateProgram(item)">Aktifkan</button>
                 <button class="btn btn-sm btn-outline-primary" type="button" @click="selectProgram(item)">Sunting</button>
                 <button class="btn btn-sm btn-outline-danger" type="button" :disabled="working" @click="pendingDelete = { resource: 'program', id: item.id, label: `${item.code} · ${item.name}` }">Hapus</button>
               </template>
@@ -656,6 +701,7 @@ onMounted(load)
                 <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('period', item.id, `${item.academicYear} · ${termLabel(item.term)}`)"><i class="uil uil-history me-1" />Pulihkan</button>
               </template>
               <template v-else>
+                <button v-if="!item.active" class="btn btn-sm btn-primary" type="button" :disabled="working" @click="quickActivatePeriod(item)">Aktifkan</button>
                 <button class="btn btn-sm btn-outline-primary" type="button" @click="selectPeriod(item)">Sunting</button>
                 <button class="btn btn-sm btn-outline-danger" type="button" :disabled="working" @click="pendingDelete = { resource: 'period', id: item.id, label: `${item.academicYear} · ${termLabel(item.term)}` }">Hapus</button>
               </template>

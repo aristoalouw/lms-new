@@ -96,9 +96,7 @@ export const BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES: readonly NotificationTemp
   },
 ]
 
-const templates: NotificationTemplate[] = [
-  ...BUILT_IN_LMS_NOTIFICATION_TEMPLATES,
-  ...BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES,
+export const BUILT_IN_SERVICE_NOTIFICATION_TEMPLATES: NotificationTemplate[] = [
   {
     key: 'ticket-created', name: 'Tiket layanan dibuat', category: 'SERVICE',
     titleTemplate: 'Tiket {{ticketNumber}} berhasil dibuat',
@@ -117,6 +115,21 @@ const templates: NotificationTemplate[] = [
     channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
     updatedAt: '2026-07-21T00:00:00.000Z', updatedBy: 'admin-001',
   },
+  {
+    key: 'ticket-replied', name: 'Balasan tiket layanan', category: 'SERVICE',
+    titleTemplate: 'Balasan baru pada {{ticketNumber}}',
+    bodyTemplate: '{{senderName}} mengirim balasan pada tiket {{subject}}.',
+    emailSubjectTemplate: 'Balasan baru pada tiket {{ticketNumber}}',
+    emailBodyTemplate: '{{senderName}} mengirim balasan pada tiket {{ticketNumber}}. Buka portal kampus untuk membacanya.',
+    channels: ['IN_APP', 'EMAIL'], active: true, version: 1,
+    updatedAt: '2026-07-21T00:00:00.000Z', updatedBy: 'admin-001',
+  },
+]
+
+const templates: NotificationTemplate[] = [
+  ...BUILT_IN_LMS_NOTIFICATION_TEMPLATES,
+  ...BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES,
+  ...BUILT_IN_SERVICE_NOTIFICATION_TEMPLATES,
   {
     key: 'payment-received', name: 'Pembayaran diterima', category: 'FINANCE',
     titleTemplate: 'Pembayaran {{invoiceNumber}} diterima',

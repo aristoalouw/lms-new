@@ -83,6 +83,28 @@ describe('administrative service tickets', () => {
     expect(reply.ticket).toMatchObject({ status: 'IN_REVIEW', messageCount: 3, version: 4 })
     expect((await listTickets(authContext('student-001', ['student']))).map(ticket => ticket.id)).toContain('ticket-demo-001')
   })
+
+  it('allows campus-wide multi-role unit staff to manage program-scoped tickets and notifies requester', async () => {
+    const campusWideStaff = authContext('admin-staff-001', ['academic_staff', 'administrator'], [])
+    const visible = await listTickets(campusWideStaff)
+    expect(visible.map(ticket => ticket.id)).toContain('ticket-demo-001')
+
+    const detail = await getTicketDetail(campusWideStaff, 'ticket-demo-001')
+    expect(detail.canManage).toBe(true)
+    expect(detail.allowedTransitions).toEqual(['WAITING_FOR_REQUESTER', 'RESOLVED', 'CANCELLED'])
+
+    const replied = await addTicketMessage(campusWideStaff, 'ticket-demo-001', { message: 'Sedang kami proses di Biro Akademik.' })
+    expect(replied.canManage).toBe(true)
+    expect(replied.message.authorKind).toBe('STAFF')
+
+    const resolved = await changeTicketStatus(campusWideStaff, 'ticket-demo-001', { status: 'RESOLVED', expectedVersion: replied.ticket.version })
+    expect(resolved.ticket.status).toBe('RESOLVED')
+    expect(resolved.allowedTransitions).toEqual(['IN_REVIEW', 'CLOSED'])
+
+    const requesterNotices = [...notificationModuleState().notifications.values()].filter(n => n.recipientUid === 'student-001')
+    expect(requesterNotices.some(n => n.templateKey === 'ticket-replied' && n.actionPath === '/layanan/ticket-demo-001')).toBe(true)
+    expect(requesterNotices.some(n => n.templateKey === 'ticket-status-updated' && n.actionPath === '/layanan/ticket-demo-001')).toBe(true)
+  })
 })
 
 describe('notification records and email outbox', () => {

@@ -56,6 +56,8 @@ export interface ServiceTicket {
 export interface TicketDetail {
   ticket: ServiceTicket
   messages: TicketMessage[]
+  canManage?: boolean
+  allowedTransitions?: TicketStatus[]
 }
 
 export const NOTIFICATION_CATEGORIES = ['ACADEMIC', 'FINANCE', 'LEARNING', 'SERVICE', 'SYSTEM'] as const

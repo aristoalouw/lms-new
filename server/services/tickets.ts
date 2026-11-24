@@ -15,8 +15,9 @@ import {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole, requirePermission } from '../utils/rbac'
+import { hasProgramAccess, hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId } from '../utils/security'
+import { enqueueServiceWorkflowNotification } from './notifications'
 import { ticketModuleState } from './tickets-state'
 
 const CATEGORY_UNITS: Record<TicketCategory, string> = {
@@ -36,6 +37,15 @@ const CATEGORY_ROLES: Record<TicketCategory, UserRole[]> = {
 }
 
 const SLA_HOURS: Record<TicketPriority, number> = { LOW: 48, NORMAL: 24, HIGH: 8, URGENT: 4 }
+
+const TICKET_STATUS_LABELS: Record<TicketStatus, string> = {
+  OPEN: 'Baru',
+  IN_REVIEW: 'Sedang ditinjau',
+  WAITING_FOR_REQUESTER: 'Menunggu jawaban pemohon',
+  RESOLVED: 'Selesai',
+  CLOSED: 'Ditutup',
+  CANCELLED: 'Dibatalkan',
+}
 
 const STAFF_TRANSITIONS: Record<TicketStatus, TicketStatus[]> = {
   OPEN: ['IN_REVIEW', 'CANCELLED'],
@@ -102,11 +112,17 @@ export function normalizeAttachmentReferences(value: AttachmentReference[] = [])
 }
 
 function programAllowed(context: AuthContext, ticket: ServiceTicket): boolean {
-  return !ticket.programStudyId || context.scope.programStudyIds.includes(ticket.programStudyId)
+  return !ticket.programStudyId || hasProgramAccess(context, ticket.programStudyId)
 }
 
 function canManageTicket(context: AuthContext, ticket: ServiceTicket): boolean {
   return CATEGORY_ROLES[ticket.category].some(role => hasRole(context, role)) && programAllowed(context, ticket)
+}
+
+function allowedTransitionsFor(context: AuthContext, ticket: ServiceTicket): TicketStatus[] {
+  if (canManageTicket(context, ticket)) return [...STAFF_TRANSITIONS[ticket.status]]
+  if (ticket.requesterId === context.uid) return [...REQUESTER_TRANSITIONS[ticket.status]]
+  return []
 }
 
 function canViewTicket(context: AuthContext, ticket: ServiceTicket): boolean {
@@ -119,9 +135,55 @@ function requireView(context: AuthContext, ticket: ServiceTicket): void {
 }
 
 function normalizeProgram(context: AuthContext, requested?: string): string | undefined {
-  if (requested && !context.scope.programStudyIds.includes(requested)) forbidden('Program studi berada di luar lingkup akses Anda.')
+  if (requested && !hasProgramAccess(context, requested)) forbidden('Program studi berada di luar lingkup akses Anda.')
   if (requested) return requested
   return context.scope.programStudyIds.length === 1 ? context.scope.programStudyIds[0] : undefined
+}
+
+async function listUnitStaffRecipientIds(ticket: ServiceTicket, excludeUid: string): Promise<string[]> {
+  if (dataMode() === 'mock') return []
+  const db = firestoreAdmin()
+  if (!db) return []
+  const roles = CATEGORY_ROLES[ticket.category]
+  const snapshot = await db.collection('accounts').where('roles', 'array-contains-any', roles).limit(50).get()
+  const recipients: string[] = []
+  for (const doc of snapshot.docs) {
+    if (doc.id === excludeUid) continue
+    const data = doc.data() as { status?: string; roles?: UserRole[]; scope?: { programStudyIds?: string[] } }
+    if (data.status && data.status !== 'active') continue
+    const accountRoles = Array.isArray(data.roles) ? data.roles : []
+    const programStudyIds = Array.isArray(data.scope?.programStudyIds) ? data.scope.programStudyIds : []
+    const campusWide = accountRoles.includes('administrator') && programStudyIds.length === 0
+    if (!ticket.programStudyId || campusWide || programStudyIds.includes(ticket.programStudyId)) {
+      recipients.push(doc.id)
+    }
+  }
+  return [...new Set(recipients)]
+}
+
+async function notifyServiceRecipients(
+  context: AuthContext,
+  recipientUids: string[],
+  templateKey: 'ticket-created' | 'ticket-status-updated' | 'ticket-replied',
+  variables: Record<string, string | number | boolean>,
+  ticketIdValue: string,
+  eventKey: string,
+  event?: H3Event,
+): Promise<void> {
+  const uniqueIds = [...new Set(recipientUids.filter(Boolean))]
+  if (!uniqueIds.length) return
+  try {
+    await Promise.all(uniqueIds.map(recipientUid =>
+      enqueueServiceWorkflowNotification(context, {
+        recipientUid,
+        templateKey,
+        variables,
+        actionPath: `/layanan/${ticketIdValue}`,
+        eventKey,
+      }, event)))
+  } catch {
+    // Notification delivery must not fail the primary ticket operation.
+  }
 }
 
 function ticketId(context: AuthContext, now: Date): string {
@@ -191,6 +253,17 @@ export async function createTicket(
     })
   }
 
+  const staffRecipients = await listUnitStaffRecipientIds(ticket, context.uid)
+  await notifyServiceRecipients(
+    context,
+    staffRecipients,
+    'ticket-created',
+    { ticketNumber: ticket.ticketNumber, subject: ticket.subject, assignedUnit: ticket.assignedUnit },
+    id,
+    `ticket-created:${id}`,
+    event,
+  )
+
   const audit = await appendAudit({
     actor: context,
     action: 'SERVICE_TICKET_CREATED',
@@ -199,7 +272,13 @@ export async function createTicket(
     after: { ticketNumber: ticket.ticketNumber, category: ticket.category, priority: ticket.priority, status: ticket.status },
     event,
   })
-  return { ticket, messages: [message], auditId: audit.id }
+  return {
+    ticket,
+    messages: [message],
+    canManage: canManageTicket(context, ticket),
+    allowedTransitions: allowedTransitionsFor(context, ticket),
+    auditId: audit.id,
+  }
 }
 
 async function loadTicket(ticketId: string): Promise<ServiceTicket> {
@@ -219,13 +298,15 @@ export async function getTicketDetail(context: AuthContext, ticketId: string): P
   requirePermission(context, 'service.read')
   const ticket = await loadTicket(ticketId)
   requireView(context, ticket)
+  const canManage = canManageTicket(context, ticket)
+  const allowedTransitions = allowedTransitionsFor(context, ticket)
   if (dataMode() === 'mock') {
-    return { ticket, messages: structuredClone(ticketModuleState().messages.get(ticketId) ?? []) }
+    return { ticket, messages: structuredClone(ticketModuleState().messages.get(ticketId) ?? []), canManage, allowedTransitions }
   }
   const db = firestoreAdmin()
   if (!db) serviceUnavailable('Penyimpanan tiket tidak tersedia.')
   const snapshot = await db.collection('serviceTickets').doc(ticketId).collection('messages').orderBy('createdAt', 'asc').limit(200).get()
-  return { ticket, messages: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as TicketMessage) }
+  return { ticket, messages: snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as TicketMessage), canManage, allowedTransitions }
 }
 
 export async function listTickets(context: AuthContext, options: ListTicketOptions = {}): Promise<ServiceTicket[]> {
@@ -288,7 +369,7 @@ export async function changeTicketStatus(
   ticketIdValue: string,
   input: ChangeTicketStatusInput,
   event?: H3Event,
-): Promise<{ ticket: ServiceTicket; auditId: string }> {
+): Promise<{ ticket: ServiceTicket; canManage: boolean; allowedTransitions: TicketStatus[]; auditId: string }> {
   requirePermission(context, 'service.read')
   const now = new Date().toISOString()
   let before: ServiceTicket
@@ -316,11 +397,29 @@ export async function changeTicketStatus(
     before = result.current
     after = result.updated
   }
+  const staffChanged = canManageTicket(context, after)
+  const statusRecipients = staffChanged && after.requesterId !== context.uid
+    ? [after.requesterId]
+    : await listUnitStaffRecipientIds(after, context.uid)
+  await notifyServiceRecipients(
+    context,
+    statusRecipients,
+    'ticket-status-updated',
+    { ticketNumber: after.ticketNumber, statusLabel: TICKET_STATUS_LABELS[after.status] },
+    ticketIdValue,
+    `ticket-status:${ticketIdValue}:v${after.version}`,
+    event,
+  )
   const audit = await appendAudit({
     actor: context, action: 'SERVICE_TICKET_STATUS_CHANGED', resourceType: 'service_ticket', resourceId: ticketIdValue,
     before: { status: before.status, version: before.version }, after: { status: after.status, version: after.version }, event,
   })
-  return { ticket: after, auditId: audit.id }
+  return {
+    ticket: after,
+    canManage: staffChanged,
+    allowedTransitions: allowedTransitionsFor(context, after),
+    auditId: audit.id,
+  }
 }
 
 export async function addTicketMessage(
@@ -328,7 +427,7 @@ export async function addTicketMessage(
   ticketIdValue: string,
   input: { message: string; attachments?: AttachmentReference[] },
   event?: H3Event,
-): Promise<{ ticket: ServiceTicket; message: TicketMessage; auditId: string }> {
+): Promise<{ ticket: ServiceTicket; message: TicketMessage; canManage: boolean; allowedTransitions: TicketStatus[]; auditId: string }> {
   requirePermission(context, 'service.read')
   const current = await loadTicket(ticketIdValue)
   requireView(context, current)
@@ -364,9 +463,27 @@ export async function addTicketMessage(
       transaction.create(reference.collection('messages').doc(message.id), message)
     })
   }
+  const replyRecipients = staff && ticket.requesterId !== context.uid
+    ? [ticket.requesterId]
+    : await listUnitStaffRecipientIds(ticket, context.uid)
+  await notifyServiceRecipients(
+    context,
+    replyRecipients,
+    'ticket-replied',
+    { ticketNumber: ticket.ticketNumber, subject: ticket.subject, senderName: message.authorName },
+    ticketIdValue,
+    `ticket-reply:${ticketIdValue}:v${ticket.version}`,
+    event,
+  )
   const audit = await appendAudit({
     actor: context, action: 'SERVICE_TICKET_MESSAGE_ADDED', resourceType: 'service_ticket', resourceId: ticketIdValue,
     after: { authorKind: message.authorKind, attachmentCount: message.attachments.length, status: ticket.status }, event,
   })
-  return { ticket, message, auditId: audit.id }
+  return {
+    ticket,
+    message,
+    canManage: staff,
+    allowedTransitions: allowedTransitionsFor(context, ticket),
+    auditId: audit.id,
+  }
 }

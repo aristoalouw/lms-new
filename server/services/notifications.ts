@@ -18,7 +18,7 @@ import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from '../utils/firest
 import { hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { listActiveAccountsByIds } from './accounts'
-import { BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES, BUILT_IN_LMS_NOTIFICATION_TEMPLATES, notificationModuleState } from './notifications-state'
+import { BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES, BUILT_IN_LMS_NOTIFICATION_TEMPLATES, BUILT_IN_SERVICE_NOTIFICATION_TEMPLATES, notificationModuleState } from './notifications-state'
 import { serverFeatureProfile } from '../utils/feature-profile'
 import { emailDeliveryEnabled } from '../utils/capabilities'
 
@@ -345,7 +345,7 @@ async function enqueueNotificationWithAuthorization(
   input: EnqueueNotificationInput,
   idempotencyKey: string,
   event?: H3Event,
-  trustedWorkflow: 'none' | 'learning' | 'academic' = 'none',
+  trustedWorkflow: 'none' | 'learning' | 'academic' | 'service' = 'none',
 ): Promise<EnqueueNotificationResult> {
   if (!/^[A-Za-z0-9._:-]{16,128}$/.test(idempotencyKey)) invalidInput('Idempotency key tidak valid.')
   const template = await templateByKey(input.templateKey)
@@ -355,11 +355,15 @@ async function enqueueNotificationWithAuthorization(
     && BUILT_IN_LMS_NOTIFICATION_TEMPLATES.some(candidate => candidate.key === template.key)
   const builtInAcademicEvent = template.category === 'ACADEMIC'
     && BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES.some(candidate => candidate.key === template.key)
+  const builtInServiceEvent = template.category === 'SERVICE'
+    && BUILT_IN_SERVICE_NOTIFICATION_TEMPLATES.some(candidate => candidate.key === template.key)
   const authorized = trustedWorkflow === 'learning'
     ? builtInLearningEvent
     : trustedWorkflow === 'academic'
       ? builtInAcademicEvent
-      : canEnqueue(context, template, input.programStudyId)
+      : trustedWorkflow === 'service'
+        ? builtInServiceEvent
+        : canEnqueue(context, template, input.programStudyId)
   if (!authorized) {
     forbidden('Notifikasi berada di luar lingkup kewenangan Anda.')
   }
@@ -495,6 +499,29 @@ export async function enqueueAcademicWorkflowNotification(
     variables: input.variables,
     actionPath: input.actionPath,
   }, opaqueId('academic_notice', `${input.eventKey}:${input.recipientUid}`), event, 'academic')
+}
+
+export async function enqueueServiceWorkflowNotification(
+  context: AuthContext,
+  input: {
+    recipientUid: string
+    templateKey: 'ticket-created' | 'ticket-status-updated' | 'ticket-replied'
+    variables: Record<string, string | number | boolean>
+    actionPath: string
+    eventKey: string
+  },
+  event?: H3Event,
+): Promise<EnqueueNotificationResult | null> {
+  if (isLmsMvpProfile() || !input.recipientUid) return null
+  const [account] = await listActiveAccountsByIds([input.recipientUid])
+  if (!account && dataMode() !== 'mock') return null
+  return enqueueNotificationWithAuthorization(context, {
+    recipientUid: account?.id ?? input.recipientUid,
+    recipientEmail: account?.email,
+    templateKey: input.templateKey,
+    variables: input.variables,
+    actionPath: input.actionPath,
+  }, opaqueId('service_notice', `${input.eventKey}:${input.recipientUid}`), event, 'service')
 }
 
 /**

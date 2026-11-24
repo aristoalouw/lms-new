@@ -29,9 +29,21 @@ const errorText = (error: unknown) => {
   return data?.statusMessage || data?.message || (error instanceof Error ? error.message : 'Dashboard gagal dimuat.')
 }
 
-const cards = computed(() => {
+const visibleSections = computed<DashboardSections>(() => {
   const sections = summary.value?.sections
-  if (!sections) return []
+  if (!sections) return {}
+  return {
+    ...(sections.academic && can('dashboard:view_academic') ? { academic: sections.academic } : {}),
+    ...(sections.finance && can('dashboard:view_finance') ? { finance: sections.finance } : {}),
+    ...(sections.admissions && can('dashboard:view_admissions') ? { admissions: sections.admissions } : {}),
+    ...(sections.pddikti && can('dashboard:view_pddikti') ? { pddikti: sections.pddikti } : {}),
+    ...(sections.outcomes && can('dashboard:view_outcomes') ? { outcomes: sections.outcomes } : {}),
+    ...(sections.accreditation && can('dashboard:view_accreditation') ? { accreditation: sections.accreditation } : {}),
+  }
+})
+
+const cards = computed(() => {
+  const sections = visibleSections.value
   return [
     ...(sections.academic ? [
       { label: 'Mahasiswa aktif', value: sections.academic.activeStudents.toLocaleString('id-ID'), detail: `${sections.academic.classesRunning} kelas berjalan`, tone: 'forest' as const },
@@ -51,11 +63,16 @@ const links = computed(() => isLmsMvp.value ? [
   ...(can('notification.read') ? [{ to: '/notifikasi', label: 'Notifikasi', detail: 'Pembaruan aktivitas kelas', icon: 'uil-bell' }] : []),
   ...(can('file.read') ? [{ to: '/berkas', label: 'Berkas privat', detail: 'File pembelajaran yang telah dipindai', icon: 'uil-folder-open' }] : []),
 ] : [
+  ...(can('accounts:manage') ? [{ to: '/admin/pengguna', label: 'Pengguna & akses', detail: 'Akun, peran, dan lingkup', icon: 'uil-users-alt' }] : []),
+  ...(can('settings.read') ? [{ to: '/modul/pengaturan', label: 'Pengaturan sistem', detail: 'Status rilis dan konfigurasi', icon: 'uil-setting' }] : []),
+  ...(can('classes:manage') ? [{ to: '/admin/kelas', label: 'Kelas & enrolment', detail: 'Kelola kelas dan peserta', icon: 'uil-presentation-check' }] : []),
   ...(can('academic.read') ? [{ to: '/akademik/kelas', label: 'Pelaksanaan kelas', detail: 'Presensi, jurnal, dan nilai', icon: 'uil-presentation-check' }, { to: '/akademik/krs', label: 'KRS', detail: 'Pengisian dan persetujuan', icon: 'uil-clipboard-alt' }] : []),
-  ...(can('pddikti.read') ? [{ to: '/pddikti', label: 'PDDIKTI', detail: 'Readiness dan rekonsiliasi', icon: 'uil-sync' }] : []),
+  ...(can('learning.read') ? [{ to: '/pembelajaran', label: 'Pembelajaran', detail: 'Ruang kelas, materi, dan tugas', icon: 'uil-presentation-play' }] : []),
+  ...(can('pddikti.read') || can('pddikti:view') ? [{ to: '/pddikti', label: 'PDDIKTI', detail: 'Readiness dan rekonsiliasi', icon: 'uil-sync' }] : []),
   ...(can('finance.read') ? [{ to: '/keuangan', label: 'Keuangan', detail: 'Tagihan dan piutang', icon: 'uil-receipt' }] : []),
   ...(can('pmb.read') ? [{ to: '/pmb', label: 'PMB', detail: 'Pendaftar dan seleksi', icon: 'uil-user-plus' }] : []),
-  ...(can('tracer.read') ? [{ to: '/tracer-study', label: 'Tracer study', detail: 'Outcome lulusan', icon: 'uil-chart-growth' }] : []),
+  ...(can('student_affairs.read') ? [{ to: '/kemahasiswaan', label: 'Kemahasiswaan', detail: 'Prestasi, beasiswa, dan surat aktif', icon: 'uil-award' }] : []),
+  ...(can('tracer.read') || can('tracer.report') || can('tracer.configure') ? [{ to: '/tracer-study', label: 'Tracer study', detail: 'Outcome lulusan', icon: 'uil-chart-growth' }] : []),
 ])
 
 async function loadFilters() {
@@ -91,6 +108,20 @@ async function download(format: 'csv' | 'pdf') {
   } catch (error) { errorMessage.value = errorText(error) } finally { exporting.value = false }
 }
 
+const resetAndLoad = async () => {
+  filters.periodId = ''
+  filters.programStudyId = ''
+  summary.value = null
+  errorMessage.value = ''
+  await loadFilters()
+  await load()
+}
+
+watch(() => user.value?.activeRole, async (nextRole, previousRole) => {
+  if (!nextRole || !previousRole || nextRole === previousRole) return
+  await resetAndLoad()
+})
+
 onMounted(async () => { await loadFilters(); await load() })
 </script>
 
@@ -108,11 +139,11 @@ onMounted(async () => { await loadFilters(); await load() })
       <section v-if="cards.length" class="metric-grid"><StatCard v-for="card in cards" :key="card.label" :label="card.label" :value="card.value" :detail="card.detail" :trend="summary.periodId" :tone="card.tone" /></section>
       <section v-else class="empty-dashboard"><i class="uil uil-shield-check" /><h2>Dashboard institusi dibatasi</h2><p>Role Anda tetap dapat membuka pekerjaan pribadi melalui pintasan di bawah. Ringkasan lintas mahasiswa tidak ditampilkan.</p></section>
 
-      <section class="detail-grid">
-        <article v-if="summary.sections.academic" class="surface-card"><header><span class="section-kicker">Akademik</span><h2>Realisasi perkuliahan</h2></header><div class="progress-metric"><div><span>Kehadiran rata-rata</span><strong>{{ percent(summary.sections.academic.averageAttendancePercent) }}</strong></div><div class="progress"><div class="progress-bar bg-success" :style="{ width: `${summary.sections.academic.averageAttendancePercent}%` }" /></div></div><div class="progress-metric"><div><span>Realisasi pertemuan</span><strong>{{ percent(summary.sections.academic.lecturesRealizedPercent) }}</strong></div><div class="progress"><div class="progress-bar" :style="{ width: `${summary.sections.academic.lecturesRealizedPercent}%` }" /></div></div></article>
-        <article v-if="summary.sections.pddikti" class="surface-card"><header><span class="section-kicker">PDDIKTI</span><h2>Status pelaporan</h2></header><dl><div><dt>Kelengkapan</dt><dd>{{ percent(summary.sections.pddikti.completenessPercent) }}</dd></div><div><dt>Antrean</dt><dd>{{ summary.sections.pddikti.queuedRecords }}</dd></div><div><dt>Gagal</dt><dd>{{ summary.sections.pddikti.failedRecords }}</dd></div><div><dt>Sinkron terakhir</dt><dd>{{ summary.sections.pddikti.lastSuccessfulSyncAt ? new Date(summary.sections.pddikti.lastSuccessfulSyncAt).toLocaleString('id-ID') : 'Belum ada' }}</dd></div></dl></article>
-        <article v-if="summary.sections.outcomes" class="surface-card"><header><span class="section-kicker">Outcome lulusan</span><h2>Tracer study</h2></header><dl><div><dt>Respons</dt><dd>{{ percent(summary.sections.outcomes.tracerResponseRatePercent) }}</dd></div><div><dt>Bekerja ≤ 6 bulan</dt><dd>{{ percent(summary.sections.outcomes.employedWithinSixMonthsPercent) }}</dd></div><div><dt>Responden</dt><dd>{{ summary.sections.outcomes.respondents }}</dd></div></dl></article>
-        <article v-if="summary.sections.accreditation" class="surface-card"><header><span class="section-kicker">Monitoring administratif</span><h2>Akreditasi</h2></header><dl><div><dt>Status institusi</dt><dd>{{ summary.sections.accreditation.institutionStatus }}</dd></div><div><dt>Prodi perlu perhatian</dt><dd>{{ summary.sections.accreditation.programStudyAtRisk }}</dd></div><div><dt>Kedaluwarsa terdekat</dt><dd>{{ summary.sections.accreditation.nearestExpiryDate }}</dd></div></dl></article>
+      <section v-if="visibleSections.academic || visibleSections.pddikti || visibleSections.outcomes || visibleSections.accreditation" class="detail-grid">
+        <article v-if="visibleSections.academic" class="surface-card"><header><span class="section-kicker">Akademik</span><h2>Realisasi perkuliahan</h2></header><div class="progress-metric"><div><span>Kehadiran rata-rata</span><strong>{{ percent(visibleSections.academic.averageAttendancePercent) }}</strong></div><div class="progress"><div class="progress-bar bg-success" :style="{ width: `${visibleSections.academic.averageAttendancePercent}%` }" /></div></div><div class="progress-metric"><div><span>Realisasi pertemuan</span><strong>{{ percent(visibleSections.academic.lecturesRealizedPercent) }}</strong></div><div class="progress"><div class="progress-bar" :style="{ width: `${visibleSections.academic.lecturesRealizedPercent}%` }" /></div></div></article>
+        <article v-if="visibleSections.pddikti" class="surface-card"><header><span class="section-kicker">PDDIKTI</span><h2>Status pelaporan</h2></header><dl><div><dt>Kelengkapan</dt><dd>{{ percent(visibleSections.pddikti.completenessPercent) }}</dd></div><div><dt>Antrean</dt><dd>{{ visibleSections.pddikti.queuedRecords }}</dd></div><div><dt>Gagal</dt><dd>{{ visibleSections.pddikti.failedRecords }}</dd></div><div><dt>Sinkron terakhir</dt><dd>{{ visibleSections.pddikti.lastSuccessfulSyncAt ? new Date(visibleSections.pddikti.lastSuccessfulSyncAt).toLocaleString('id-ID') : 'Belum ada' }}</dd></div></dl></article>
+        <article v-if="visibleSections.outcomes" class="surface-card"><header><span class="section-kicker">Outcome lulusan</span><h2>Tracer study</h2></header><dl><div><dt>Respons</dt><dd>{{ percent(visibleSections.outcomes.tracerResponseRatePercent) }}</dd></div><div><dt>Bekerja ≤ 6 bulan</dt><dd>{{ percent(visibleSections.outcomes.employedWithinSixMonthsPercent) }}</dd></div><div><dt>Responden</dt><dd>{{ visibleSections.outcomes.respondents }}</dd></div></dl></article>
+        <article v-if="visibleSections.accreditation" class="surface-card"><header><span class="section-kicker">Monitoring administratif</span><h2>Akreditasi</h2></header><dl><div><dt>Status institusi</dt><dd>{{ visibleSections.accreditation.institutionStatus }}</dd></div><div><dt>Prodi perlu perhatian</dt><dd>{{ visibleSections.accreditation.programStudyAtRisk }}</dd></div><div><dt>Kedaluwarsa terdekat</dt><dd>{{ visibleSections.accreditation.nearestExpiryDate }}</dd></div></dl></article>
       </section>
 
       <section><div class="section-heading"><span class="section-kicker">Pintasan</span><h2>Lanjutkan pekerjaan utama</h2></div><div class="quick-grid"><NuxtLink v-for="item in links" :key="item.to" :to="item.to"><span><i class="uil" :class="item.icon" /></span><div><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><i class="uil uil-angle-right-b" /></NuxtLink></div></section>

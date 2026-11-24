@@ -171,13 +171,21 @@ export const useAuth = () => {
     return user.value
   }
 
-  const switchRole = (role: UserRole) => {
+  const switchRole = async (role: UserRole) => {
     if (!user.value?.roles.includes(role)) return
     activeRoleCookie.value = role
     user.value = {
       ...user.value,
       activeRole: role,
       permissions: user.value.rolePermissions[role] || [],
+    }
+    const shell = useAppShell()
+    shell.closeSidebar()
+    shell.commandOpen.value = false
+    shell.notificationsOpen.value = false
+    const route = useRoute()
+    if (route.path !== '/' || Object.keys(route.query).length > 0) {
+      await navigateTo('/', { replace: true })
     }
   }
 

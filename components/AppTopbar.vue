@@ -56,7 +56,7 @@
       </div>
 
       <div class="dropdown">
-        <button class="profile-trigger" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+        <button ref="profileTrigger" class="profile-trigger" type="button" data-bs-toggle="dropdown" aria-expanded="false">
           <span class="avatar">{{ user?.initials }}</span>
           <span class="profile-trigger__copy d-none d-md-flex">
             <strong>{{ user?.name }}</strong>
@@ -71,7 +71,7 @@
           </div>
           <div v-if="user && user.roles.length > 1" class="profile-menu__roles">
             <p>Ganti peran aktif</p>
-            <button v-for="role in user.roles" :key="role" class="role-option" :class="{ active: role === user.activeRole }" type="button" @click="switchRole(role)">
+            <button v-for="role in user.roles" :key="role" class="role-option" :class="{ active: role === user.activeRole }" type="button" @click="selectRole(role)">
               <span><i class="uil uil-user-square" /> {{ roleLabels[role] }}</span><i v-if="role === user.activeRole" class="uil uil-check" />
             </button>
           </div>
@@ -113,6 +113,7 @@ const { user, can, logout, switchRole } = useAuth()
 const { enabled, pageEnabled, isLmsMvp } = useFeatureFlags()
 const { $api } = useNuxtApp()
 const searchInput = ref<HTMLInputElement>()
+const profileTrigger = ref<HTMLButtonElement>()
 const query = ref('')
 const notices = ref<InAppNotification[]>([])
 const markingNotices = ref(false)
@@ -120,6 +121,14 @@ const helpOpen = ref(false)
 const toggleHelp = () => {
   helpOpen.value = !helpOpen.value
   if (helpOpen.value) notificationsOpen.value = false
+}
+const selectRole = async (role: Parameters<typeof switchRole>[0]) => {
+  helpOpen.value = false
+  if (profileTrigger.value?.getAttribute('aria-expanded') === 'true') {
+    profileTrigger.value.click()
+  }
+  await switchRole(role)
+  void loadNotices()
 }
 
 const noticeMeta: Record<NotificationCategory, { icon: string; tone: string }> = {

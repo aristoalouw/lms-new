@@ -142,7 +142,7 @@ onMounted(initialize)
 
 <template>
   <div class="page-stack pdm-page">
-    <AppPageHeader eyebrow="Pelaporan PDDIKTI" title="Data mahasiswa dan ijazah" description="Kelola Perubahan Data Mahasiswa secara auditable dan periksa blocker PDDIKTI sebelum penomoran ijazah.">
+    <AppPageHeader eyebrow="Pelaporan PDDIKTI" title="Data mahasiswa dan ijazah" description="Kelola pengajuan perubahan data mahasiswa dan periksa kelengkapan PDDIKTI sebelum penerbitan ijazah.">
       <template #actions><NuxtLink class="btn btn-outline-secondary" to="/pddikti"><i class="uil uil-arrow-left me-2" />Kembali ke sinkronisasi</NuxtLink><button class="btn btn-primary" type="button" :disabled="loading" @click="initialize"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
     </AppPageHeader>
     <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div><div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>

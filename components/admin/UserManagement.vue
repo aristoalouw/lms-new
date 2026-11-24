@@ -406,7 +406,7 @@ onMounted(() => Promise.all([loadAccounts(), loadProgramStudies(), loadAccessReq
     <AppPageHeader
       eyebrow="Administrasi sistem"
       title="Manajemen pengguna"
-      description="Kelola identitas, multi-role, lingkup akses, dan status akun dari satu tempat dengan perubahan yang dapat diaudit."
+      description="Kelola identitas pengguna, peran, lingkup akses program studi, dan status akun dalam satu halaman."
     >
       <template #actions>
         <button v-if="isAdministrator" class="btn btn-primary" type="button" @click="openCreate">

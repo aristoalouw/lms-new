@@ -218,7 +218,7 @@ onMounted(loadAll)
 
 <template>
   <div class="page-stack student-affairs-page">
-    <AppPageHeader eyebrow="Layanan mahasiswa" title="Kemahasiswaan" description="Satu ruang kerja untuk portofolio, poin, disiplin, beasiswa, dokumen persyaratan, dan surat aktif yang dapat diaudit.">
+    <AppPageHeader eyebrow="Layanan mahasiswa" title="Kemahasiswaan" description="Kelola prestasi mahasiswa, poin kegiatan, pembinaan, beasiswa, berkas persyaratan, dan surat keterangan aktif.">
       <template #actions><button class="btn btn-outline-secondary" type="button" :disabled="loading" @click="loadAll"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
     </AppPageHeader>
 

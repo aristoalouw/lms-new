@@ -175,7 +175,7 @@ onMounted(loadWorkspace)
     <AppPageHeader
       eyebrow="Penerimaan mahasiswa baru"
       title="Seleksi & Letter of Acceptance"
-      description="Jadwalkan ruang dan penguji, cegah bentrok peserta, finalkan nilai immutable, lalu terbitkan LoA bernomor unik."
+      description="Atur jadwal ruang dan penguji tanpa bentrok, tetapkan nilai akhir seleksi, lalu terbitkan surat penerimaan (LoA)."
     >
       <template #actions>
         <NuxtLink class="btn btn-outline-secondary" to="/pmb/kelola">Kembali ke verifikasi</NuxtLink>

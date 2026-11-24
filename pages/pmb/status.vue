@@ -55,7 +55,7 @@ onMounted(load)
 
 <template>
   <div class="page-stack" data-clarity-mask="true">
-    <AppPageHeader eyebrow="Portal pendaftar" title="Status pendaftaran" description="Tautkan nomor pendaftaran, pantau verifikasi, dan lanjutkan dokumen melalui penyimpanan privat." status="active" status-label="Data privat">
+    <AppPageHeader eyebrow="Portal pendaftar" title="Status pendaftaran" description="Pantau status pendaftaran, hasil verifikasi berkas, dan tahap seleksi Anda." status="active" status-label="Data privat">
       <template #actions><NuxtLink class="btn btn-outline-secondary" to="/berkas"><i class="uil uil-folder-lock me-2" />Dokumen saya</NuxtLink><button class="btn btn-primary" type="button" :disabled="loading" @click="load"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
     </AppPageHeader>
     <div v-if="noticeMessage" class="alert alert-success mb-0" role="status">{{ noticeMessage }}</div>

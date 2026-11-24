@@ -93,7 +93,7 @@ onMounted(load)
 
 <template>
   <div class="page-stack documents-page">
-    <AppPageHeader eyebrow="Penerimaan mahasiswa baru" title="Dokumen pendaftaran" description="Berkas privat dipindai, ditautkan ke aplikasi, dan diverifikasi dengan histori versi serta checksum.">
+    <AppPageHeader eyebrow="Penerimaan mahasiswa baru" title="Dokumen pendaftaran" description="Unggah dokumen pendaftaran dan pantau status verifikasinya dari panitia PMB.">
       <template #actions><NuxtLink class="btn btn-outline-secondary" :to="staffMode ? '/pmb/kelola' : '/pmb'"><i class="uil uil-arrow-left me-2" />Kembali</NuxtLink><NuxtLink v-if="!staffMode" class="btn btn-primary" to="/berkas"><i class="uil uil-folder-open me-2" />Berkas saya</NuxtLink></template>
     </AppPageHeader>
     <div v-if="noticeMessage" class="alert alert-success">{{ noticeMessage }}</div><div v-if="errorMessage" class="alert alert-danger">{{ errorMessage }}</div><div v-if="loading" class="alert alert-info">Memuat checklist dokumen...</div>

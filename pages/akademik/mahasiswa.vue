@@ -177,7 +177,7 @@ onMounted(loadCatalog)
 
 <template>
   <div class="page-stack onboarding-page">
-    <AppPageHeader eyebrow="Administrasi akademik" title="Onboarding mahasiswa" description="Hubungkan akun student aktif ke profil akademik, state KRS, dan profil billing melalui satu transaksi terkontrol.">
+    <AppPageHeader eyebrow="Administrasi akademik" title="Onboarding mahasiswa" description="Hubungkan akun mahasiswa aktif dengan profil akademik, status KRS, dan data tagihan.">
       <template #actions><NuxtLink class="btn btn-outline-secondary" to="/akademik/master"><i class="uil uil-database me-2" />Master akademik</NuxtLink><button class="btn btn-primary" type="button" @click="resetForm"><i class="uil uil-user-plus me-2" />Mahasiswa baru</button></template>
     </AppPageHeader>
 

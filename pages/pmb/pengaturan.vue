@@ -144,7 +144,7 @@ onMounted(load)
 
 <template>
   <div class="page-stack settings-page">
-    <AppPageHeader eyebrow="Konfigurasi penerimaan" title="Gelombang PMB" description="Kelola jadwal, biaya, kapasitas, dan program studi dari data Firebase aktual.">
+    <AppPageHeader eyebrow="Konfigurasi penerimaan" title="Gelombang PMB" description="Kelola gelombang, jadwal, biaya pendaftaran, kapasitas, dan program studi PMB.">
       <template #actions><NuxtLink class="btn btn-outline-secondary" to="/pmb"><i class="uil uil-arrow-left me-2" />Dashboard PMB</NuxtLink><NuxtLink class="btn btn-outline-primary" to="/akademik/master"><i class="uil uil-building me-2" />Master program studi</NuxtLink></template>
     </AppPageHeader>
     <div v-if="noticeMessage" class="alert alert-success" role="status">{{ noticeMessage }}</div>

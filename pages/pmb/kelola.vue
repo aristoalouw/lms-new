@@ -169,7 +169,7 @@ onMounted(() => loadApplications())
 
 <template>
   <div class="page-stack" data-clarity-mask="true">
-    <AppPageHeader eyebrow="Penerimaan mahasiswa baru" title="Workflow pendaftar" description="Tinjau berkas, validasi biaya, tetapkan hasil, lalu konversi akun applicant menjadi mahasiswa dengan NIM unik.">
+    <AppPageHeader eyebrow="Penerimaan mahasiswa baru" title="Kelola pendaftar" description="Tinjau berkas pendaftaran, verifikasi pembayaran, tetapkan hasil seleksi, dan aktifkan akun mahasiswa baru.">
       <template #actions><NuxtLink class="btn btn-outline-secondary" to="/pmb"><i class="uil uil-arrow-left me-2" />Ringkasan</NuxtLink><button class="btn btn-primary" type="button" :disabled="loading" @click="loadApplications()"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
     </AppPageHeader>
 

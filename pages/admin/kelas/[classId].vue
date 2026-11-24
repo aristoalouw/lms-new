@@ -135,7 +135,7 @@ async function saveClass() {
       lecturerIds: selected.map(item => item.id),
       lecturerNames: selected.map(item => item.displayName),
     }, { headers: { 'Idempotency-Key': key('class-update') } })
-    noticeMessage.value = 'Kelas dan snapshot ruang LMS berhasil diperbarui.'
+    noticeMessage.value = 'Data kelas dan ruang pembelajaran berhasil diperbarui.'
     await load()
   } catch (error) { errorMessage.value = messageFor(error) } finally { saving.value = false }
 }
@@ -191,7 +191,7 @@ onMounted(load)
 
 <template>
   <div class="page-stack" data-clarity-mask="true">
-    <AppPageHeader eyebrow="Administrasi LMS" :title="detail ? `${detail.classRecord.courseCode} · ${detail.classRecord.courseName}` : 'Detail kelas'" description="Perubahan kelas dan enrolment menggunakan version check, alasan, idempotency, serta audit.">
+    <AppPageHeader eyebrow="Administrasi LMS" :title="detail ? `${detail.classRecord.courseCode} · ${detail.classRecord.courseName}` : 'Detail kelas'" description="Kelola jadwal pertemuan, dosen pengampu, dan daftar peserta pada kelas ini.">
       <template #actions>
         <button class="btn btn-outline-primary" type="button" :disabled="loading || exporting" @click="exportClassCsv">
           <span v-if="exporting" class="spinner-border spinner-border-sm me-2" aria-hidden="true" />

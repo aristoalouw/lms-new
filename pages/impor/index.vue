@@ -268,7 +268,7 @@ onMounted(loadHistory)
     <AppPageHeader
       eyebrow="Migrasi terkontrol"
       title="Impor Data Bertahap"
-      description="Validasi sumber spreadsheet, tinjau rencana perubahan, minta persetujuan, lalu commit dengan jejak audit dan kompensasi."
+      description="Periksa berkas spreadsheet, tinjau rencana perubahan, minta persetujuan, lalu simpan pembaruan data."
       status="active"
       status-label="Tidak mengubah data saat preview"
     >

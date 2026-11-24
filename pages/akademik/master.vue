@@ -33,7 +33,7 @@ onMounted(load)
 
 <template>
   <div class="page-stack master-page">
-    <AppPageHeader eyebrow="Administrasi akademik" title="Master data akademik" description="Kelola identifier stabil dan versi imutabel program, periode, mata kuliah, kurikulum, serta kalender."><template #actions><NuxtLink class="btn btn-outline-secondary" to="/akademik/administrasi"><i class="uil uil-arrow-left me-2" />Kembali</NuxtLink><button class="btn btn-primary" :disabled="loading" @click="load"><i class="uil uil-refresh me-2" />Muat ulang</button></template></AppPageHeader>
+    <AppPageHeader eyebrow="Administrasi akademik" title="Master data akademik" description="Kelola program studi, periode akademik, mata kuliah, kurikulum, dan kalender kampus."><template #actions><NuxtLink class="btn btn-outline-secondary" to="/akademik/administrasi"><i class="uil uil-arrow-left me-2" />Kembali</NuxtLink><button class="btn btn-primary" :disabled="loading" @click="load"><i class="uil uil-refresh me-2" />Muat ulang</button></template></AppPageHeader>
     <div v-if="noticeMessage" class="alert alert-success">{{ noticeMessage }}</div><div v-if="errorMessage" class="alert alert-danger">{{ errorMessage }}</div><div v-if="loading" class="alert alert-info">Memuat master data...</div>
     <nav class="master-tabs"><button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" @click="tab = item.id"><i class="uil" :class="item.icon" />{{ item.label }}</button></nav>
     <div v-if="data" class="master-layout">

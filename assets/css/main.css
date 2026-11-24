@@ -109,21 +109,61 @@ table,
   --bs-btn-border-radius: 6px;
 }
 
-.btn-primary {
+.btn.btn-primary {
+  --bs-btn-color: #ffffff;
   --bs-btn-bg: var(--campus-forest-800);
   --bs-btn-border-color: var(--campus-forest-800);
+  --bs-btn-hover-color: #ffffff;
   --bs-btn-hover-bg: var(--campus-forest-900);
   --bs-btn-hover-border-color: var(--campus-forest-900);
+  --bs-btn-active-color: #ffffff;
   --bs-btn-active-bg: var(--campus-forest-950);
   --bs-btn-active-border-color: var(--campus-forest-950);
+  --bs-btn-disabled-color: #ffffff;
+  --bs-btn-disabled-bg: var(--campus-forest-700);
+  --bs-btn-disabled-border-color: var(--campus-forest-700);
+  color: #ffffff;
+  background-color: var(--campus-forest-800);
+  border-color: var(--campus-forest-800);
 }
 
-.btn-outline-primary {
+.btn.btn-primary:hover,
+.btn.btn-primary:focus-visible {
+  color: #ffffff;
+  background-color: var(--campus-forest-900);
+  border-color: var(--campus-forest-900);
+}
+
+.btn.btn-primary:active,
+.btn.btn-primary.active {
+  color: #ffffff;
+  background-color: var(--campus-forest-950);
+  border-color: var(--campus-forest-950);
+}
+
+.btn.btn-outline-primary {
   --bs-btn-color: var(--campus-forest-800);
-  --bs-btn-border-color: #775a83;
-  --bs-btn-hover-bg: var(--campus-forest-50);
-  --bs-btn-hover-color: var(--campus-forest-900);
-  --bs-btn-hover-border-color: var(--campus-forest-700);
+  --bs-btn-border-color: var(--campus-forest-700);
+  --bs-btn-hover-color: #ffffff;
+  --bs-btn-hover-bg: var(--campus-forest-800);
+  --bs-btn-hover-border-color: var(--campus-forest-800);
+  --bs-btn-active-color: #ffffff;
+  --bs-btn-active-bg: var(--campus-forest-950);
+  --bs-btn-active-border-color: var(--campus-forest-950);
+  color: var(--campus-forest-800);
+  border-color: var(--campus-forest-700);
+}
+
+.btn.btn-outline-primary:hover,
+.btn.btn-outline-primary:focus-visible {
+  color: #ffffff;
+  background-color: var(--campus-forest-800);
+  border-color: var(--campus-forest-800);
+}
+
+.form-check-input:checked {
+  background-color: var(--campus-forest-800);
+  border-color: var(--campus-forest-800);
 }
 
 .btn-light {

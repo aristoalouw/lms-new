@@ -78,7 +78,7 @@ async function createClass() {
       lecturerIds: selected.map(item => item.id),
       lecturerNames: selected.map(item => item.displayName),
     }, { headers: { 'Idempotency-Key': key('class-create') } })
-    noticeMessage.value = 'Kelas dan ruang LMS berhasil dibuat secara atomik.'
+    noticeMessage.value = 'Kelas dan ruang pembelajaran berhasil dibuat.'
     form.section = 'A'
     await load()
   } catch (error) {
@@ -110,7 +110,7 @@ onMounted(() => load())
 
 <template>
   <div class="page-stack" data-clarity-mask="true">
-    <AppPageHeader eyebrow="Administrasi LMS" title="Kelas & enrolment" description="Satu kelas akademik menghasilkan tepat satu ruang LMS. Kombinasi periode, mata kuliah, dan section dijaga unik secara transactional.">
+    <AppPageHeader eyebrow="Administrasi akademik" title="Kelas & peserta" description="Kelola kelas perkuliahan, dosen pengampu, dan ruang pembelajaran untuk setiap periode akademik.">
       <template #actions><button class="btn btn-outline-secondary" type="button" :disabled="loading" @click="load()"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
     </AppPageHeader>
 
@@ -125,7 +125,7 @@ onMounted(() => load())
         <header><span class="section-kicker">Kelas baru</span><h2>Buat kelas dan ruang LMS</h2></header>
         <form class="class-form" @submit.prevent="createClass">
           <div v-if="!loading && (!catalog.courses.length || !catalog.periods.length)" class="alert alert-warning span-2 mb-0" role="alert">Buat minimal satu versi mata kuliah ACTIVE dan periode aktif melalui API katalog sebelum membuat kelas.</div>
-          <label class="span-2"><span>Versi mata kuliah</span><select v-model="form.courseVersionId" class="form-select" required><option value="" disabled>Pilih versi mata kuliah</option><option v-for="course in catalog.courses" :key="course.id" :value="course.id">{{ course.code }} · {{ course.name }} (v{{ course.version }})</option></select><small>Hanya versi ACTIVE dan immutable yang dapat dipakai.</small></label>
+          <label class="span-2"><span>Versi mata kuliah</span><select v-model="form.courseVersionId" class="form-select" required><option value="" disabled>Pilih versi mata kuliah</option><option v-for="course in catalog.courses" :key="course.id" :value="course.id">{{ course.code }} · {{ course.name }} (v{{ course.version }})</option></select><small>Hanya mata kuliah berstatus aktif yang dapat dipilih.</small></label>
           <label><span>Section</span><input v-model="form.section" class="form-control" required maxlength="20"></label>
           <label><span>Periode akademik</span><select v-model="form.periodId" class="form-select" required><option value="" disabled>Pilih periode aktif</option><option v-for="period in catalog.periods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ termLabel(period.term) }}</option></select></label>
           <div v-if="selectedCourse && selectedProgram" class="catalog-summary span-2" aria-live="polite"><div><small>Kode / SKS</small><strong>{{ selectedCourse.code }} · {{ selectedCourse.credits }} SKS</strong></div><div><small>Program studi</small><strong>{{ selectedProgram.name }}</strong></div><div><small>Unit</small><strong>{{ selectedProgram.facultyId }}</strong></div></div>

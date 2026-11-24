@@ -33,7 +33,7 @@ function addFile(fileId: string) {
     <FilePicker v-if="assignment.maximumFiles > 0 && fileIds.length < assignment.maximumFiles" :model-value="selectedFileId" :space-id="spaceId" label="Lampiran (opsional)" @update:model-value="addFile" />
     <ul v-if="fileIds.length" class="selected-files"><li v-for="file in fileIds" :key="file"><code>{{ file }}</code><button class="btn btn-sm btn-link text-danger" type="button" aria-label="Hapus lampiran" @click="fileIds = fileIds.filter(item => item !== file)"><i class="uil uil-times" /></button></li></ul>
     <small class="file-limit">{{ fileIds.length }} / {{ assignment.maximumFiles }} file dipilih</small>
-    <div class="submission-note"><i class="uil uil-shield-check" /><span>Menyimpan draf belum mengirim tugas. Pengumpulan final menjadi attempt immutable.</span></div>
+    <div class="submission-note"><i class="uil uil-shield-check" /><span>Menyimpan draf belum mengirim tugas. Setelah dikumpulkan, jawaban terkirim tercatat sebagai versi final.</span></div>
     <div class="submission-actions">
       <button class="btn btn-outline-secondary" type="button" :disabled="busy" @click="emit('save', { content: answer.trim() ? { format: 'PLAIN_TEXT', text: answer } : undefined, fileIds, expectedVersion: submission?.version || 0 })">Simpan draf</button>
       <button class="btn btn-primary" type="button" :disabled="busy || !canSubmit" @click="emit('submit', submission!.version)">Kirim final</button>

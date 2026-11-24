@@ -356,7 +356,7 @@ onMounted(initialize)
 
 <template>
   <div class="tracer-page">
-    <AppPageHeader eyebrow="Alumni & outcome" title="Tracer Study" description="Kelola distribusi aman, persetujuan alumni, outcome karier, dan statistik deskriptif yang menjaga privasi.">
+    <AppPageHeader eyebrow="Alumni & outcome" title="Tracer Study" description="Kelola survei alumni, persetujuan pengisian, data karier lulusan, dan laporan rekapitulasi.">
       <template #actions>
         <button v-if="(canManage || canConfigure) && !publicView" class="btn btn-outline-secondary" type="button" @click="activeTab = 'setup'"><i class="uil uil-setting me-2" />Konfigurasi</button>
         <button v-if="canReport && !publicView" class="btn btn-primary" type="button" @click="downloadReport"><i class="uil uil-file-download me-2" />Ekspor agregat</button>

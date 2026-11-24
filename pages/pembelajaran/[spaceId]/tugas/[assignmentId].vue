@@ -163,7 +163,7 @@ async function downloadAttemptFile(file: LearningFileReference) {
           <section class="attempt-history" aria-labelledby="attempt-history-title">
             <header>
               <h3 id="attempt-history-title">Riwayat attempt final</h3>
-              <p>Setiap attempt tersimpan sebagai snapshot immutable.</p>
+              <p>Setiap pengumpulan tersimpan sebagai arsip tetap.</p>
             </header>
             <div v-if="historyPending" class="history-state" role="status">
               <span class="spinner-border spinner-border-sm" aria-hidden="true" />

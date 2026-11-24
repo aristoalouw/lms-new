@@ -227,7 +227,7 @@ onMounted(initialize)
 
 <template>
   <div class="page-stack pddikti-page">
-    <AppPageHeader eyebrow="Pelaporan eksternal" title="PDDIKTI Neo Feeder" description="Validasi sumber internal, kelola worker berlease, dan rekonsiliasi snapshot tanpa penimpaan tersembunyi.">
+    <AppPageHeader eyebrow="Pelaporan eksternal" title="PDDIKTI Neo Feeder" description="Periksa kelengkapan data kampus, antrean pengiriman, dan sinkronisasi PDDIKTI Neo Feeder.">
       <template #actions><NuxtLink v-if="can('pddikti.read')" class="btn btn-outline-secondary" to="/pddikti/data-mahasiswa"><i class="uil uil-user-square me-2" />PDM & ijazah</NuxtLink><button class="btn btn-outline-secondary" type="button" :disabled="loading" @click="initialize"><i class="uil uil-refresh me-2" />Muat ulang</button><button v-if="canMutate" class="btn btn-primary" type="button" @click="activeTab = 'queue'"><i class="uil uil-cloud-upload me-2" />Buat antrean</button></template>
     </AppPageHeader>
     <div v-if="noticeMessage" class="alert alert-success mb-0" role="status">{{ noticeMessage }}</div><div v-if="errorMessage" class="alert alert-danger mb-0" role="alert">{{ errorMessage }}</div>

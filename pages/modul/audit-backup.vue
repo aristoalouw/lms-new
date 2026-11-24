@@ -51,17 +51,17 @@ onMounted(() => Promise.all([loadAudit(), loadStatus()]))
 
 <template>
   <div class="page-stack operations-page">
-    <AppPageHeader eyebrow="Operasi LMS" title="Audit & backup" description="Pantau kesehatan rilis dan jejak mutasi. Backup serta restore tetap dijalankan dari runbook oleh operator berwenang." />
+    <AppPageHeader eyebrow="Administrasi sistem" title="Audit & cadangan data" description="Pantau status layanan dan riwayat aktivitas penting pada portal kampus." />
     <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
 
     <section class="status-grid" aria-label="Status sistem">
-      <article><span>Liveness</span><strong :class="health?.status === 'ok' ? 'ok' : 'bad'">{{ health?.status || 'memuat' }}</strong><small>{{ health?.version || 'versi belum tersedia' }}</small></article>
-      <article><span>Readiness</span><strong :class="readiness?.status === 'ready' ? 'ok' : 'bad'">{{ readiness?.status || 'memuat' }}</strong><small>{{ readiness ? formatDate(readiness.timestamp) : 'Memeriksa dependensi…' }}</small></article>
+      <article><span>Status server</span><strong :class="health?.status === 'ok' ? 'ok' : 'bad'">{{ health?.status || 'memuat' }}</strong><small>{{ health?.version || 'versi belum tersedia' }}</small></article>
+      <article><span>Kesiapan layanan</span><strong :class="readiness?.status === 'ready' ? 'ok' : 'bad'">{{ readiness?.status || 'memuat' }}</strong><small>{{ readiness ? formatDate(readiness.timestamp) : 'Memeriksa dependensi…' }}</small></article>
       <article><span>Backup & restore</span><strong class="manual">Gate manual</strong><small>Wajib lulus isolated restore drill sebelum promosi produksi.</small></article>
     </section>
 
     <section class="audit-card">
-      <header><div><span>Jejak append-only</span><h2>Mutasi terbaru</h2><p>UI hanya menampilkan metadata minimum; payload sensitif tidak dirender.</p></div><button class="btn btn-sm btn-outline-secondary" type="button" :disabled="loading" @click="loadAudit()">Muat ulang</button></header>
+      <header><div><span>Riwayat sistem</span><h2>Perubahan terbaru</h2><p>Menampilkan ringkasan perubahan data tanpa menampilkan informasi pribadi sensitif.</p></div><button class="btn btn-sm btn-outline-secondary" type="button" :disabled="loading" @click="loadAudit()">Muat ulang</button></header>
       <div v-if="loading" class="state"><span class="spinner-border spinner-border-sm" aria-hidden="true" /> Memuat audit…</div>
       <div v-else-if="entries.length" class="table-responsive">
         <table>
@@ -69,7 +69,7 @@ onMounted(() => Promise.all([loadAudit(), loadStatus()]))
           <tbody><tr v-for="entry in entries" :key="entry.id"><td>{{ formatDate(entry.occurredAt) }}</td><td><strong>{{ entry.action }}</strong></td><td>{{ entry.resource.type }}<small>{{ entry.resource.id }}</small></td><td>{{ entry.actor.uid }}<small>{{ entry.actor.roles.join(', ') }}</small></td><td><StatusBadge :status="entry.outcome === 'SUCCESS' ? 'success' : 'failed'" :label="entry.outcome" /></td></tr></tbody>
         </table>
       </div>
-      <EmptyState v-else title="Belum ada audit" description="Mutasi kelas, enrolment, konten, nilai, file, dan presensi akan muncul di sini." />
+      <EmptyState v-else title="Belum ada riwayat aktivitas" description="Perubahan kelas, peserta, materi, nilai, berkas, dan presensi akan muncul di sini." />
       <footer v-if="nextCursor"><button class="btn btn-sm btn-outline-primary" type="button" :disabled="loadingMore" @click="loadAudit(false)">{{ loadingMore ? 'Memuat…' : 'Muat audit berikutnya' }}</button></footer>
     </section>
   </div>

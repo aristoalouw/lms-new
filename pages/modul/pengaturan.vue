@@ -13,22 +13,22 @@ const loading = ref(true)
 const errorMessage = ref('')
 
 const capabilities = computed(() => [
-  { label: 'Profil fitur', value: String(config.public.featureProfile), active: config.public.featureProfile === 'full-campus', detail: 'Mengendalikan route, navigasi, dan API server.' },
-  { label: 'Upload file', value: config.public.fileUploadsEnabled ? 'Aktif' : 'Nonaktif', active: config.public.fileUploadsEnabled, detail: 'Memerlukan Storage privat dan malware scanner.' },
-  { label: 'Email', value: config.public.emailDeliveryEnabled ? 'Aktif' : 'Nonaktif', active: config.public.emailDeliveryEnabled, detail: 'Pengiriman melalui outbox server.' },
-  { label: 'Sentry', value: config.public.sentryEnabled ? 'Aktif' : 'Nonaktif', active: config.public.sentryEnabled, detail: 'Telemetry client/server dengan penyaringan PII.' },
+  { label: 'Profil modul', value: config.public.featureProfile === 'full-campus' ? 'Kampus lengkap' : 'LMS inti', active: config.public.featureProfile === 'full-campus', detail: 'Menentukan modul yang tersedia pada portal kampus.' },
+  { label: 'Unggah berkas', value: config.public.fileUploadsEnabled ? 'Aktif' : 'Nonaktif', active: config.public.fileUploadsEnabled, detail: 'Penyimpanan berkas privat dan pemindaian keamanan.' },
+  { label: 'Email kampus', value: config.public.emailDeliveryEnabled ? 'Aktif' : 'Nonaktif', active: config.public.emailDeliveryEnabled, detail: 'Pengiriman email otomatis dari portal.' },
+  { label: 'Pemantauan galat', value: config.public.sentryEnabled ? 'Aktif' : 'Nonaktif', active: config.public.sentryEnabled, detail: 'Pencatatan gangguan aplikasi untuk tim teknis.' },
 ])
 
 const links = computed(() => [
-  ...(can('accounts:manage') ? [{ to: '/admin/pengguna', label: 'Pengguna & akses', detail: 'Akun, role, scope, status, dan revocation', icon: 'uil-users-alt' }] : []),
+  ...(can('accounts:manage') ? [{ to: '/admin/pengguna', label: 'Pengguna & akses', detail: 'Kelola akun, peran, lingkup prodi, dan status aktif', icon: 'uil-users-alt' }] : []),
   ...(can('academic.write') || can('academic.configure') ? [{ to: '/akademik/master', label: 'Master akademik', detail: 'Program studi, periode, mata kuliah, kurikulum, dan kalender', icon: 'uil-book-open' }] : []),
-  ...(can('pmb.configure') ? [{ to: '/pmb/pengaturan', label: 'Konfigurasi PMB', detail: 'Gelombang, jadwal, biaya, kapasitas, dan program', icon: 'uil-user-plus' }] : []),
-  ...(can('evaluation.configure') ? [{ to: '/evaluasi', label: 'Konfigurasi evaluasi', detail: 'Form, periode evaluasi dosen, dan ambang anonimitas', icon: 'uil-favorite' }] : []),
-  ...(can('graduation.configure') ? [{ to: '/kelulusan', label: 'Konfigurasi kelulusan', detail: 'Periode, persyaratan, dan template dokumen', icon: 'uil-graduation-cap' }] : []),
-  ...(can('tracer.configure') ? [{ to: '/tracer-study', label: 'Konfigurasi tracer study', detail: 'Kuesioner dan periode distribusi tanpa data responden', icon: 'uil-chart-growth' }] : []),
-  ...(can('pddikti:view') ? [{ to: '/pddikti', label: 'Operasi PDDIKTI', detail: 'Status worker, antrean, dan kesehatan adapter tanpa approval bisnis', icon: 'uil-sync' }] : []),
-  ...(can('audit.read') ? [{ to: '/modul/audit-backup', label: 'Audit & operasi', detail: 'Audit append-only, liveness, readiness, dan runbook backup', icon: 'uil-shield-check' }] : []),
-  { to: '/notifikasi', label: 'Notifikasi', detail: 'Preferensi, template, outbox, dan delivery', icon: 'uil-bell' },
+  ...(can('pmb.configure') ? [{ to: '/pmb/pengaturan', label: 'Pengaturan PMB', detail: 'Gelombang, jadwal, biaya pendaftaran, kapasitas, dan prodi', icon: 'uil-user-plus' }] : []),
+  ...(can('evaluation.configure') ? [{ to: '/evaluasi', label: 'Pengaturan evaluasi', detail: 'Formulir, periode evaluasi dosen, dan ketentuan anonimitas', icon: 'uil-favorite' }] : []),
+  ...(can('graduation.configure') ? [{ to: '/kelulusan', label: 'Pengaturan kelulusan', detail: 'Periode yudisium, persyaratan, dan template dokumen', icon: 'uil-graduation-cap' }] : []),
+  ...(can('tracer.configure') ? [{ to: '/tracer-study', label: 'Pengaturan tracer study', detail: 'Kuesioner dan jadwal distribusi survei alumni', icon: 'uil-chart-growth' }] : []),
+  ...(can('pddikti:view') ? [{ to: '/pddikti', label: 'Pemantauan PDDIKTI', detail: 'Status antrean dan sinkronisasi data Neo Feeder', icon: 'uil-sync' }] : []),
+  ...(can('audit.read') ? [{ to: '/modul/audit-backup', label: 'Audit & cadangan data', detail: 'Riwayat aktivitas sistem dan status layanan', icon: 'uil-shield-check' }] : []),
+  { to: '/notifikasi', label: 'Notifikasi', detail: 'Preferensi, template pemberitahuan, dan antrean email', icon: 'uil-bell' },
 ])
 
 async function loadStatus() {
@@ -46,18 +46,18 @@ onMounted(loadStatus)
 
 <template>
   <div class="page-stack settings-page">
-    <AppPageHeader eyebrow="Administrasi sistem" title="Pengaturan" description="Status dan pintasan konfigurasi aktual. Halaman ini tidak menampilkan angka atau integrasi contoh.">
+    <AppPageHeader eyebrow="Administrasi sistem" title="Pengaturan" description="Ringkasan status layanan dan pintasan pengaturan modul kampus.">
       <template #actions><button class="btn btn-outline-secondary" type="button" :disabled="loading" @click="loadStatus"><i class="uil uil-refresh me-2" />Muat ulang status</button></template>
     </AppPageHeader>
     <div v-if="errorMessage" class="alert alert-warning">{{ errorMessage }}</div>
     <section class="status-grid" aria-label="Status rilis">
       <article><span>Lingkungan</span><strong>{{ config.public.appEnvironment }}</strong><small>{{ config.public.appName }}</small></article>
-      <article><span>Liveness</span><strong :class="{ good: health?.status === 'ok' }">{{ health?.status || 'memuat' }}</strong><small>Release {{ health?.version || 'belum tersedia' }}</small></article>
-      <article><span>Readiness</span><strong :class="{ good: readiness?.status === 'ready' }">{{ readiness?.status || 'memuat' }}</strong><small>Firebase dan dependensi inti</small></article>
-      <article><span>Akses aktif</span><strong>{{ user?.activeRole || '—' }}</strong><small>{{ user?.permissions.length || 0 }} permission pada role ini</small></article>
+      <article><span>Status server</span><strong :class="{ good: health?.status === 'ok' }">{{ health?.status === 'ok' ? 'Aktif' : (health?.status || 'memuat') }}</strong><small>Versi {{ health?.version || 'belum tersedia' }}</small></article>
+      <article><span>Kesiapan layanan</span><strong :class="{ good: readiness?.status === 'ready' }">{{ readiness?.status === 'ready' ? 'Siap' : (readiness?.status || 'memuat') }}</strong><small>Basis data dan autentikasi</small></article>
+      <article><span>Peran aktif</span><strong>{{ user?.activeRole || '-' }}</strong><small>{{ user?.permissions.length || 0 }} hak akses aktif</small></article>
     </section>
     <section class="capability-grid" aria-label="Kapabilitas lingkungan"><article v-for="item in capabilities" :key="item.label"><span :class="item.active ? 'capability-dot active' : 'capability-dot'" /><div><small>{{ item.label }}</small><strong>{{ item.value }}</strong><p>{{ item.detail }}</p></div></article></section>
-    <section class="surface-card"><header><span>Konfigurasi terotorisasi</span><h2>Ruang kerja pengaturan</h2><p>Pilih modul. Setiap perubahan tetap divalidasi oleh API, scope, optimistic version, dan audit.</p></header><div class="link-grid"><NuxtLink v-for="item in links" :key="item.to" :to="item.to"><span><i class="uil" :class="item.icon" /></span><div><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><i class="uil uil-angle-right" /></NuxtLink></div></section>
+    <section class="surface-card"><header><span>Modul pengaturan</span><h2>Pengaturan portal kampus</h2><p>Pilih modul di bawah untuk memperbarui pengaturan sesuai kewenangan Anda.</p></header><div class="link-grid"><NuxtLink v-for="item in links" :key="item.to" :to="item.to"><span><i class="uil" :class="item.icon" /></span><div><strong>{{ item.label }}</strong><small>{{ item.detail }}</small></div><i class="uil uil-angle-right" /></NuxtLink></div></section>
   </div>
 </template>
 

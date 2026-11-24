@@ -190,7 +190,7 @@ onMounted(initializeDashboard)
     <AppPageHeader
       eyebrow="Akuisisi mahasiswa"
       title="Penerimaan Mahasiswa Baru"
-      description="Pantau pendaftaran, verifikasi berkas, hasil seleksi, dan proses aktivasi mahasiswa dari data Firebase."
+      description="Pantau pendaftaran, verifikasi berkas, hasil seleksi, dan aktivasi akun mahasiswa baru."
       :status="selectedWave ? 'active' : 'pending'"
       :status-label="selectedWave?.label || 'Belum ada gelombang aktif'"
     >

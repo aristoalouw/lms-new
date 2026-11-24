@@ -179,7 +179,7 @@ async function saveCourse() {
         <label><span>Program studi</span><select v-model="course.programStudyId" class="form-select" required><option value="" disabled>Pilih program</option><option v-for="program in catalog.programs" :key="program.id" :value="program.id">{{ program.code }} · {{ program.name }}</option></select></label>
         <label><span>SKS</span><input v-model.number="course.credits" class="form-control" type="number" min="1" max="12" required></label>
         <label><span>Rekomendasi semester</span><input v-model.number="course.semesterRecommendation" class="form-control" type="number" min="1" max="14" required></label>
-        <p class="version-note">Versi berikutnya: {{ latestCourseVersion + 1 }}. Versi yang dibuat bersifat immutable.</p>
+        <p class="version-note">Versi berikutnya: {{ latestCourseVersion + 1 }}. Versi yang telah disimpan akan tetap tercatat sebagai arsip kurikulum.</p>
         <button class="btn btn-outline-primary" type="submit" :disabled="busy || !catalog.programs.length">Buat versi ACTIVE</button>
       </form>
     </details>

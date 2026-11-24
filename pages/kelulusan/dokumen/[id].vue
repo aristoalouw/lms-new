@@ -104,8 +104,8 @@ onMounted(loadRender)
 
       <section class="integrity-panel">
         <div><span class="section-kicker">Sidik konten SHA-256</span><code>{{ render.contentHash }}</code></div>
-        <div><span class="section-kicker">ID snapshot terbit</span><code>{{ render.documentId }}</code></div>
-        <p>Hash dihitung dari snapshot template dan payload render yang disimpan saat penerbitan. Perubahan template aktif berikutnya tidak mengubah versi dokumen ini.</p>
+        <div><span class="section-kicker">ID dokumen terbit</span><code>{{ render.documentId }}</code></div>
+        <p>Kode verifikasi dihitung dari isi dokumen saat diterbitkan. Perubahan templat di kemudian hari tidak mengubah dokumen yang sudah terbit.</p>
       </section>
     </template>
   </div>

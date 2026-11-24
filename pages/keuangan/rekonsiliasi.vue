@@ -188,7 +188,7 @@ onMounted(initialize)
     <AppPageHeader
       eyebrow="Keuangan mahasiswa"
       title="Rekonsiliasi Payment Gateway"
-      description="Bandingkan laporan settlement provider dengan event internal bertanda tangan tanpa mencatat pembayaran ganda."
+      description="Cocokkan laporan penyelesaian dari penyedia pembayaran dengan catatan transaksi kampus tanpa pencatatan ganda."
       status="active"
       :status-label="provider ? `${provider} · ${signatureAlgorithm}` : 'Memuat konfigurasi'"
     >

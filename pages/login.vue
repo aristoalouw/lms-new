@@ -134,8 +134,8 @@ onMounted(() => {
       </div>
 
       <div class="login-story__footer">
-        <span>Status layanan</span>
-        <strong><i aria-hidden="true" /> Status layanan diperiksa saat Anda masuk</strong>
+        <span>Portal resmi</span>
+        <strong><i aria-hidden="true" /> Sekolah Tinggi Teologi Saint Paul Bandung</strong>
       </div>
     </section>
 
@@ -219,7 +219,7 @@ onMounted(() => {
 
         <form v-if="showReset" class="reset-panel" aria-labelledby="reset-title" @submit.prevent="submitReset">
           <div class="reset-panel__heading"><div><span class="eyebrow-text">Pemulihan akun</span><h3 id="reset-title">Atur ulang kata sandi</h3></div><button type="button" aria-label="Tutup formulir pemulihan" @click="showReset = false"><i class="uil uil-times" aria-hidden="true" /></button></div>
-          <p>Masukkan email akun. Petunjuk dikirim melalui {{ passwordResetDeliveryLabel }} dan respons yang sama digunakan agar status akun tetap rahasia.</p>
+          <p>Masukkan email kampus Anda. Tautan pengaturan ulang kata sandi akan dikirim melalui {{ passwordResetDeliveryLabel }}.</p>
           <div v-if="resetMessage" class="alert alert-success py-2" role="status">{{ resetMessage }}</div>
           <div v-if="resetError" class="alert alert-danger py-2" role="alert">{{ resetError }}</div>
           <label class="form-label" for="reset-email">Email akun</label>

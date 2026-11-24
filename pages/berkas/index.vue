@@ -346,7 +346,7 @@ onMounted(async () => {
     <AppPageHeader
       eyebrow="Penyimpanan privat"
       title="Berkas"
-      description="Unggah, periksa, dan bagikan dokumen kampus tanpa membuat URL publik permanen."
+      description="Unggah, simpan, dan bagikan dokumen kampus secara privat."
     >
       <template #actions>
         <button class="btn btn-primary" type="button" :disabled="!uploadsEnabled" @click="openUpload()">
@@ -373,12 +373,12 @@ onMounted(async () => {
       </article>
       <article class="summary-card"><span class="summary-icon"><i class="uil uil-file-check-alt" /></span><div><small>File aman tampil</small><strong>{{ cleanCount }}</strong><p>Lolos verifikasi dan pemindaian</p></div></article>
       <article class="summary-card"><span class="summary-icon summary-icon--amber"><i class="uil uil-shield-exclamation" /></span><div><small>Dalam karantina</small><strong>{{ quarantineCount }}</strong><p>Tidak dapat diunduh sementara</p></div></article>
-      <article class="summary-card"><span class="summary-icon summary-icon--blue"><i class="uil uil-lock-access" /></span><div><small>Privasi unduhan</small><strong>5 menit</strong><p>Tautan bertanda tangan otomatis kedaluwarsa</p></div></article>
+      <article class="summary-card"><span class="summary-icon summary-icon--blue"><i class="uil uil-lock-access" /></span><div><small>Privasi unduhan</small><strong>5 menit</strong><p>Tautan unduhan otomatis berakhir setelah 5 menit</p></div></article>
     </section>
 
     <section class="security-strip" aria-label="Perlindungan file">
       <span><i class="uil uil-shield-check" /></span>
-      <div><strong>Pemeriksaan berlapis aktif</strong><p>Ekstensi, MIME, signature byte, kuota, dan malware diverifikasi sebelum file dapat diunduh.</p></div>
+      <div><strong>Pemeriksaan keamanan berkas aktif</strong><p>Jenis, ukuran, dan keamanan setiap berkas diperiksa sebelum dapat diunduh.</p></div>
       <small><i class="uil uil-lock me-1" />Tidak ada URL publik</small>
     </section>
 
@@ -454,7 +454,7 @@ onMounted(async () => {
             <label v-if="shareFile" class="share-role"><span>Penerima</span><select v-model="shareRole" class="form-select form-select-sm" :disabled="uploading"><option value="student">Mahasiswa satu prodi</option><option value="lecturer">Dosen satu prodi</option><option value="academic_staff">Staf akademik satu prodi</option></select></label>
           </div>
 
-          <div class="policy-note"><i class="uil uil-shield-check" /><p><strong>Karantina otomatis</strong><span>File belum dapat dibuka sampai signature dan pemindaian malware dinyatakan aman.</span></p></div>
+          <div class="policy-note"><i class="uil uil-shield-check" /><p><strong>Karantina otomatis</strong><span>Berkas dapat diunduh segera setelah pemeriksaan keamanan selesai.</span></p></div>
           <div v-if="uploading || uploadProgress" class="upload-progress" aria-live="polite"><div><span>{{ uploadStage }}</span><strong>{{ uploadProgress }}%</strong></div><div class="progress"><div class="progress-bar" :style="{ width: `${uploadProgress}%` }" /></div></div>
           <p v-if="uploadError" class="upload-error" role="alert"><i class="uil uil-exclamation-triangle" />{{ uploadError }}</p>
         </div>

@@ -160,8 +160,8 @@ onMounted(load)
             <dd>{{ user.studentId }}</dd>
           </div>
           <div>
-            <dt>Izin aktif</dt>
-            <dd>{{ user?.permissions.length || 0 }} permission</dd>
+            <dt>Hak akses aktif</dt>
+            <dd>{{ user?.permissions.length || 0 }} hak akses</dd>
           </div>
         </dl>
 
@@ -212,7 +212,7 @@ onMounted(load)
         </header>
 
         <div v-if="!emailAvailable" class="alert alert-info py-2 px-3 small mb-3" role="status">
-          Notifikasi dalam aplikasi aktif. Pengiriman email belum diaktifkan pada paket awal.
+          Notifikasi dalam aplikasi aktif. Pengiriman email kampus belum diaktifkan.
         </div>
 
         <div class="pref-list">

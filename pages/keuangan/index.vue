@@ -165,7 +165,7 @@ onMounted(() => {
 
 <template>
   <div class="page-stack" data-clarity-mask="true">
-    <AppPageHeader eyebrow="Administrasi mahasiswa" title="Keuangan" description="Kelola tarif berversi, tagihan, cicilan, potongan, deposit, bukti bayar, dan saldo piutang tanpa mengubah riwayat." status="active" status-label="IDR · ledger immutable">
+    <AppPageHeader eyebrow="Administrasi mahasiswa" title="Keuangan" description="Kelola tarif kuliah, tagihan, cicilan, potongan, deposit, bukti pembayaran, dan saldo piutang mahasiswa." status="active" status-label="Rupiah (IDR)">
       <template #actions><NuxtLink v-if="isFinance" class="btn btn-outline-secondary" to="/keuangan/rekonsiliasi"><i class="uil uil-exchange me-2" />Rekonsiliasi gateway</NuxtLink><button class="btn btn-primary" :disabled="loading" @click="loadBilling()"><i class="uil uil-refresh me-2" />Muat ulang</button></template>
     </AppPageHeader>
 

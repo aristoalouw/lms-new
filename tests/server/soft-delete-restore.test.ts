@@ -25,6 +25,8 @@ import {
   restoreEvaluationPeriod,
 } from '../../server/services/evaluations'
 import { resetEvaluationMockState } from '../../server/services/evaluations-mock'
+import { listLearningSpaces } from '../../server/services/learning'
+import { resetLearningMockState } from '../../server/services/learning-mock'
 import { resetMockState } from '../../server/utils/mock-store'
 import { authContext } from './fixtures'
 
@@ -36,6 +38,7 @@ describe('soft-delete and restore across classes, evaluations, and academic mast
     resetAcademicClassStateForTests()
     resetAcademicAdministrationStateForTests()
     resetEvaluationMockState()
+    resetLearningMockState()
   })
 
   it('soft-deletes and restores an academic class without losing it', async () => {
@@ -50,6 +53,8 @@ describe('soft-delete and restore across classes, evaluations, and academic mast
 
     const visibleDefault = await listAcademicClasses(staff)
     expect(visibleDefault.some(item => item.id === target.id)).toBe(false)
+    const spacesWhileDeleted = await listLearningSpaces(staff)
+    expect(spacesWhileDeleted.some(space => space.id === target.id)).toBe(false)
 
     const visibleWithTrash = await listAcademicClasses(staff, { includeDeleted: true })
     expect(visibleWithTrash.some(item => item.id === target.id && Boolean(item.deletedAt))).toBe(true)
@@ -60,6 +65,8 @@ describe('soft-delete and restore across classes, evaluations, and academic mast
 
     const visibleAfterRestore = await listAcademicClasses(staff)
     expect(visibleAfterRestore.some(item => item.id === target.id)).toBe(true)
+    const spacesAfterRestore = await listLearningSpaces(staff)
+    expect(spacesAfterRestore.some(space => space.id === target.id)).toBe(true)
   })
 
   it('soft-deletes and restores evaluation forms and periods', async () => {

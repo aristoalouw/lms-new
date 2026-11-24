@@ -157,10 +157,12 @@ function generalManager(context: AuthContext, space: LearningSpace): boolean {
 }
 
 export async function learningSpaceAccess(context: AuthContext, space: LearningSpace): Promise<LearningSpaceAccess> {
+  if (space.deletedAt) return { canRead: false, canManage: false }
   if (space.kind === 'ACADEMIC_CLASS') {
     if (!space.academicClassId) return { canRead: false, canManage: false }
     try {
       const detail = await getAcademicClassDetail(context, space.academicClassId)
+      if (detail.classRecord.deletedAt) return { canRead: false, canManage: false }
       const canManage = assignedClassManager(context, detail.classRecord)
       const studentId = hasRole(context, 'student') && detail.roster.length === 1 ? detail.roster[0]?.studentId : undefined
       return { canRead: true, canManage, studentId, academicClass: detail.classRecord }
@@ -481,7 +483,23 @@ export async function listLearningSpacesPage(
     .filter(space => afterSpaceCursor(space, cursor))
   const visible: LearningSpace[] = []
   for (const space of spaces) {
-    if ((await learningSpaceAccess(context, space)).canRead) visible.push(space)
+    if (space.deletedAt) continue
+    const access = await learningSpaceAccess(context, space)
+    if (!access.canRead) continue
+    if (access.academicClass) {
+      visible.push({
+        ...space,
+        title: `${access.academicClass.courseName} · Kelas ${access.academicClass.section}`,
+        courseCode: access.academicClass.courseCode,
+        section: access.academicClass.section,
+        periodId: access.academicClass.periodId,
+        programStudyId: access.academicClass.programStudyId,
+        lecturerIds: [...access.academicClass.lecturerIds],
+        status: access.academicClass.status === 'ACTIVE' ? 'ACTIVE' : 'ARCHIVED',
+      })
+    } else {
+      visible.push(space)
+    }
     if (visible.length > limit) break
   }
   const hasMore = visible.length > limit

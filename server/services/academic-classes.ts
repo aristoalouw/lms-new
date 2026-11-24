@@ -959,6 +959,7 @@ function learningSpaceForClass(record: AcademicClassRecord, actorId: string, now
     createdBy: record.createdBy ?? actorId,
     updatedAt: now,
     updatedBy: actorId,
+    ...(record.deletedAt ? { deletedAt: record.deletedAt } : {}),
   }
 }
 

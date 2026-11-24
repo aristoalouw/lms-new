@@ -21,6 +21,7 @@ export interface LearningSpace {
   createdBy: string
   updatedAt: string
   updatedBy: string
+  deletedAt?: string
 }
 
 export type SafeRichContent =
@@ -53,6 +54,7 @@ export interface LearningModule {
   createdBy: string
   updatedAt: string
   updatedBy: string
+  deletedAt?: string
 }
 
 export interface LearningModuleVersion {
@@ -97,6 +99,7 @@ export interface LearningMaterial {
   createdBy: string
   updatedAt: string
   updatedBy: string
+  deletedAt?: string
 }
 
 export interface LearningMaterialVersion {
@@ -137,6 +140,7 @@ export interface LearningAssignment {
   createdBy: string
   updatedAt: string
   updatedBy: string
+  deletedAt?: string
 }
 
 export interface LearningAssignmentVersion {
@@ -222,6 +226,7 @@ export interface LearningAnnouncement {
   createdBy: string
   updatedAt: string
   updatedBy: string
+  deletedAt?: string
 }
 
 export interface LearningForumEdit {

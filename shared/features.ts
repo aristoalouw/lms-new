@@ -25,7 +25,7 @@ export function isFeatureEnabled(profile: FeatureProfile, feature: Feature): boo
 
 const pagePrefixes: ReadonlyArray<readonly [string, Feature]> = [
   ['/admin/pengguna', 'accounts'], ['/admin/kelas', 'classes'],
-  ['/akademik/kelas', 'classes'], ['/akademik/krs', 'krs'],
+  ['/akademik/kelas', 'classes'], ['/akademik/persetujuan-krs', 'krs'], ['/akademik/krs', 'krs'],
   ['/akademik', 'academic-admin'], ['/pembelajaran', 'learning'],
   ['/presensi', 'learning'], ['/pengguna', 'accounts'], ['/berkas', 'files'],
   ['/notifikasi', 'notifications'], ['/modul/notifikasi', 'notifications'],

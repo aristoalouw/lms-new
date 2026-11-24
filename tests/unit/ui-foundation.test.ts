@@ -122,6 +122,29 @@ describe('command palette authorization', () => {
     expect(adminCommands.map(item => item.to)).not.toEqual(expect.arrayContaining([
       '/keuangan',
       '/akademik/krs',
+      '/akademik/persetujuan-krs',
     ]))
+
+    const advisorPermissions = new Set<Permission>(permissionsForRole('advisor'))
+    const advisorCommands = navigationCommandsForAccess(
+      feature => isFeatureEnabled(profile, feature),
+      permission => !permission || advisorPermissions.has(permission as Permission),
+    )
+    expect(advisorCommands.map(item => item.to)).toContain('/akademik/persetujuan-krs')
+
+    const academicStaffPermissions = new Set<Permission>(permissionsForRole('academic_staff'))
+    const academicStaffCommands = navigationCommandsForAccess(
+      feature => isFeatureEnabled(profile, feature),
+      permission => !permission || academicStaffPermissions.has(permission as Permission),
+    )
+    expect(academicStaffCommands.map(item => item.to)).toContain('/akademik/persetujuan-krs')
+
+    const fullStudentPermissions = new Set<Permission>(permissionsForRole('student'))
+    const fullStudentCommands = navigationCommandsForAccess(
+      feature => isFeatureEnabled(profile, feature),
+      permission => !permission || fullStudentPermissions.has(permission as Permission),
+    )
+    expect(fullStudentCommands.map(item => item.to)).toContain('/akademik/krs')
+    expect(fullStudentCommands.map(item => item.to)).not.toContain('/akademik/persetujuan-krs')
   })
 })

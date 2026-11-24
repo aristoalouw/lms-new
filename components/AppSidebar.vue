@@ -63,13 +63,23 @@
 import { navigation, navigationPermissionAllowed } from '~/config/navigation'
 
 const { sidebarOpen, sidebarCompact, closeSidebar, toggleCompact } = useAppShell()
-const { can } = useAuth()
+const { user, can } = useAuth()
 const { enabled, pageEnabled, isLmsMvp } = useFeatureFlags()
 const config = useRuntimeConfig()
 const appName = computed(() => String(config.public.appName || 'Nusa Campus').trim())
 const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'N')
 
-const visibleNavigation = computed(() => navigation
-  .map(group => ({ ...group, items: group.items.filter(item => enabled(item.feature) && pageEnabled(item.to) && navigationPermissionAllowed(item.permission, can)) }))
-  .filter(group => group.items.length))
+const visibleNavigation = computed(() => {
+  const activeRole = user.value?.activeRole || user.value?.roles[0] || ''
+  const hideStudentKrs = activeRole !== 'student' && can('krs:approve')
+  return navigation
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => {
+        if (hideStudentKrs && item.to === '/akademik/krs') return false
+        return enabled(item.feature) && pageEnabled(item.to) && navigationPermissionAllowed(item.permission, can)
+      }),
+    }))
+    .filter(group => group.items.length)
+})
 </script>

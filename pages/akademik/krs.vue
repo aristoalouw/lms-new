@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { krsCourses as demoKrsCourses } from '~/data/workflows'
+import KrsApprovalWorkspace from '~/components/academic/KrsApprovalWorkspace.vue'
+import type { UserRole } from '~/types/domain'
 import type { KrsRecord, KrsStatus } from '~/server/types/domain'
 import type { KrsCatalogEntry, KrsPeriodPolicy, KrsStudentAcademicState, KrsWriteResult } from '~/server/types/krs-enrollment'
 import type { AcademicAdministrationWorkspace, AcademicPeriodDefinition, AcademicProgramStudy } from '~/server/types/academic-administration'
@@ -32,7 +34,7 @@ const courseFilter = ref<'ELIGIBLE' | 'CURRENT' | 'LOWER' | 'UPPER' | 'SELECTED'
 const showScheduleView = ref(false)
 const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
-const { user, can } = useAuth()
+const { user, can, switchRole } = useAuth()
 
 const courseCatalog = ref<CatalogRow[]>(config.public.demoMode
   ? demoKrsCourses.map(course => ({ ...course, id: course.code, semesterTrack: 'CURRENT' as const, eligibleBySemester: true, dayName: 'Senin', startMinutes: null, endMinutes: null }))
@@ -363,6 +365,19 @@ async function loadPeriod(periodId: string) {
 }
 
 const activeRole = computed(() => user.value?.activeRole || user.value?.roles[0] || '')
+const showApprovalWorkspace = computed(() => activeRole.value !== 'student' && can('krs:approve'))
+const switchableApprovalRole = computed<UserRole | null>(() => {
+  const roles = user.value?.roles || []
+  if (roles.includes('advisor')) return 'advisor'
+  if (roles.includes('academic_staff')) return 'academic_staff'
+  return null
+})
+const switchableRoleLabel = computed(() => switchableApprovalRole.value === 'advisor' ? 'Dosen wali' : 'Staf akademik')
+const switchToApprovalRole = async () => {
+  if (!switchableApprovalRole.value) return
+  await switchRole(switchableApprovalRole.value)
+  await navigateTo('/akademik/persetujuan-krs', { replace: true })
+}
 
 const initializeKrs = async () => {
   loading.value = true
@@ -372,8 +387,14 @@ const initializeKrs = async () => {
     loading.value = false
     return
   }
+  if (showApprovalWorkspace.value) {
+    loading.value = false
+    return
+  }
   if (activeRole.value !== 'student') {
-    setupMessage.value = 'Halaman ini khusus pengisian KRS mahasiswa. Untuk menyetujui KRS atau mengelola kelas, gunakan menu Administrasi Akademik atau Kelas & Peserta.'
+    setupMessage.value = switchableApprovalRole.value
+      ? `Pengisian KRS dilakukan oleh mahasiswa. Beralih ke peran ${switchableRoleLabel.value} untuk meninjau dan menyetujui pengajuan KRS mahasiswa.`
+      : 'Halaman ini khusus pengisian KRS mahasiswa. Evaluasi pengajuan KRS tersedia pada peran Dosen wali atau Staf akademik.'
     loading.value = false
     return
   }
@@ -403,7 +424,8 @@ onMounted(initializeKrs)
 </script>
 
 <template>
-  <div class="page-stack krs-page">
+  <KrsApprovalWorkspace v-if="showApprovalWorkspace" />
+  <div v-else class="page-stack krs-page">
     <AppPageHeader
       eyebrow="Akademik mahasiswa"
       title="Kartu Rencana Studi"
@@ -427,7 +449,8 @@ onMounted(initializeKrs)
     <div v-else-if="setupMessage" class="setup-box">
       <EmptyState icon="uil-clipboard-notes" title="Ruang pengisian KRS mahasiswa" :description="setupMessage" />
       <div class="setup-actions">
-        <NuxtLink v-if="can('academic.read')" class="btn btn-primary" to="/akademik/administrasi"><i class="uil uil-check-square me-1" />Buka Persetujuan KRS</NuxtLink>
+        <button v-if="switchableApprovalRole" class="btn btn-primary" type="button" @click="switchToApprovalRole"><i class="uil uil-exchange me-1" />Beralih ke peran {{ switchableRoleLabel }}</button>
+        <NuxtLink v-if="can('academic.read')" class="btn btn-outline-secondary" to="/akademik/administrasi"><i class="uil uil-book-open me-1" />Administrasi akademik</NuxtLink>
         <NuxtLink v-if="can('classes:manage')" class="btn btn-outline-primary" to="/admin/kelas"><i class="uil uil-presentation-check me-1" />Kelola Kelas &amp; Peserta</NuxtLink>
       </div>
     </div>

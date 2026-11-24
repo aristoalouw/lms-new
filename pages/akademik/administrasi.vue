@@ -14,7 +14,7 @@ definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Administrasi Akademik' })
 
 type TabId = 'overview' | 'leave' | 'advising' | 'rps' | 'thesis' | 'mbkm'
-const { user } = useAuth()
+const { user, can } = useAuth()
 const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
 const workspace = ref<AcademicAdministrationWorkspace | null>(null)
@@ -199,7 +199,8 @@ onMounted(load)
     <AppPageHeader eyebrow="Administrasi akademik" title="Pusat akademik mahasiswa" description="Status studi, hasil belajar, perwalian, RPS, tugas akhir, dan aktivitas MBKM dalam satu ruang kerja.">
       <template #actions>
         <NuxtLink v-if="isStaff" class="btn btn-outline-secondary" to="/akademik/master"><i class="uil uil-database me-2" />Master data</NuxtLink>
-        <NuxtLink class="btn btn-outline-secondary" to="/akademik/krs"><i class="uil uil-clipboard-alt me-2" />Buka KRS</NuxtLink>
+        <NuxtLink v-if="can('krs:approve')" class="btn btn-outline-primary" to="/akademik/persetujuan-krs"><i class="uil uil-file-check-alt me-2" />Persetujuan KRS</NuxtLink>
+        <NuxtLink v-else class="btn btn-outline-secondary" to="/akademik/krs"><i class="uil uil-clipboard-alt me-2" />Buka KRS</NuxtLink>
         <NuxtLink class="btn btn-primary" to="/akademik/kelas"><i class="uil uil-presentation-check me-2" />Pelaksanaan kelas</NuxtLink>
       </template>
     </AppPageHeader>

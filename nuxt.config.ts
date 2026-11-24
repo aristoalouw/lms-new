@@ -34,7 +34,7 @@ export default defineNuxtConfig({
         { charset: 'utf-8' },
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
         { name: 'description', content: 'Sistem informasi kampus terpadu untuk layanan akademik, pembelajaran, keuangan, dan pelaporan.' },
-        { name: 'theme-color', content: '#12362d' },
+        { name: 'theme-color', content: '#593660' },
         { name: 'referrer', content: 'strict-origin-when-cross-origin' },
       ],
       link: [

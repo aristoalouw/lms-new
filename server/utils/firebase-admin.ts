@@ -1,12 +1,13 @@
 import { applicationDefault, cert, getApps, initializeApp, type App, type ServiceAccount } from 'firebase-admin/app'
 import { getAuth, type Auth } from 'firebase-admin/auth'
-import { initializeFirestore, type Firestore } from 'firebase-admin/firestore'
+import { getFirestore, initializeFirestore, type Firestore } from 'firebase-admin/firestore'
 
 export type FirebaseAdminState =
   | { available: true; app: App; mode: 'emulator' | 'service-account' | 'application-default' }
   | { available: false; reason: string }
 
 let cachedState: FirebaseAdminState | undefined
+const configuredFirestoreApps = new WeakSet<App>()
 
 export function serviceAccountJsonFromEnvironment(): string | undefined {
   const inlineJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON?.trim()
@@ -92,9 +93,14 @@ export function firestoreAdmin(): Firestore | null {
   // Hostinger's managed Node runtime can stall on Firestore's default gRPC
   // streaming transport. The REST transport supports the reads, writes, and
   // transactions used by this application without relying on HTTP/2.
-  return prefersFirestoreRestTransport()
-    ? initializeFirestore(state.app, { preferRest: true, ignoreUndefinedProperties: true })
-    : initializeFirestore(state.app, { ignoreUndefinedProperties: true })
+  const db = prefersFirestoreRestTransport()
+    ? initializeFirestore(state.app, { preferRest: true })
+    : getFirestore(state.app)
+  if (!configuredFirestoreApps.has(state.app)) {
+    db.settings({ ignoreUndefinedProperties: true })
+    configuredFirestoreApps.add(state.app)
+  }
+  return db
 }
 
 export function prefersFirestoreRestTransport(): boolean {

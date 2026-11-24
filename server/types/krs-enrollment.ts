@@ -16,6 +16,8 @@ export interface KrsStudentAcademicState {
   studentNumber: string
   studentName: string
   programStudyId: string
+  cohortYear?: number
+  currentSemester?: number
   advisorId: string
   active: boolean
   maximumCredits: number
@@ -27,6 +29,8 @@ export interface KrsStudentAcademicState {
 
 export interface KrsPeriodPolicy {
   id: string
+  academicYear?: string
+  term?: 'ODD' | 'EVEN' | 'SHORT'
   status: 'DRAFT' | 'KRS_OPEN' | 'KRS_CLOSED' | 'CLOSED'
   krsOpensAt: string
   krsClosesAt: string
@@ -49,6 +53,11 @@ export interface KrsCatalogEntry {
   availableSeats: number
   eligibleByPrerequisite: boolean
   missingPrerequisiteCodes: string[]
+  semesterRecommendation?: number
+  semesterParity?: 'ODD' | 'EVEN'
+  semesterTrack?: 'CURRENT' | 'LOWER' | 'UPPER' | 'UNSPECIFIED'
+  eligibleBySemester?: boolean
+  semesterBlockReason?: string
 }
 
 export interface KrsWriteResult {

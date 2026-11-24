@@ -24,7 +24,7 @@ const canBulkOnboard = computed(() => Boolean(user.value?.roles.includes('admini
 const bulkFailures = computed(() => bulkResult.value?.rows.filter(row => row.status === 'FAILED') || [])
 
 const freshForm = () => ({
-  accountId: '', accountEmail: '', studentId: '', studentNumber: '', programStudyId: '', cohortYear: new Date().getFullYear(),
+  accountId: '', accountEmail: '', studentId: '', studentNumber: '', programStudyId: '', cohortYear: new Date().getFullYear(), currentSemester: 1,
   advisorId: '', advisorEmail: '', currentPeriodId: '', curriculumVersionId: '', status: 'ACTIVE', pathway: 'REGULAR',
   partnerInstitution: '', originInstitution: '', maximumCredits: 24, registeredCredits: 0, totalEarnedCredits: 0,
   cumulativeGpa: 0, completedCourseCodes: '', reason: '', expectedVersion: 0,
@@ -34,6 +34,16 @@ const editing = computed(() => Boolean(form.accountId))
 const selectedProgram = computed(() => catalog.value?.programs.find(item => item.id === form.programStudyId))
 const eligibleCurricula = computed(() => catalog.value?.curricula.filter(item => item.programStudyId === form.programStudyId && item.status === 'ACTIVE') || [])
 const activePeriods = computed(() => catalog.value?.periods.filter(item => item.active) || [])
+const semesterParityText = (semester: number) => (semester % 2 === 1 ? 'Ganjil' : 'Genap')
+watch([() => form.cohortYear, () => form.currentPeriodId], () => {
+  if (editing.value) return
+  const period = activePeriods.value.find(item => item.id === form.currentPeriodId)
+  if (!period) return
+  const match = /^(\d{4})[/-](\d{4})$/.exec(period.academicYear)
+  if (!match) return
+  const diff = Number(match[1]) - Number(form.cohortYear)
+  if (diff >= 0) form.currentSemester = Math.min(14, Math.max(1, diff * 2 + (period.term === 'EVEN' ? 2 : 1)))
+})
 const requestKey = () => `student-onboarding:${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
 const codes = (value: string) => [...new Set(value.split(/[\s,;|]+/).map(item => item.trim().toUpperCase()).filter(Boolean))]
 const apiError = (error: unknown) => { const value = error as { response?: { data?: { statusMessage?: string; message?: string } }; message?: string }; return value.response?.data?.statusMessage || value.response?.data?.message || value.message || 'Onboarding mahasiswa tidak dapat diproses.' }
@@ -105,7 +115,7 @@ function useRecord(record: StudentOnboardingRecord) {
   Object.assign(form, {
     accountId: record.profile.studentUid, accountEmail: '', studentId: record.profile.studentId,
     studentNumber: record.profile.studentNumber, programStudyId: record.profile.programStudyId,
-    cohortYear: record.profile.cohortYear, advisorId: record.profile.advisorId, advisorEmail: '',
+    cohortYear: record.profile.cohortYear, currentSemester: record.profile.currentSemester ?? record.krsState.currentSemester ?? 1, advisorId: record.profile.advisorId, advisorEmail: '',
     currentPeriodId: record.profile.currentPeriodId, curriculumVersionId: record.profile.curriculumVersionId,
     status: record.profile.status, pathway: record.profile.pathway,
     partnerInstitution: record.profile.partnerInstitution || '', originInstitution: record.profile.originInstitution || '',
@@ -127,6 +137,7 @@ function useSnapshot(record: StudentOnboardingSnapshot, studentId: string) {
     studentId, studentNumber: profile?.studentNumber || krsState?.studentNumber || billingProfile?.studentNumber || '',
     programStudyId: profile?.programStudyId || krsState?.programStudyId || billingProfile?.programStudyId || '',
     cohortYear: profile?.cohortYear || billingProfile?.cohortYear || new Date().getFullYear(),
+    currentSemester: profile?.currentSemester ?? krsState?.currentSemester ?? 1,
     advisorId: profile?.advisorId || krsState?.advisorId || '', advisorEmail: '',
     currentPeriodId: profile?.currentPeriodId || billingProfile?.currentPeriodId || '',
     curriculumVersionId: profile?.curriculumVersionId || '', status: profile?.status || billingProfile?.enrollmentStatus || (krsState?.active ? 'ACTIVE' : 'INACTIVE'),
@@ -157,7 +168,7 @@ async function save() {
     const advisor = form.advisorId ? { advisorId: form.advisorId } : { advisorEmail: form.advisorEmail }
     const body = {
       ...identity, ...advisor, studentId: form.studentId, studentNumber: form.studentNumber,
-      programStudyId: form.programStudyId, cohortYear: Number(form.cohortYear), currentPeriodId: form.currentPeriodId,
+      programStudyId: form.programStudyId, cohortYear: Number(form.cohortYear), currentSemester: Number(form.currentSemester), currentPeriodId: form.currentPeriodId,
       curriculumVersionId: form.curriculumVersionId, status: form.status, pathway: form.pathway,
       ...(form.partnerInstitution ? { partnerInstitution: form.partnerInstitution } : {}),
       ...(form.originInstitution ? { originInstitution: form.originInstitution } : {}),
@@ -217,7 +228,7 @@ onMounted(loadCatalog)
         <form @submit.prevent="save">
           <div class="form-row"><label>ID mahasiswa<input v-model="form.studentId" class="form-control" required :readonly="editing"></label><label>NIM<input v-model="form.studentNumber" class="form-control" required></label></div>
           <label v-if="!editing">Email akun student aktif<input v-model="form.accountEmail" type="email" class="form-control" autocomplete="off" required></label><label v-else>ID akun Firebase<input v-model="form.accountId" class="form-control" readonly></label>
-          <div class="form-row"><label>Program studi<select v-model="form.programStudyId" class="form-select" required><option value="" disabled>Pilih program</option><option v-for="item in catalog.programs.filter(entry => entry.active)" :key="item.id" :value="item.id">{{ item.code }} · {{ item.name }}</option></select></label><label>Angkatan<input v-model.number="form.cohortYear" type="number" min="1950" max="2200" class="form-control" required></label></div>
+          <div class="form-row form-row--three"><label>Program studi<select v-model="form.programStudyId" class="form-select" required><option value="" disabled>Pilih program</option><option v-for="item in catalog.programs.filter(entry => entry.active)" :key="item.id" :value="item.id">{{ item.code }} · {{ item.name }}</option></select></label><label>Angkatan<input v-model.number="form.cohortYear" type="number" min="1950" max="2200" class="form-control" required></label><label>Semester saat ini ({{ semesterParityText(form.currentSemester) }})<input v-model.number="form.currentSemester" type="number" min="1" max="14" class="form-control" required></label></div>
           <div class="form-row"><label>Periode aktif<select v-model="form.currentPeriodId" class="form-select" required><option value="" disabled>Pilih periode</option><option v-for="item in activePeriods" :key="item.id" :value="item.id">{{ item.academicYear }} · {{ item.term }}</option></select></label><label>Kurikulum aktif<select v-model="form.curriculumVersionId" class="form-select" required><option value="" disabled>Pilih kurikulum</option><option v-for="item in eligibleCurricula" :key="item.id" :value="item.id">{{ item.name }} · v{{ item.version }}</option></select></label></div>
           <label v-if="!editing">Email dosen wali aktif<input v-model="form.advisorEmail" type="email" class="form-control" autocomplete="off" required></label><label v-else>ID dosen wali<input v-model="form.advisorId" class="form-control" required></label>
           <div class="form-row"><label>Status<select v-model="form.status" class="form-select"><option>ACTIVE</option><option>LEAVE</option><option>INACTIVE</option><option>GRADUATED</option><option>TRANSFERRED_OUT</option></select></label><label>Jalur<select v-model="form.pathway" class="form-select"><option>REGULAR</option><option>TRANSFER</option><option>DOUBLE_DEGREE</option></select></label></div>

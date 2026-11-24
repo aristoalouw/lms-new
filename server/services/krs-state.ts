@@ -36,13 +36,14 @@ function seededClass(
   credits: number,
   section: string,
   startIso: string,
-  options: { capacity?: number; reservedSeatCount?: number; prerequisites?: string[] } = {},
+  options: { capacity?: number; reservedSeatCount?: number; prerequisites?: string[]; semesterRecommendation?: number } = {},
 ): AcademicClassRecord {
   return {
     id,
     courseCode,
     courseName,
     credits,
+    ...(options.semesterRecommendation ? { semesterRecommendation: options.semesterRecommendation } : {}),
     section,
     periodId: '2026-2027-1',
     programStudyId: 'management-s1',
@@ -67,11 +68,11 @@ function seededClass(
 
 function initialState(): KrsModuleState {
   const classes = [
-    seededClass('class-mgt-501-a', 'MGT501', 'Analitik Keputusan', 3, 'A', '2026-08-24T01:00:00.000Z', { prerequisites: ['MGT301'] }),
-    seededClass('class-mgt-502-a', 'MGT502', 'Manajemen Risiko', 3, 'A', '2026-08-25T03:00:00.000Z'),
-    seededClass('class-mgt-503-a', 'MGT503', 'Strategi Digital', 3, 'A', '2026-08-26T06:00:00.000Z'),
-    seededClass('class-mgt-504-a', 'MGT504', 'Seminar Manajemen', 3, 'A', '2026-08-24T01:30:00.000Z'),
-    seededClass('class-mgt-505-a', 'MGT505', 'Topik Khusus', 3, 'A', '2026-08-27T01:00:00.000Z', { capacity: 1, reservedSeatCount: 1 }),
+    seededClass('class-mgt-501-a', 'MGT501', 'Analitik Keputusan', 3, 'A', '2026-08-24T01:00:00.000Z', { prerequisites: ['MGT301'], semesterRecommendation: 5 }),
+    seededClass('class-mgt-502-a', 'MGT502', 'Manajemen Risiko', 3, 'A', '2026-08-25T03:00:00.000Z', { semesterRecommendation: 5 }),
+    seededClass('class-mgt-503-a', 'MGT503', 'Strategi Digital', 3, 'A', '2026-08-26T06:00:00.000Z', { semesterRecommendation: 3 }),
+    seededClass('class-mgt-504-a', 'MGT504', 'Seminar Manajemen', 3, 'A', '2026-08-24T01:30:00.000Z', { semesterRecommendation: 7 }),
+    seededClass('class-mgt-505-a', 'MGT505', 'Topik Khusus', 3, 'A', '2026-08-27T01:00:00.000Z', { capacity: 1, reservedSeatCount: 1, semesterRecommendation: 7 }),
   ]
   const students: KrsStudentAcademicState[] = [
     {
@@ -80,6 +81,8 @@ function initialState(): KrsModuleState {
       studentNumber: '23011010',
       studentName: 'Mahasiswa Uji KRS',
       programStudyId: 'management-s1',
+      cohortYear: 2024,
+      currentSemester: 5,
       advisorId: 'advisor-001',
       active: true,
       maximumCredits: 24,
@@ -91,7 +94,7 @@ function initialState(): KrsModuleState {
   ]
   return {
     periods: new Map([['2026-2027-1', {
-      id: '2026-2027-1', status: 'KRS_OPEN', krsOpensAt: '2026-07-01T00:00:00.000Z',
+      id: '2026-2027-1', academicYear: '2026/2027', term: 'ODD', status: 'KRS_OPEN', krsOpensAt: '2026-07-01T00:00:00.000Z',
       krsClosesAt: '2026-08-15T16:59:59.000Z', revisionClosesAt: '2026-08-29T16:59:59.000Z', version: 2,
     }]]),
     classes: new Map(classes.map(record => [record.id, structuredClone(record)])),

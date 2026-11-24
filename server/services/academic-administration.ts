@@ -494,7 +494,7 @@ export async function upsertAcademicPeriod(context: AuthContext, value: unknown,
   if (dataMode() === 'mock') {
     const state = academicAdministrationState(), prior = state.idempotency.get(namespace)
     if (prior) { if (prior.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk master data berbeda.'); return { value: clone(prior.response as AcademicPeriodDefinition), replayed: true } }
-    const period = build(state.periods.get(id)); state.periods.set(id, clone(period)); krsModuleState().periods.set(id, { id, status: krsStatus, krsOpensAt, krsClosesAt, revisionClosesAt: krsRevisionClosesAt, version: period.version }); state.idempotency.set(namespace, { requestHash: hash, response: period, createdAt: new Date().toISOString() }); result = { value: period, replayed: false }
+    const period = build(state.periods.get(id)); state.periods.set(id, clone(period)); krsModuleState().periods.set(id, { id, academicYear, term, status: krsStatus, krsOpensAt, krsClosesAt, revisionClosesAt: krsRevisionClosesAt, version: period.version }); state.idempotency.set(namespace, { requestHash: hash, response: period, createdAt: new Date().toISOString() }); result = { value: period, replayed: false }
   } else {
     const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
     const definitionRef = db.collection('academicPeriodDefinitions').doc(id), policyRef = db.collection('academicPeriods').doc(id), idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace))
@@ -503,7 +503,7 @@ export async function upsertAcademicPeriod(context: AuthContext, value: unknown,
       if (prior.exists) { const stored = prior.data() as { requestHash: string; response: AcademicPeriodDefinition }; if (stored.requestHash !== hash) conflict('IDEMPOTENCY_KEY_REUSED', 'Idempotency key digunakan untuk master data berbeda.'); return { value: stored.response, replayed: true } }
       const period = build(snapshot.exists ? ({ id: snapshot.id, ...snapshot.data() } as AcademicPeriodDefinition) : undefined), createdAt = new Date().toISOString()
       transaction.set(definitionRef, period)
-      transaction.set(policyRef, { id, status: krsStatus, krsOpensAt, krsClosesAt, revisionClosesAt: krsRevisionClosesAt, version: period.version })
+      transaction.set(policyRef, { id, academicYear, term, status: krsStatus, krsOpensAt, krsClosesAt, revisionClosesAt: krsRevisionClosesAt, version: period.version })
       transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: hash, response: period, createdAt }, createdAt, IDEM_TTL_MS))
       return { value: period, replayed: false }
     })
@@ -622,7 +622,7 @@ export async function deleteAcademicMaster(
       if (current.deletedAt) conflict('ALREADY_DELETED', 'Periode akademik sudah berada di daftar terhapus.')
       const next: AcademicPeriodDefinition = { ...current, previousActive: current.active, previousKrsStatus: current.krsStatus, active: false, krsStatus: 'CLOSED', deletedAt: now, deletedBy: context.uid, version: current.version + 1 }
       academicAdministrationState().periods.set(id, next)
-      krsModuleState().periods.set(id, { id, status: 'CLOSED', krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
+      krsModuleState().periods.set(id, { id, academicYear: next.academicYear, term: next.term, status: 'CLOSED', krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
     } else {
       const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
       const defRef = db.collection('academicPeriodDefinitions').doc(id)
@@ -633,7 +633,7 @@ export async function deleteAcademicMaster(
         if (current.deletedAt) conflict('ALREADY_DELETED', 'Periode akademik sudah berada di daftar terhapus.')
         const next: AcademicPeriodDefinition = { ...current, previousActive: current.active, previousKrsStatus: current.krsStatus, active: false, krsStatus: 'CLOSED', deletedAt: now, deletedBy: context.uid, version: current.version + 1 }
         transaction.set(defRef, next)
-        transaction.set(policyRef, { id, status: 'CLOSED', krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
+        transaction.set(policyRef, { id, academicYear: next.academicYear, term: next.term, status: 'CLOSED', krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
       })
     }
   } else if (resource === 'course') {
@@ -751,7 +751,7 @@ export async function restoreAcademicMaster(
       const { deletedAt: _d, deletedBy: _b, previousActive, previousKrsStatus, ...rest } = current
       const next: AcademicPeriodDefinition = { ...rest, active: previousActive ?? true, krsStatus: previousKrsStatus ?? 'DRAFT', version: current.version + 1 }
       academicAdministrationState().periods.set(id, next)
-      krsModuleState().periods.set(id, { id, status: next.krsStatus, krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
+      krsModuleState().periods.set(id, { id, academicYear: next.academicYear, term: next.term, status: next.krsStatus, krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
     } else {
       const db = firestoreAdmin(); if (!db) serviceUnavailable('Penyimpanan master akademik tidak tersedia.')
       const defRef = db.collection('academicPeriodDefinitions').doc(id)
@@ -763,7 +763,7 @@ export async function restoreAcademicMaster(
         const { deletedAt: _d, deletedBy: _b, previousActive, previousKrsStatus, ...rest } = current
         const next: AcademicPeriodDefinition = { ...rest, active: previousActive ?? true, krsStatus: previousKrsStatus ?? 'DRAFT', version: current.version + 1 }
         transaction.set(defRef, next)
-        transaction.set(policyRef, { id, status: next.krsStatus, krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
+        transaction.set(policyRef, { id, academicYear: next.academicYear, term: next.term, status: next.krsStatus, krsOpensAt: next.krsOpensAt, krsClosesAt: next.krsClosesAt, revisionClosesAt: next.krsRevisionClosesAt, version: next.version })
       })
     }
   } else if (resource === 'course') {

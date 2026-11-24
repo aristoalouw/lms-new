@@ -9,6 +9,11 @@ interface CatalogRow {
   code: string
   name: string
   class: string
+  semester?: number
+  semesterParity?: 'ODD' | 'EVEN'
+  semesterTrack: 'CURRENT' | 'LOWER' | 'UPPER' | 'UNSPECIFIED'
+  eligibleBySemester: boolean
+  semesterBlockReason?: string
   schedule: string
   dayName: string
   startMinutes: number | null
@@ -23,14 +28,14 @@ definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Kartu Rencana Studi' })
 
 const selectedPeriodId = ref('2026-2027-1')
-const courseFilter = ref<'ALL' | 'SELECTED' | 'AVAILABLE'>('ALL')
+const courseFilter = ref<'ELIGIBLE' | 'CURRENT' | 'LOWER' | 'UPPER' | 'SELECTED' | 'ALL'>('ELIGIBLE')
 const showScheduleView = ref(false)
 const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
 const { user, can } = useAuth()
 
 const courseCatalog = ref<CatalogRow[]>(config.public.demoMode
-  ? demoKrsCourses.map(course => ({ ...course, id: course.code, dayName: 'Senin', startMinutes: null, endMinutes: null }))
+  ? demoKrsCourses.map(course => ({ ...course, id: course.code, semesterTrack: 'CURRENT' as const, eligibleBySemester: true, dayName: 'Senin', startMinutes: null, endMinutes: null }))
   : [])
 const selectedClassIdList = ref<string[]>(courseCatalog.value.filter(course => course.status === 'Terpilih').map(course => course.id))
 const recordStatus = ref<KrsStatus>('DRAFT')
@@ -50,13 +55,14 @@ const programs = ref<AcademicProgramStudy[]>([])
 const setupMessage = ref('')
 
 const courseColumns = [
-  { key: 'selection', label: 'Pilih', sortable: false, align: 'center' as const, width: '68px' },
+  { key: 'selection', label: 'Pilih', sortable: false, align: 'center' as const, width: '64px' },
   { key: 'name', label: 'Mata kuliah', sortable: true },
+  { key: 'semester', label: 'Semester', align: 'center' as const, width: '135px' },
   { key: 'schedule', label: 'Jadwal' },
   { key: 'lecturer', label: 'Dosen pengampu' },
-  { key: 'credits', label: 'SKS', align: 'center' as const, width: '68px' },
-  { key: 'capacity', label: 'Kursi', align: 'center' as const, width: '88px' },
-  { key: 'status', label: 'Status', width: '130px' },
+  { key: 'credits', label: 'SKS', align: 'center' as const, width: '64px' },
+  { key: 'capacity', label: 'Kursi', align: 'center' as const, width: '84px' },
+  { key: 'status', label: 'Status', width: '150px' },
 ]
 
 const selectedCourses = computed(() => courseCatalog.value.filter(course => selectedClassIdList.value.includes(course.id)))
@@ -72,11 +78,34 @@ const canSubmit = computed(() => krsReady.value
   && selectedCount.value > 0
   && (config.public.demoMode || (periodPolicy.value?.status === 'KRS_OPEN' && activeHolds.value.length === 0)))
 
+const studentSemester = computed(() => studentIdentity.value?.currentSemester ?? 1)
+const studentSemesterParity = computed<'ODD' | 'EVEN'>(() => (studentSemester.value % 2 === 1 ? 'ODD' : 'EVEN'))
+const selectedPeriodMeta = computed(() => periods.value.find(item => item.id === selectedPeriodId.value))
+const activePeriodTerm = computed<'ODD' | 'EVEN' | 'SHORT' | undefined>(() => periodPolicy.value?.term || selectedPeriodMeta.value?.term)
+const periodParityMismatchWarning = computed(() => {
+  if (!activePeriodTerm.value || activePeriodTerm.value === 'SHORT') return ''
+  if (activePeriodTerm.value !== studentSemesterParity.value) {
+    const periodWord = activePeriodTerm.value === 'ODD' ? 'Ganjil' : 'Genap'
+    const studentWord = studentSemesterParity.value === 'ODD' ? 'Ganjil' : 'Genap'
+    return `Data mahasiswa tercatat di Semester ${studentSemester.value} (${studentWord}), sedangkan periode aktif adalah ${periodWord}. Hubungi bagian akademik bila semester mahasiswa perlu diperbarui.`
+  }
+  return ''
+})
+const eligibleCourseCount = computed(() => courseCatalog.value.filter(course => course.eligibleBySemester).length)
+const currentSemCourseCount = computed(() => courseCatalog.value.filter(course => course.eligibleBySemester && course.semesterTrack === 'CURRENT').length)
+const lowerSemCourseCount = computed(() => courseCatalog.value.filter(course => course.eligibleBySemester && course.semesterTrack === 'LOWER').length)
+const upperSemCourseCount = computed(() => courseCatalog.value.filter(course => course.eligibleBySemester && course.semesterTrack === 'UPPER').length)
+
 const courseRows = computed(() => courseCatalog.value
-  .filter(course =>
-    courseFilter.value === 'ALL'
-    || (courseFilter.value === 'SELECTED' ? selectedClassIdList.value.includes(course.id) : !selectedClassIdList.value.includes(course.id)),
-  )
+  .filter(course => {
+    if (courseFilter.value === 'ALL') return true
+    if (courseFilter.value === 'SELECTED') return selectedClassIdList.value.includes(course.id)
+    if (courseFilter.value === 'ELIGIBLE') return course.eligibleBySemester || selectedClassIdList.value.includes(course.id)
+    if (courseFilter.value === 'CURRENT') return course.eligibleBySemester && course.semesterTrack === 'CURRENT'
+    if (courseFilter.value === 'LOWER') return course.eligibleBySemester && course.semesterTrack === 'LOWER'
+    if (courseFilter.value === 'UPPER') return course.eligibleBySemester && course.semesterTrack === 'UPPER'
+    return true
+  })
   .map(course => ({
     ...course,
     selection: course.id,
@@ -122,7 +151,8 @@ const weeklySchedule = computed(() => {
     }))
 })
 
-const termLabel = (term: AcademicPeriodDefinition['term']) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term]
+const termLabel = (term?: AcademicPeriodDefinition['term']) => (term ? ({ ODD: 'Ganjil', EVEN: 'Genap', SHORT: 'Pendek' })[term] : '—')
+const trackLabel = (track: CatalogRow['semesterTrack']) => ({ CURRENT: 'Semester Anda', LOWER: 'Tingkat bawah', UPPER: 'Tingkat atas', UNSPECIFIED: '' })[track]
 const programLabel = computed(() => {
   const id = studentState.value?.programStudyId
   if (!id) return ''
@@ -151,6 +181,10 @@ const toggleCourse = (classId: string) => {
   if (!course || !isEditable.value) return
   if (selectedClassIdList.value.includes(classId)) {
     selectedClassIdList.value = selectedClassIdList.value.filter(id => id !== classId)
+    return
+  }
+  if (!course.eligibleBySemester) {
+    errorMessage.value = course.semesterBlockReason || 'Mata kuliah ini tidak sesuai dengan periode semester berjalan.'
     return
   }
   if (['Kelas penuh', 'Prasyarat belum terpenuhi'].includes(course.status)) return
@@ -268,11 +302,24 @@ async function loadPeriod(periodId: string) {
     periodPolicy.value = catalogResponse.data.period
     courseCatalog.value = catalogResponse.data.classes.map(entry => {
       const schedule = parseMeeting(entry)
+      const eligibleBySemester = entry.eligibleBySemester !== false
+      const status = !eligibleBySemester
+        ? (entry.semesterParity === 'ODD' ? 'Khusus Ganjil' : entry.semesterParity === 'EVEN' ? 'Khusus Genap' : 'Tidak sesuai semester')
+        : entry.availableSeats === 0
+          ? 'Kelas penuh'
+          : !entry.eligibleByPrerequisite
+            ? 'Prasyarat belum terpenuhi'
+            : 'Tersedia'
       return {
         id: entry.classRecord.id,
         code: entry.classRecord.courseCode,
         name: entry.classRecord.courseName,
         class: `Kelas ${entry.classRecord.section}`,
+        semester: entry.semesterRecommendation ?? entry.classRecord.semesterRecommendation,
+        semesterParity: entry.semesterParity,
+        semesterTrack: entry.semesterTrack ?? 'UNSPECIFIED',
+        eligibleBySemester,
+        semesterBlockReason: entry.semesterBlockReason,
         schedule: schedule.label,
         dayName: schedule.dayName,
         startMinutes: schedule.startMinutes,
@@ -280,7 +327,7 @@ async function loadPeriod(periodId: string) {
         lecturer: entry.classRecord.lecturerNames.join(', ') || 'Belum ditetapkan',
         credits: entry.classRecord.credits,
         capacity: `${(entry.classRecord.capacity || 0) - entry.availableSeats}/${entry.classRecord.capacity || 0}`,
-        status: entry.availableSeats > 0 && entry.eligibleByPrerequisite ? 'Tersedia' : entry.availableSeats === 0 ? 'Kelas penuh' : 'Prasyarat belum terpenuhi',
+        status,
       }
     })
     const record = planResponse.data.record
@@ -390,7 +437,7 @@ onMounted(initializeKrs)
             <span class="student-badge__icon"><i class="uil uil-user-square" aria-hidden="true" /></span>
             <div>
               <strong>{{ studentIdentity?.studentName }} · {{ studentIdentity?.studentNumber }}</strong>
-              <small>{{ programLabel || studentIdentity?.programStudyId }} · Batas pengajuan {{ deadlineLabel }} ({{ daysToDeadline }} hari lagi)</small>
+              <small>{{ programLabel || studentIdentity?.programStudyId }} · Semester {{ studentSemester }} ({{ studentSemesterParity === 'ODD' ? 'Ganjil' : 'Genap' }}) · Batas pengajuan {{ deadlineLabel }} ({{ daysToDeadline }} hari lagi)</small>
             </div>
           </div>
           <div class="krs-filters">
@@ -412,6 +459,14 @@ onMounted(initializeKrs)
             <small>{{ selectedCount }} mata kuliah · sisa {{ remainingCredits }} SKS</small>
           </div>
           <div class="status-pills">
+            <span class="info-pill info-pill--plum">
+              <i class="uil uil-layers" />
+              Semester {{ studentSemester }} ({{ studentSemesterParity === 'ODD' ? 'Ganjil' : 'Genap' }})
+            </span>
+            <span v-if="activePeriodTerm" class="info-pill">
+              <i class="uil uil-calendar-alt" />
+              Periode {{ termLabel(activePeriodTerm) }}
+            </span>
             <span class="info-pill" :class="{ warn: activeHolds.length > 0 }">
               <i class="uil" :class="activeHolds.length ? 'uil-exclamation-triangle' : 'uil-check-circle'" />
               {{ activeHolds.length ? `${activeHolds.length} pencekalan aktif` : 'Bebas pencekalan' }}
@@ -419,6 +474,17 @@ onMounted(initializeKrs)
             <span v-if="scheduleConflicts.size > 0" class="info-pill warn">
               <i class="uil uil-clock-nine" /> Ada bentrok jadwal
             </span>
+          </div>
+        </div>
+
+        <div v-if="activePeriodTerm" class="krs-banner krs-banner--rule" role="note">
+          <i class="uil uil-info-circle" />
+          <div>
+            <strong>Aturan KRS Periode {{ termLabel(activePeriodTerm) }}</strong>
+            <span v-if="activePeriodTerm === 'ODD'">Anda dapat mengambil mata kuliah <strong>Semester {{ studentSemester }}</strong> serta mata kuliah tingkat bawah atau atas yang berstatus <strong>Ganjil (Sem 1, 3, 5, 7, ...)</strong> selama prasyarat dan batas SKS terpenuhi. Mata kuliah Genap dikunci.</span>
+            <span v-else-if="activePeriodTerm === 'EVEN'">Anda dapat mengambil mata kuliah <strong>Semester {{ studentSemester }}</strong> serta mata kuliah tingkat bawah atau atas yang berstatus <strong>Genap (Sem 2, 4, 6, 8, ...)</strong> selama prasyarat dan batas SKS terpenuhi. Mata kuliah Ganjil dikunci.</span>
+            <span v-else>Pada Semester Pendek Anda dapat mengambil mata kuliah Semester 1–{{ studentSemester }} untuk perbaikan atau pengulangan.</span>
+            <span v-if="periodParityMismatchWarning" class="rule-warn">{{ periodParityMismatchWarning }}</span>
           </div>
         </div>
 
@@ -444,9 +510,12 @@ onMounted(initializeKrs)
           </div>
           <div class="catalog-tools">
             <select v-if="!showScheduleView" v-model="courseFilter" class="form-select form-select-sm" aria-label="Filter tampilan">
-              <option value="ALL">Semua kelas ({{ courseCatalog.length }})</option>
+              <option value="ELIGIBLE">Sesuai periode {{ termLabel(activePeriodTerm) }} ({{ eligibleCourseCount }})</option>
+              <option value="CURRENT">Semester Anda · Sem {{ studentSemester }} ({{ currentSemCourseCount }})</option>
+              <option value="LOWER">Tingkat bawah / mengulang ({{ lowerSemCourseCount }})</option>
+              <option value="UPPER">Tingkat atas ({{ upperSemCourseCount }})</option>
               <option value="SELECTED">Terpilih ({{ selectedCount }})</option>
-              <option value="AVAILABLE">Belum dipilih</option>
+              <option value="ALL">Semua kelas ({{ courseCatalog.length }})</option>
             </select>
             <button class="btn btn-sm" :class="showScheduleView ? 'btn-primary' : 'btn-outline-secondary'" type="button" @click="showScheduleView = !showScheduleView">
               <i class="uil me-1" :class="showScheduleView ? 'uil-list-ul' : 'uil-calendar-alt'" aria-hidden="true" />
@@ -484,7 +553,8 @@ onMounted(initializeKrs)
               class="form-check-input course-checkbox"
               type="checkbox"
               :checked="selectedClassIdList.includes(String(row.id))"
-              :disabled="(['Kelas penuh', 'Prasyarat belum terpenuhi'].includes(String(row.status)) && !selectedClassIdList.includes(String(row.id))) || !isEditable"
+              :disabled="((!row.eligibleBySemester || ['Kelas penuh', 'Prasyarat belum terpenuhi'].includes(String(row.status))) && !selectedClassIdList.includes(String(row.id))) || !isEditable"
+              :title="row.semesterBlockReason ? String(row.semesterBlockReason) : undefined"
               :aria-label="`Pilih ${String(row.name)}`"
               @change="toggleCourse(String(row.id))"
             >
@@ -493,6 +563,15 @@ onMounted(initializeKrs)
             <div class="course-name">
               <strong>{{ value }}</strong>
               <small>{{ row.code }} · {{ row.class }}</small>
+            </div>
+          </template>
+          <template #cell-semester="{ row }">
+            <div class="sem-cell">
+              <strong>{{ row.semester ? `Sem ${row.semester} (${row.semesterParity === 'ODD' ? 'Ganjil' : 'Genap'})` : '—' }}</strong>
+              <span v-if="row.eligibleBySemester && trackLabel(row.semesterTrack as CatalogRow['semesterTrack'])" class="track-pill" :class="`track-pill--${String(row.semesterTrack).toLowerCase()}`">
+                {{ trackLabel(row.semesterTrack as CatalogRow['semesterTrack']) }}
+              </span>
+              <span v-else-if="!row.eligibleBySemester" class="track-pill track-pill--blocked">Beda periode</span>
             </div>
           </template>
           <template #cell-status="{ value }">
@@ -565,6 +644,16 @@ onMounted(initializeKrs)
 .krs-banner--success{background:#eef6f0;color:#27533b;border:1px solid #cde2d3}
 .krs-banner--info{background:#f5eff7;color:#3e2344;border:1px solid #dfd3e4}
 .krs-banner--warn{background:#fff5e6;color:#7a4a0c;border:1px solid #f0d7b4}
+.krs-banner--rule{background:#f7f3f9;border:1px solid #dfd1e6;color:#4a2b52}
+.rule-warn{display:block;margin-top:.25rem;color:#8a4f13;font-weight:700}
+.info-pill--plum{background:#f5eff7;border:1px solid #dfd1e6;color:#593660}
+.sem-cell{display:grid;justify-items:center;gap:.2rem}
+.sem-cell strong{font-size:.7rem;color:#1e1e1e;white-space:nowrap}
+.track-pill{display:inline-flex;align-items:center;padding:.1rem .45rem;border-radius:999px;font-size:.6rem;font-weight:700;white-space:nowrap}
+.track-pill--current{background:#e7f6ee;color:#1b6b42}
+.track-pill--lower{background:#eef4fb;color:#27538a}
+.track-pill--upper{background:#fdf3e3;color:#8c5414}
+.track-pill--blocked{background:#fdecea;color:#9b2c2c}
 .catalog-tools{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
 .catalog-tools select{min-width:165px}
 .schedule-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.85rem;padding:1rem}

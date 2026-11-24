@@ -11,6 +11,7 @@ import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { withFirestorePurgeAfter } from '../utils/firestore-ttl'
 import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
+import { deriveStudentSemester } from '../utils/academic-semester'
 import { optionalString, requireInteger, requireRecord, requireString } from '../utils/validation'
 import { accountRuntimeForTests, findActiveAccountByEmail, type AccountRecord } from './accounts'
 import { academicAdministrationState } from './academic-administration-state'
@@ -31,6 +32,7 @@ interface ParsedOnboardingInput {
   studentNumber: string
   programStudyId: string
   cohortYear: number
+  currentSemester?: number
   advisorId: string
   currentPeriodId: string
   curriculumVersionId: string
@@ -70,7 +72,7 @@ function stringList(value: unknown, label: string): string[] {
 
 function rejectUnknown(body: Record<string, unknown>): void {
   const allowed = [
-    'accountEmail', 'accountId', 'studentId', 'studentNumber', 'programStudyId', 'cohortYear',
+    'accountEmail', 'accountId', 'studentId', 'studentNumber', 'programStudyId', 'cohortYear', 'currentSemester',
     'advisorEmail', 'advisorId', 'currentPeriodId', 'curriculumVersionId', 'status', 'pathway',
     'partnerInstitution', 'originInstitution', 'maximumCredits', 'registeredCredits',
     'totalEarnedCredits', 'cumulativeGpa', 'completedCourseCodes', 'reason', 'expectedVersion',
@@ -132,6 +134,7 @@ function parseBody(body: Record<string, unknown>, student: AccountRecord, adviso
     studentNumber: requireString(body.studentNumber, 'studentNumber', { max: 32, pattern: STUDENT_NUMBER }).toUpperCase(),
     programStudyId: safeId(body.programStudyId, 'programStudyId'),
     cohortYear: requireInteger(body.cohortYear, 'cohortYear', 1950, 2200),
+    ...(body.currentSemester !== undefined && body.currentSemester !== null && body.currentSemester !== '' ? { currentSemester: requireInteger(body.currentSemester, 'currentSemester', 1, 14) } : {}),
     advisorId: advisor.id,
     currentPeriodId: safeId(body.currentPeriodId, 'currentPeriodId'),
     curriculumVersionId: safeId(body.curriculumVersionId, 'curriculumVersionId'),
@@ -169,6 +172,7 @@ function records(
   input: ParsedOnboardingInput,
   student: AccountRecord,
   facultyId: string,
+  period: AcademicPeriodDefinition,
   previousProfile?: StudentAcademicProfileRecord,
   previousKrs?: KrsStudentAcademicState,
   clock = new Date(),
@@ -186,6 +190,7 @@ function records(
     effectiveAt: now,
     recordedBy,
   }] : [...previousProfile.statusHistory]
+  const currentSemester = input.currentSemester ?? deriveStudentSemester(input.cohortYear, period.academicYear, period.term)
   const profile: StudentAcademicProfileRecord = {
     studentId: input.studentId,
     studentUid: student.id,
@@ -194,6 +199,7 @@ function records(
     programStudyId: input.programStudyId,
     facultyId,
     cohortYear: input.cohortYear,
+    currentSemester,
     advisorId: input.advisorId,
     currentPeriodId: input.currentPeriodId,
     status: input.status,
@@ -213,6 +219,8 @@ function records(
     studentNumber: input.studentNumber,
     studentName: student.displayName,
     programStudyId: input.programStudyId,
+    cohortYear: input.cohortYear,
+    currentSemester,
     advisorId: input.advisorId,
     active: input.status === 'ACTIVE',
     maximumCredits: input.maximumCredits,
@@ -291,7 +299,7 @@ export async function onboardStudent(
     validateMaster(input, studentAccount, advisorAccount, program, period, curriculum)
     const duplicate = [...state.profiles.values()].find(item => item.studentId !== input.studentId && (item.studentUid === studentAccount.id || item.studentNumber === input.studentNumber))
     if (duplicate) conflict('STUDENT_IDENTITY_ALREADY_USED', 'Akun atau NIM telah digunakan mahasiswa lain.')
-    const onboarding = records(input, studentAccount, program.facultyId, state.profiles.get(input.studentId), krsModuleState().students.get(input.studentId), clock, context.uid)
+    const onboarding = records(input, studentAccount, program.facultyId, period!, state.profiles.get(input.studentId), krsModuleState().students.get(input.studentId), clock, context.uid)
     state.profiles.set(input.studentId, clone(onboarding.profile)); krsModuleState().students.set(input.studentId, clone(onboarding.krsState)); billingModuleState().profiles.set(input.studentId, clone(onboarding.billingProfile)); state.idempotency.set(namespace, { requestHash: hash, response: onboarding, createdAt: clock.toISOString() })
     result = { ...onboarding, replayed: false }
   } else {
@@ -314,7 +322,7 @@ export async function onboardStudent(
         const oldKey = await transaction.get(oldNumberKey)
         if (oldKey.exists && oldKey.data()?.studentId !== input.studentId) conflict('STUDENT_IDENTITY_KEY_CONFLICT', 'Indeks NIM lama tidak konsisten.')
       }
-      const onboarding = records(input, currentStudentAccount, program.facultyId, previousProfile, previousKrs, clock, context.uid), now = clock.toISOString()
+      const onboarding = records(input, currentStudentAccount, program.facultyId, period!, previousProfile, previousKrs, clock, context.uid), now = clock.toISOString()
       transaction.set(profileRef, onboarding.profile); transaction.set(krsRef, onboarding.krsState); transaction.set(billingRef, onboarding.billingProfile); transaction.set(uidKeyRef, { studentId: input.studentId, studentUid: currentStudentAccount.id, updatedAt: now }); transaction.set(numberKeyRef, { studentId: input.studentId, studentNumber: input.studentNumber, updatedAt: now }); if (oldNumberKey) transaction.delete(oldNumberKey); transaction.create(idemRef, withFirestorePurgeAfter({ requestHash: hash, response: onboarding, createdAt: now }, now, IDEM_TTL_MS))
       return { ...onboarding, replayed: false }
     })

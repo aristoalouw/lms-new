@@ -104,6 +104,7 @@ export interface StudentAcademicProfileRecord {
   programStudyId: string
   facultyId: string
   cohortYear: number
+  currentSemester?: number
   advisorId: string
   currentPeriodId: string
   status: StudentAcademicStatusEvent['status']

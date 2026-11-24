@@ -315,6 +315,7 @@ onMounted(() => load())
               <div class="class-item__title">
                 <strong>{{ item.courseCode }} · {{ item.courseName }}</strong>
                 <span class="section-pill">Kelas {{ item.section }}</span>
+                <span v-if="item.semesterRecommendation" class="section-pill">Sem {{ item.semesterRecommendation }} ({{ item.semesterRecommendation % 2 === 1 ? 'Ganjil' : 'Genap' }})</span>
               </div>
               <div class="class-item__meta">
                 <span><i class="uil uil-calendar-alt" /> {{ periodLabel(item.periodId) }}</span>
@@ -380,14 +381,14 @@ onMounted(() => load())
             <span>Mata kuliah</span>
             <select v-model="form.courseVersionId" class="form-select" required>
               <option value="" disabled>Pilih mata kuliah aktif</option>
-              <option v-for="course in filteredCoursesForCreate" :key="course.id" :value="course.id">{{ course.code }} · {{ course.name }} ({{ course.credits }} SKS)</option>
+              <option v-for="course in filteredCoursesForCreate" :key="course.id" :value="course.id">{{ course.code }} · {{ course.name }} ({{ course.credits }} SKS · Sem {{ course.semesterRecommendation }} {{ course.semesterRecommendation % 2 === 1 ? 'Ganjil' : 'Genap' }})</option>
             </select>
           </label>
 
           <div v-if="selectedCourse && selectedProgram" class="catalog-summary span-2" aria-live="polite">
             <div><small>Kode &amp; bobot</small><strong>{{ selectedCourse.code }} · {{ selectedCourse.credits }} SKS</strong></div>
             <div><small>Program studi</small><strong>{{ selectedProgram.name }}</strong></div>
-            <div><small>Semester acuan</small><strong>Semester {{ selectedCourse.semesterRecommendation }}</strong></div>
+            <div><small>Semester mata kuliah</small><strong>Semester {{ selectedCourse.semesterRecommendation }} ({{ selectedCourse.semesterRecommendation % 2 === 1 ? 'Ganjil' : 'Genap' }})</strong></div>
           </div>
 
           <label><span>Periode akademik</span><select v-model="form.periodId" class="form-select" required><option value="" disabled>Pilih periode aktif</option><option v-for="period in catalog.periods" :key="period.id" :value="period.id">{{ period.academicYear }} · {{ termLabel(period.term) }}</option></select></label>

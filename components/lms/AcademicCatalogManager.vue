@@ -144,6 +144,7 @@ const currentTrashCount = computed(() => (
 const termLabel = (term: string) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
 const krsStatusLabel = (status: string) => ({ DRAFT: 'Draf', KRS_OPEN: 'KRS dibuka', KRS_CLOSED: 'KRS ditutup', CLOSED: 'Selesai' })[status] || status
 const courseStatusLabel = (status: string) => ({ ACTIVE: 'Aktif', DRAFT: 'Draf', RETIRED: 'Nonaktif' })[status] || status
+const semesterLabel = (sem: number) => `Semester ${sem} (${sem % 2 === 1 ? 'Ganjil' : 'Genap'})`
 const programName = (id: string) => managedPrograms.value.find(item => item.id === id)?.name || deletedPrograms.value.find(item => item.id === id)?.name || id
 const requestKey = (purpose: string) => `${purpose}-${globalThis.crypto.randomUUID()}`
 const instant = (date: string, end = false) => new Date(`${date}T${end ? '23:59:59' : '00:00:00'}+07:00`).toISOString()
@@ -458,7 +459,7 @@ async function saveCourse() {
             <label><span>Program studi</span><select v-model="course.programStudyId" class="form-select" required><option value="" disabled>Pilih program studi</option><option v-for="prog in managedPrograms" :key="prog.id" :value="prog.id">{{ prog.code }} · {{ prog.name }}{{ prog.active ? '' : ' (Nonaktif)' }}</option></select></label>
             <label class="wide"><span>Nama mata kuliah</span><input v-model="course.name" class="form-control" maxlength="180" placeholder="Pengantar Teologi Sistematika" required></label>
             <label><span>Jumlah SKS</span><input v-model.number="course.credits" class="form-control" type="number" min="1" max="12" required></label>
-            <label><span>Rekomendasi semester</span><input v-model.number="course.semesterRecommendation" class="form-control" type="number" min="1" max="14" required></label>
+            <label><span>Semester ({{ course.semesterRecommendation % 2 === 1 ? 'Ganjil' : 'Genap' }})</span><input v-model.number="course.semesterRecommendation" class="form-control" type="number" min="1" max="14" required></label>
             <label><span>Status mata kuliah</span><select v-model="course.status" class="form-select"><option value="ACTIVE">Aktif (tersedia untuk kelas)</option><option value="DRAFT">Draf</option><option value="RETIRED">Nonaktif</option></select></label>
             <label>
               <span>Kode referensi sistem</span>
@@ -569,7 +570,7 @@ async function saveCourse() {
             <div v-for="item in managedCourses" :key="item.id" class="item-row" :class="{ active: editingCourseId === item.courseId, inactive: item.status !== 'ACTIVE' }">
               <div>
                 <div class="item-title-line"><strong>{{ item.code }} · {{ item.name }}</strong><span class="state-pill" :class="item.status === 'ACTIVE' ? 'state-pill--active' : 'state-pill--inactive'">{{ courseStatusLabel(item.status) }}</span></div>
-                <small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · Sem {{ item.semesterRecommendation }}</small>
+                <small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · {{ semesterLabel(item.semesterRecommendation) }}</small>
               </div>
               <div class="row-actions">
                 <button class="btn btn-sm btn-outline-primary" type="button" @click="editCourse(item)">Sunting</button>

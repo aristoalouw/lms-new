@@ -96,6 +96,7 @@ const tabs: Array<{ id: Tab; label: string; icon: string }> = [
 const termLabel = (term: string) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
 const krsStatusLabel = (status?: string) => ({ DRAFT: 'Draf', KRS_OPEN: 'KRS dibuka', KRS_CLOSED: 'KRS ditutup', CLOSED: 'Periode selesai' })[status || 'DRAFT'] || status || 'Draf'
 const courseStatusLabel = (status: string) => ({ ACTIVE: 'Aktif', DRAFT: 'Draf', RETIRED: 'Nonaktif' })[status] || status
+const semesterLabel = (sem: number) => `Semester ${sem} (${sem % 2 === 1 ? 'Ganjil' : 'Genap'})`
 const categoryLabel = (category: string) => ({ ACADEMIC: 'Akademik', KRS: 'KRS', EXAM: 'Ujian', GRADUATION: 'Kelulusan', HOLIDAY: 'Libur', DEADLINE: 'Batas waktu' })[category] || category
 const programName = (id: string) => data.value?.programs.find(item => item.id === id)?.name || id
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -591,7 +592,7 @@ onMounted(load)
             <label>Nama mata kuliah<input v-model="course.name" class="form-control" placeholder="Pengantar Perjanjian Lama" required></label>
             <div class="form-row">
               <label>SKS<input v-model.number="course.credits" type="number" min="1" max="12" class="form-control" required></label>
-              <label>Rekomendasi semester<input v-model.number="course.semesterRecommendation" type="number" min="1" max="14" class="form-control" required></label>
+              <label>Semester ({{ course.semesterRecommendation % 2 === 1 ? 'Ganjil' : 'Genap' }})<input v-model.number="course.semesterRecommendation" type="number" min="1" max="14" class="form-control" required></label>
             </div>
             <div class="form-row">
               <label>Status<select v-model="course.status" class="form-select"><option value="ACTIVE">Aktif (tersedia untuk kelas)</option><option value="DRAFT">Draf</option><option value="RETIRED">Nonaktif</option></select></label>
@@ -712,7 +713,7 @@ onMounted(load)
 
         <template v-else-if="tab === 'course'">
           <article v-for="item in filteredCourses" :key="item.id" :class="{ editing: editingKey === item.courseId, deleted: Boolean(item.deletedAt), inactive: item.status !== 'ACTIVE' && !item.deletedAt }">
-            <div><div class="row-title"><strong>{{ item.code }} · {{ item.name }}</strong><span v-if="!item.deletedAt" class="state-pill" :class="item.status === 'ACTIVE' ? 'state-pill--active' : 'state-pill--inactive'">{{ courseStatusLabel(item.status) }}</span></div><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS</small></div>
+            <div><div class="row-title"><strong>{{ item.code }} · {{ item.name }}</strong><span v-if="!item.deletedAt" class="state-pill" :class="item.status === 'ACTIVE' ? 'state-pill--active' : 'state-pill--inactive'">{{ courseStatusLabel(item.status) }}</span></div><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · {{ semesterLabel(item.semesterRecommendation) }}</small></div>
             <div class="row-actions">
               <template v-if="listMode === 'trash'">
                 <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('course', item.courseId, `${item.code} · ${item.name}`)"><i class="uil uil-history me-1" />Pulihkan</button>

@@ -72,6 +72,7 @@ export interface CreateAcademicClassInput {
   courseCode: string
   courseName: string
   credits: number
+  semesterRecommendation?: number
   section: string
   periodId: string
   programStudyId: string
@@ -898,6 +899,7 @@ async function parseCreateClassInput(context: AuthContext, value: unknown): Prom
     courseCode: selection.course.code,
     courseName: selection.course.name,
     credits: selection.course.credits,
+    semesterRecommendation: selection.course.semesterRecommendation,
     programStudyId: selection.program.id,
     unitId: selection.program.facultyId,
     ...common,
@@ -983,6 +985,7 @@ export async function createAcademicClass(
     courseCode: input.courseCode,
     courseName: input.courseName,
     credits: input.credits,
+    ...(input.semesterRecommendation ? { semesterRecommendation: input.semesterRecommendation } : {}),
     section: input.section,
     periodId: input.periodId,
     programStudyId: input.programStudyId,

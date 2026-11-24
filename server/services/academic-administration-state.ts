@@ -39,7 +39,7 @@ const course: AcademicCourseVersion = { id: 'course-mgt401_v1', courseId: 'cours
 const curriculum: CurriculumVersion = { id: 'curriculum-mgt-2023_v1', curriculumId: 'curriculum-mgt-2023', programStudyId: program.id, name: 'Kurikulum Manajemen 2023', version: 1, effectiveCohortFrom: 2023, effectiveCohortTo: 2026, courseVersionIds: [course.id], totalCredits: 144, status: 'ACTIVE', createdAt: '2025-11-01T00:00:00.000Z', createdBy: 'academic-001', immutable: true }
 const profile: StudentAcademicProfileRecord = {
   studentId: 'student-001', studentUid: 'student-001', studentNumber: '23011001', studentName: 'Nabila Putri', programStudyId: program.id, facultyId: program.facultyId,
-  cohortYear: 2023, advisorId: 'advisor-001', currentPeriodId: period.id, status: 'ACTIVE', pathway: 'REGULAR', curriculumVersionId: curriculum.id,
+  cohortYear: 2023, currentSemester: 6, advisorId: 'advisor-001', currentPeriodId: period.id, status: 'ACTIVE', pathway: 'REGULAR', curriculumVersionId: curriculum.id,
   totalEarnedCredits: 78, cumulativeGpa: 3.62, version: 1,
   statusHistory: [{ id: 'status-student-001-active', status: 'ACTIVE', periodId: '2023-2024-1', reason: 'Registrasi mahasiswa baru.', effectiveAt: '2023-09-01T00:00:00.000Z', recordedBy: 'system:admissions' }],
   updatedAt: '2026-07-01T00:00:00.000Z',

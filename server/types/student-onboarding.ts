@@ -34,6 +34,7 @@ export interface BulkStudentOnboardingRow {
   studentNumber: string
   programStudyId: string
   cohortYear: number
+  currentSemester?: number
   advisorEmail: string
   currentPeriodId: string
   curriculumVersionId: string

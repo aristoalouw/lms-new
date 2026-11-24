@@ -217,7 +217,7 @@ onMounted(load)
     <section v-if="profile" class="profile-strip">
       <div class="profile-identity"><span><i class="uil uil-user" /></span><div><strong>{{ profile.studentName }}</strong><small>{{ profile.studentNumber }} · {{ workspace?.programs.find(item => item.id === profile?.programStudyId)?.name || profile.programStudyId }}</small></div></div>
       <div><small>Status</small><StatusBadge :status="tone(profile.status)" :label="label(profile.status)" /></div>
-      <div><small>Jalur / angkatan</small><strong>{{ label(profile.pathway) }} · {{ profile.cohortYear }}</strong></div>
+      <div><small>Semester / angkatan</small><strong>Semester {{ profile.currentSemester || 1 }} ({{ (profile.currentSemester || 1) % 2 === 1 ? 'Ganjil' : 'Genap' }}) · {{ profile.cohortYear }}</strong></div>
       <div><small>SKS / IPK</small><strong>{{ profile.totalEarnedCredits }} / {{ profile.cumulativeGpa.toFixed(2) }}</strong></div>
     </section>
 

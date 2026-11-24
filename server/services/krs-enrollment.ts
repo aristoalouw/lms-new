@@ -9,6 +9,7 @@ import type {
   KrsStudentAcademicState,
   KrsWriteResult,
 } from '../types/krs-enrollment'
+import { deriveStudentSemester, evaluateKrsSemesterEligibility } from '../utils/academic-semester'
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
@@ -88,9 +89,10 @@ function schedulesOverlap(left: AcademicClassRecord, right: AcademicClassRecord)
 function validateSelection(
   classes: AcademicClassRecord[],
   inputClassIds: string[],
-  periodId: string,
+  period: KrsPeriodPolicy,
   student: KrsStudentAcademicState,
 ): ValidatedSelection {
+  const periodId = period.id
   if (!inputClassIds.length || inputClassIds.length > MAX_SELECTED_CLASSES) {
     invalidInput(`KRS harus berisi 1-${MAX_SELECTED_CLASSES} kelas.`)
   }
@@ -110,6 +112,23 @@ function validateSelection(
   }
   const courseCodes = classes.map(record => record.courseCode)
   if (new Set(courseCodes).size !== courseCodes.length) conflict('DUPLICATE_COURSE', 'Satu mata kuliah hanya boleh dipilih satu kali.')
+
+  const studentSemester = student.currentSemester ?? deriveStudentSemester(student.cohortYear, period.academicYear, period.term)
+  for (const record of classes) {
+    const semesterCheck = evaluateKrsSemesterEligibility({
+      studentSemester,
+      courseSemester: record.semesterRecommendation,
+      periodTerm: period.term,
+    })
+    if (!semesterCheck.eligible) {
+      conflict(semesterCheck.code || 'SEMESTER_PARITY_MISMATCH', semesterCheck.reason || 'Mata kuliah tidak sesuai dengan periode semester berjalan.', {
+        classId: record.id,
+        courseSemester: record.semesterRecommendation,
+        periodTerm: period.term,
+        studentSemester,
+      })
+    }
+  }
 
   const completed = new Set(student.completedCourseCodes)
   for (const record of classes) {
@@ -230,32 +249,79 @@ export async function listKrsCatalog(
   } else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan KRS tidak tersedia.')
-    const [periodSnapshot, studentSnapshot, classSnapshot] = await Promise.all([
+    const [periodSnapshot, periodDefSnapshot, studentSnapshot, profileSnapshot, classSnapshot, courseSnapshot] = await Promise.all([
       db.collection('academicPeriods').doc(periodId).get(),
+      db.collection('academicPeriodDefinitions').doc(periodId).get(),
       db.collection('studentAcademicStates').doc(studentId).get(),
+      db.collection('academicStudentProfiles').doc(studentId).get(),
       db.collection('academicClasses').where('periodId', '==', periodId).limit(1_000).get(),
+      db.collection('academicCourseVersions').limit(2_000).get(),
     ])
     if (!periodSnapshot.exists) notFound('Periode akademik')
     if (!studentSnapshot.exists) notFound('Status akademik mahasiswa')
-    period = { id: periodSnapshot.id, ...periodSnapshot.data() } as KrsPeriodPolicy
-    student = { id: studentSnapshot.id, ...studentSnapshot.data() } as KrsStudentAcademicState
+    const periodDef = periodDefSnapshot.exists ? periodDefSnapshot.data() as { term?: KrsPeriodPolicy['term']; academicYear?: string } : undefined
+    const profileData = profileSnapshot.exists ? profileSnapshot.data() as { currentSemester?: number; cohortYear?: number } : undefined
+    period = {
+      id: periodSnapshot.id,
+      ...(periodDef?.academicYear ? { academicYear: periodDef.academicYear } : {}),
+      ...(periodDef?.term ? { term: periodDef.term } : {}),
+      ...periodSnapshot.data(),
+    } as KrsPeriodPolicy
+    const rawStudent = { id: studentSnapshot.id, ...studentSnapshot.data() } as KrsStudentAcademicState
+    const cohortYear = rawStudent.cohortYear ?? profileData?.cohortYear
+    const currentSemester = rawStudent.currentSemester ?? profileData?.currentSemester ?? deriveStudentSemester(cohortYear, period.academicYear, period.term)
+    student = { ...rawStudent, ...(cohortYear ? { cohortYear } : {}), currentSemester }
+    const courseById = new Map<string, { semesterRecommendation?: number }>()
+    const courseByProgramCode = new Map<string, { version: number; semesterRecommendation?: number }>()
+    for (const doc of courseSnapshot.docs) {
+      const data = doc.data() as { programStudyId?: string; code?: string; version?: number; semesterRecommendation?: number; deletedAt?: string }
+      if (data.deletedAt) continue
+      courseById.set(doc.id, { semesterRecommendation: data.semesterRecommendation })
+      if (data.programStudyId && data.code) {
+        const key = `${data.programStudyId}:${data.code.toUpperCase()}`
+        const existing = courseByProgramCode.get(key)
+        if (!existing || (data.version || 0) > existing.version) {
+          courseByProgramCode.set(key, { version: data.version || 0, semesterRecommendation: data.semesterRecommendation })
+        }
+      }
+    }
     classes = classSnapshot.docs
-      .map(document => ({ id: document.id, ...document.data() }) as AcademicClassRecord)
+      .map(document => {
+        const record = { id: document.id, ...document.data() } as AcademicClassRecord
+        if (!record.semesterRecommendation) {
+          const fallbackSem = (record.courseVersionId ? courseById.get(record.courseVersionId)?.semesterRecommendation : undefined)
+            ?? courseByProgramCode.get(`${record.programStudyId}:${record.courseCode.toUpperCase()}`)?.semesterRecommendation
+          if (fallbackSem) record.semesterRecommendation = fallbackSem
+        }
+        return record
+      })
       .filter(record => !record.deletedAt && record.programStudyId === student.programStudyId && record.status === 'ACTIVE')
   }
   assertStudentOwnership(context, student)
+  const resolvedStudentSemester = student.currentSemester ?? deriveStudentSemester(student.cohortYear, period.academicYear, period.term)
+  const hydratedStudent: KrsStudentAcademicState = { ...student, currentSemester: resolvedStudentSemester }
   const completed = new Set(student.completedCourseCodes)
   return {
     period,
-    student,
+    student: hydratedStudent,
     classes: classes.map(classRecord => {
       const missingPrerequisiteCodes = (classRecord.prerequisiteCourseCodes || []).filter(code => !completed.has(code))
       const used = classRecord.reservedSeatCount ?? classRecord.rosterStudentIds?.length ?? 0
+      const semCheck = evaluateKrsSemesterEligibility({
+        studentSemester: resolvedStudentSemester,
+        courseSemester: classRecord.semesterRecommendation,
+        periodTerm: period.term,
+      })
       return {
         classRecord: structuredClone(classRecord),
         availableSeats: Math.max(0, (classRecord.capacity ?? 0) - used),
         eligibleByPrerequisite: missingPrerequisiteCodes.length === 0,
         missingPrerequisiteCodes,
+        ...(classRecord.semesterRecommendation ? { semesterRecommendation: classRecord.semesterRecommendation } : {}),
+        ...(semCheck.courseParity ? { semesterParity: semCheck.courseParity } : {}),
+        semesterTrack: semCheck.track,
+        eligibleBySemester: semCheck.eligible,
+        ...(semCheck.reason ? { semesterBlockReason: semCheck.reason } : {}),
       }
     }),
   }
@@ -310,7 +376,7 @@ export async function saveKrsDraft(
     const student = mockStudent(studentId)
     assertStudentOwnership(context, student)
     const classes = mockClasses(classIds)
-    const selection = validateSelection(classes, classIds, periodId, student)
+    const selection = validateSelection(classes, classIds, period, student)
     const id = planId(studentId, periodId)
     const previous = mockState().krs.get(id)
     ensureExpectedVersion(previous, input.expectedVersion)
@@ -324,12 +390,14 @@ export async function saveKrsDraft(
     const id = planId(studentId, periodId)
     const planRef = db.collection('krs').doc(id)
     const studentRef = db.collection('studentAcademicStates').doc(studentId)
+    const profileRef = db.collection('academicStudentProfiles').doc(studentId)
     const periodRef = db.collection('academicPeriods').doc(periodId)
+    const periodDefRef = db.collection('academicPeriodDefinitions').doc(periodId)
     const idemRef = db.collection('idempotencyKeys').doc(opaqueId('idem', namespace))
     const classRefs = classIds.map(classId => db.collection('academicClasses').doc(classId))
     result = await db.runTransaction(async transaction => {
-      const [idemSnapshot, planSnapshot, studentSnapshot, periodSnapshot, ...classSnapshots] = await Promise.all([
-        transaction.get(idemRef), transaction.get(planRef), transaction.get(studentRef), transaction.get(periodRef),
+      const [idemSnapshot, planSnapshot, studentSnapshot, profileSnapshot, periodSnapshot, periodDefSnapshot, ...classSnapshots] = await Promise.all([
+        transaction.get(idemRef), transaction.get(planRef), transaction.get(studentRef), transaction.get(profileRef), transaction.get(periodRef), transaction.get(periodDefRef),
         ...classRefs.map(reference => transaction.get(reference)),
       ])
       if (idemSnapshot.exists) {
@@ -339,15 +407,36 @@ export async function saveKrsDraft(
       }
       if (!studentSnapshot.exists) notFound('Status akademik mahasiswa')
       if (!periodSnapshot.exists) notFound('Periode akademik')
-      const student = { id: studentSnapshot.id, ...studentSnapshot.data() } as KrsStudentAcademicState
-      const period = { id: periodSnapshot.id, ...periodSnapshot.data() } as KrsPeriodPolicy
+      const periodDef = periodDefSnapshot.exists ? periodDefSnapshot.data() as { term?: KrsPeriodPolicy['term']; academicYear?: string } : undefined
+      const profileData = profileSnapshot.exists ? profileSnapshot.data() as { currentSemester?: number; cohortYear?: number } : undefined
+      const period = {
+        id: periodSnapshot.id,
+        ...(periodDef?.academicYear ? { academicYear: periodDef.academicYear } : {}),
+        ...(periodDef?.term ? { term: periodDef.term } : {}),
+        ...periodSnapshot.data(),
+      } as KrsPeriodPolicy
+      const rawStudent = { id: studentSnapshot.id, ...studentSnapshot.data() } as KrsStudentAcademicState
+      const cohortYear = rawStudent.cohortYear ?? profileData?.cohortYear
+      const currentSemester = rawStudent.currentSemester ?? profileData?.currentSemester ?? deriveStudentSemester(cohortYear, period.academicYear, period.term)
+      const student: KrsStudentAcademicState = { ...rawStudent, ...(cohortYear ? { cohortYear } : {}), currentSemester }
       assertStudentOwnership(context, student)
       requireOpenPeriod(period, clock)
       const classes = classSnapshots.map(snapshot => {
         if (!snapshot.exists) notFound('Kelas')
         return { id: snapshot.id, ...snapshot.data() } as AcademicClassRecord
       })
-      const selection = validateSelection(classes, classIds, periodId, student)
+      const missingCourseIds = [...new Set(classes.filter(item => !item.semesterRecommendation && item.courseVersionId).map(item => item.courseVersionId!))]
+      if (missingCourseIds.length) {
+        const courseSnaps = await Promise.all(missingCourseIds.map(courseId => transaction.get(db.collection('academicCourseVersions').doc(courseId))))
+        const semByCourse = new Map(courseSnaps.filter(s => s.exists).map(s => [s.id, Number(s.data()?.semesterRecommendation || 0)]))
+        for (const item of classes) {
+          if (!item.semesterRecommendation && item.courseVersionId) {
+            const sem = semByCourse.get(item.courseVersionId)
+            if (sem && sem >= 1) item.semesterRecommendation = sem
+          }
+        }
+      }
+      const selection = validateSelection(classes, classIds, period, student)
       const previous = planSnapshot.exists ? ({ id: planSnapshot.id, ...planSnapshot.data() } as KrsRecord) : undefined
       ensureExpectedVersion(previous, input.expectedVersion)
       const record = draftRecord(previous, student, period, selection)
@@ -405,7 +494,7 @@ export async function submitKrs(
     requireOpenPeriod(period, clock)
     const holds = activeHoldCodes(student)
     if (holds.length) conflict('KRS_HELD', 'KRS dicekal oleh kondisi akademik, keuangan, atau administrasi.', { holdCodes: holds })
-    return validateSelection(classes, record.classIds || [], record.periodId, student)
+    return validateSelection(classes, record.classIds || [], period, student)
   }
 
   if (dataMode() === 'mock') {
@@ -472,22 +561,47 @@ export async function submitKrs(
       const record = { id: planSnapshot.id, ...planSnapshot.data() } as KrsRecord
       const classIds = record.classIds || []
       const periodRef = db.collection('academicPeriods').doc(record.periodId)
+      const periodDefRef = db.collection('academicPeriodDefinitions').doc(record.periodId)
+      const profileRef = db.collection('academicStudentProfiles').doc(studentId)
       const classRefs = classIds.map(classId => db.collection('academicClasses').doc(classId))
       const reservationRefs = classIds.map(classId => db.collection('academicClasses').doc(classId).collection('seatReservations').doc(studentId))
-      const [periodSnapshot, ...classAndReservationSnapshots] = await Promise.all([
+      const [periodSnapshot, periodDefSnapshot, profileSnapshot, ...classAndReservationSnapshots] = await Promise.all([
         transaction.get(periodRef),
+        transaction.get(periodDefRef),
+        transaction.get(profileRef),
         ...classRefs.map(reference => transaction.get(reference)),
         ...reservationRefs.map(reference => transaction.get(reference)),
       ])
       if (!periodSnapshot.exists) notFound('Periode akademik')
+      const periodDef = periodDefSnapshot.exists ? periodDefSnapshot.data() as { term?: KrsPeriodPolicy['term']; academicYear?: string } : undefined
+      const profileData = profileSnapshot.exists ? profileSnapshot.data() as { currentSemester?: number; cohortYear?: number } : undefined
       const classSnapshots = classAndReservationSnapshots.slice(0, classRefs.length)
       const reservationSnapshots = classAndReservationSnapshots.slice(classRefs.length)
       const classes = classSnapshots.map(snapshot => {
         if (!snapshot.exists) notFound('Kelas')
         return { id: snapshot.id, ...snapshot.data() } as AcademicClassRecord
       })
-      const student = { id: studentSnapshot.id, ...studentSnapshot.data() } as KrsStudentAcademicState
-      const period = { id: periodSnapshot.id, ...periodSnapshot.data() } as KrsPeriodPolicy
+      const missingCourseIds = [...new Set(classes.filter(item => !item.semesterRecommendation && item.courseVersionId).map(item => item.courseVersionId!))]
+      if (missingCourseIds.length) {
+        const courseSnaps = await Promise.all(missingCourseIds.map(courseId => transaction.get(db.collection('academicCourseVersions').doc(courseId))))
+        const semByCourse = new Map(courseSnaps.filter(s => s.exists).map(s => [s.id, Number(s.data()?.semesterRecommendation || 0)]))
+        for (const item of classes) {
+          if (!item.semesterRecommendation && item.courseVersionId) {
+            const sem = semByCourse.get(item.courseVersionId)
+            if (sem && sem >= 1) item.semesterRecommendation = sem
+          }
+        }
+      }
+      const period = {
+        id: periodSnapshot.id,
+        ...(periodDef?.academicYear ? { academicYear: periodDef.academicYear } : {}),
+        ...(periodDef?.term ? { term: periodDef.term } : {}),
+        ...periodSnapshot.data(),
+      } as KrsPeriodPolicy
+      const rawStudent = { id: studentSnapshot.id, ...studentSnapshot.data() } as KrsStudentAcademicState
+      const cohortYear = rawStudent.cohortYear ?? profileData?.cohortYear
+      const currentSemester = rawStudent.currentSemester ?? profileData?.currentSemester ?? deriveStudentSemester(cohortYear, period.academicYear, period.term)
+      const student: KrsStudentAcademicState = { ...rawStudent, ...(cohortYear ? { cohortYear } : {}), currentSemester }
       const selection = validateSubmission(record, student, period, classes)
       selection.classes.forEach((classRecord, index) => {
         const reservation = reservationSnapshots[index]

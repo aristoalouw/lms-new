@@ -54,7 +54,10 @@ function identifier(value: string, label: string): string {
 }
 
 function parseRow(values: string[], indexes: Map<string, number>, rowNumber: number): BulkStudentOnboardingRow {
-  const read = (name: typeof BULK_STUDENT_ONBOARDING_HEADERS[number]) => values[indexes.get(name)!] || ''
+  const read = (name: typeof BULK_STUDENT_ONBOARDING_HEADERS[number] | 'current_semester') => {
+    const idx = indexes.get(name)
+    return idx === undefined ? '' : values[idx] || ''
+  }
   for (const value of values) {
     if (/^[=+@-]/u.test(value.trim())) invalidInput(`Baris ${rowNumber} memuat nilai yang menyerupai formula spreadsheet.`)
   }
@@ -84,6 +87,7 @@ function parseRow(values: string[], indexes: Map<string, number>, rowNumber: num
     studentNumber: requireString(read('student_number').trim().toUpperCase(), `Baris ${rowNumber} student_number`, { max: 32, pattern: STUDENT_NUMBER }),
     programStudyId: identifier(read('program_study_id'), `Baris ${rowNumber} program_study_id`),
     cohortYear: integer(read('cohort_year'), `Baris ${rowNumber} cohort_year`, 1950, 2200),
+    ...(read('current_semester').trim() ? { currentSemester: integer(read('current_semester'), `Baris ${rowNumber} current_semester`, 1, 14) } : {}),
     advisorEmail: requireString(read('advisor_email').trim().toLowerCase(), `Baris ${rowNumber} advisor_email`, { max: 254, pattern: EMAIL }),
     currentPeriodId: identifier(read('current_period_id'), `Baris ${rowNumber} current_period_id`),
     curriculumVersionId: identifier(read('curriculum_version_id'), `Baris ${rowNumber} curriculum_version_id`),
@@ -111,7 +115,7 @@ export function parseBulkStudentOnboardingSource(input: BulkStudentOnboardingInp
   const headers = rows[0]!.map(normalizeHeader)
   const duplicates = headers.filter((header, index) => headers.indexOf(header) !== index)
   if (duplicates.length) invalidInput(`Header duplikat: ${[...new Set(duplicates)].join(', ')}.`)
-  const expected = new Set<string>(BULK_STUDENT_ONBOARDING_HEADERS)
+  const expected = new Set<string>([...BULK_STUDENT_ONBOARDING_HEADERS, 'current_semester'])
   const unknown = headers.filter(header => !expected.has(header))
   const missing = BULK_STUDENT_ONBOARDING_HEADERS.filter(header => !headers.includes(header))
   if (unknown.length) invalidInput(`Header tidak didukung: ${unknown.join(', ')}.`)
@@ -161,6 +165,7 @@ export async function bulkOnboardStudents(
         studentNumber: row.studentNumber,
         programStudyId: row.programStudyId,
         cohortYear: row.cohortYear,
+        ...(row.currentSemester ? { currentSemester: row.currentSemester } : {}),
         advisorEmail: row.advisorEmail,
         currentPeriodId: row.currentPeriodId,
         curriculumVersionId: row.curriculumVersionId,

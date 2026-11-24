@@ -20,6 +20,7 @@ export interface AcademicClassRecord {
   courseCode: string
   courseName: string
   credits: number
+  semesterRecommendation?: number
   section: string
   periodId: string
   programStudyId: string

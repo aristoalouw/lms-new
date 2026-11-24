@@ -1372,7 +1372,7 @@ export async function createClassEnrollment(
       id: enrollmentId, classId: safeId, studentId: input.studentId, studentUid: input.studentUid,
       studentNumber: input.studentNumber, studentName: input.studentName,
       programStudyId: input.programStudyId ?? classRecord.programStudyId, periodId: classRecord.periodId,
-      status: 'ACTIVE', source: 'ADMIN', sourceRef: input.sourceRef, overrideReason: input.reason,
+      status: 'ACTIVE', source: 'ADMIN', ...(input.sourceRef ? { sourceRef: input.sourceRef } : {}), overrideReason: input.reason,
       version: 1, createdAt: now, createdBy: context.uid, updatedAt: now, updatedBy: context.uid,
     }
     state.enrollments.set(enrollmentId, clone(enrollment))
@@ -1405,7 +1405,7 @@ export async function createClassEnrollment(
         id: enrollmentId, classId: safeId, studentId: input.studentId, studentUid: input.studentUid,
         studentNumber: input.studentNumber, studentName: input.studentName,
         programStudyId: input.programStudyId ?? classRecord.programStudyId, periodId: classRecord.periodId,
-        status: 'ACTIVE', source: 'ADMIN', sourceRef: input.sourceRef, overrideReason: input.reason,
+        status: 'ACTIVE', source: 'ADMIN', ...(input.sourceRef ? { sourceRef: input.sourceRef } : {}), overrideReason: input.reason,
         version: 1, createdAt: now, createdBy: context.uid, updatedAt: now, updatedBy: context.uid,
       }
       const response: AcademicWriteResult<ClassEnrollment> = { value: enrollment, replayed: false }

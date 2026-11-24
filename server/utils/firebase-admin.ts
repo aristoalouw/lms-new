@@ -1,6 +1,6 @@
 import { applicationDefault, cert, getApps, initializeApp, type App, type ServiceAccount } from 'firebase-admin/app'
 import { getAuth, type Auth } from 'firebase-admin/auth'
-import { getFirestore, initializeFirestore, type Firestore } from 'firebase-admin/firestore'
+import { initializeFirestore, type Firestore } from 'firebase-admin/firestore'
 
 export type FirebaseAdminState =
   | { available: true; app: App; mode: 'emulator' | 'service-account' | 'application-default' }
@@ -93,8 +93,8 @@ export function firestoreAdmin(): Firestore | null {
   // streaming transport. The REST transport supports the reads, writes, and
   // transactions used by this application without relying on HTTP/2.
   return prefersFirestoreRestTransport()
-    ? initializeFirestore(state.app, { preferRest: true })
-    : getFirestore(state.app)
+    ? initializeFirestore(state.app, { preferRest: true, ignoreUndefinedProperties: true })
+    : initializeFirestore(state.app, { ignoreUndefinedProperties: true })
 }
 
 export function prefersFirestoreRestTransport(): boolean {

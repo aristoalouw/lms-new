@@ -35,7 +35,8 @@ const form = reactive({
 const reviewNote = ref(config.public.demoMode ? 'Dokumen bukti dan sumber data telah diperiksa.' : '')
 const remoteTicket = ref('')
 
-const canMutate = computed(() => user.value?.roles.includes('academic_staff') ?? false)
+const activeRole = computed(() => user.value?.activeRole || user.value?.roles[0] || '')
+const canMutate = computed(() => activeRole.value === 'academic_staff')
 const statusLabel = (status: PddiktiStudentDataChangeRequest['status']) => ({ SUBMITTED: 'Diajukan', VALIDATED: 'Tervalidasi', QUEUED: 'Dalam proses PDDIKTI', COMPLETED: 'Selesai', REJECTED: 'Ditolak' })[status]
 const statusTone = (status: PddiktiStudentDataChangeRequest['status']) => ({ SUBMITTED: 'pending', VALIDATED: 'scheduled', QUEUED: 'processing', COMPLETED: 'success', REJECTED: 'blocked' })[status]
 const fieldLabel = (field: PddiktiStudentDataChangeItem['field']) => ({ name: 'Nama', birthPlace: 'Tempat lahir', birthDate: 'Tanggal lahir', gender: 'Jenis kelamin', identityNumber: 'Nomor identitas', motherName: 'Nama ibu' })[field]
@@ -49,8 +50,8 @@ const errorText = (error: unknown) => {
 const loadCatalog = async () => {
   if (config.public.demoMode) return
   const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
-  programs.value = data.programs.filter(program => program.active)
-  periods.value = data.periods.filter(period => period.active)
+  programs.value = data.programs.filter(program => program.active && !program.deletedAt)
+  periods.value = data.periods.filter(period => period.active && !period.deletedAt)
   if (!programs.value.some(program => program.id === programStudyId.value)) {
     const scopedProgram = user.value?.programStudyId
     programStudyId.value = programs.value.find(program => program.id === scopedProgram)?.id

@@ -29,7 +29,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { normalizeIsoInstant, optionalString, requireInteger, requireRecord, requireString } from '../utils/validation'
 
@@ -236,7 +236,7 @@ async function ownProfile(context: AuthContext): Promise<StudentAffairsProfile> 
 }
 
 function isScopedStaff(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'student_affairs_staff') && context.scope.programStudyIds.includes(programStudyId)
+  return hasRole(context, 'student_affairs_staff') && hasProgramAccess(context, programStudyId)
 }
 
 function canReadProfile(context: AuthContext, profile: StudentAffairsProfile): boolean {
@@ -983,7 +983,7 @@ export async function listScholarshipPrograms(context: AuthContext, query: Stude
   else if (!hasRole(context, 'student_affairs_staff')) forbidden('Anda tidak memiliki akses ke program beasiswa.')
   const rows = dataMode() === 'mock' ? [...state.scholarshipPrograms.values()].map(clone) : await loadCollection<ScholarshipProgram>('scholarshipPrograms')
   const filtered = rows.filter((program) => {
-    const inScope = (hasRole(context, 'student_affairs_staff') && (program.programStudyIds.length === 0 || program.programStudyIds.some((id) => context.scope.programStudyIds.includes(id))))
+    const inScope = (hasRole(context, 'student_affairs_staff') && (program.programStudyIds.length === 0 || program.programStudyIds.some((id) => hasProgramAccess(context, id))))
       || (profile && (program.programStudyIds.length === 0 || program.programStudyIds.includes(profile.programStudyId)))
     return inScope && (!query.status || program.status === query.status) && matchesSearch(program, query.search)
   }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
@@ -1032,7 +1032,7 @@ function parseScholarshipProgram(value: unknown, clock: Date): Omit<ScholarshipP
 export async function saveScholarshipProgram(context: AuthContext, value: unknown, idempotencyKey: string, event?: H3Event, clock = new Date()): Promise<StudentAffairsWriteResult<ScholarshipProgram>> {
   const input = parseScholarshipProgram(value, clock)
   if (!hasRole(context, 'student_affairs_staff')) forbidden('Program beasiswa hanya dapat dikelola staf kemahasiswaan.')
-  if (input.programStudyIds.length > 0 && input.programStudyIds.some((id) => !context.scope.programStudyIds.includes(id))) {
+  if (input.programStudyIds.length > 0 && input.programStudyIds.some((id) => !hasProgramAccess(context, id))) {
     forbidden('Program studi beasiswa berada di luar lingkup akses Anda.')
   }
   const id = input.id ?? opaqueId('scholarship', `${context.uid}:${idempotencyKey}`)

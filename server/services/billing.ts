@@ -339,7 +339,7 @@ export async function createTariffPlanVersion(
 ): Promise<BillingWriteResult<TariffPlanVersion>> {
   requireFinanceRole(context)
   const input = parseTariffPlan(value)
-  if (input.applicability.programStudyIds.some(id => !context.scope.programStudyIds.includes(id))) forbidden('Tarif mencakup program studi di luar lingkup Anda.')
+  if (input.applicability.programStudyIds.some(id => !hasProgramAccess(context, id))) forbidden('Tarif mencakup program studi di luar lingkup Anda.')
   const hash = requestHash(input)
   const namespace = `billing:tariff-version:${context.uid}:${idempotencyKey}`
   const now = clock.toISOString()
@@ -394,7 +394,7 @@ export async function listTariffPlans(context: AuthContext, query: BillingListQu
   if (!hasRole(context, 'finance_staff')) forbidden('Anda tidak memiliki akses ke tarif billing.')
   const rows = dataMode() === 'mock' ? [...billingModuleState().tariffPlans.values()].map(clone) : await loadCollection<TariffPlanVersion>('billingTariffPlans')
   const filtered = rows.filter(plan => {
-    const scoped = plan.applicability.programStudyIds.some(id => context.scope.programStudyIds.includes(id))
+    const scoped = plan.applicability.programStudyIds.some(id => hasProgramAccess(context, id))
     return scoped
       && (!query.programStudyId || plan.applicability.programStudyIds.includes(query.programStudyId))
       && (!query.periodId || plan.applicability.periodIds.includes(query.periodId))
@@ -690,7 +690,7 @@ function invoiceView(invoice: BillingInvoice, related: RelatedBillingRecords, cl
 async function scopedInvoiceViews(context: AuthContext, query: BillingListQuery, clock: Date): Promise<BillingInvoiceView[]> {
   if (!hasRole(context, 'student', 'finance_staff')) forbidden('Anda tidak memiliki akses ke data tagihan.')
   if (query.studentId && hasRole(context, 'student') && !studentCandidates(context).includes(query.studentId)) forbidden('Mahasiswa hanya dapat melihat tagihan miliknya.')
-  if (query.programStudyId && !context.scope.programStudyIds.includes(query.programStudyId)) forbidden('Program studi berada di luar lingkup Anda.')
+  if (query.programStudyId && !hasProgramAccess(context, query.programStudyId)) forbidden('Program studi berada di luar lingkup Anda.')
   const [invoices, related] = await Promise.all([loadAllInvoices(), loadRelatedBillingRecords()])
   const needle = query.search?.toLocaleLowerCase('id-ID')
   return invoices

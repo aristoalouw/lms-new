@@ -349,7 +349,7 @@ function toggleCalendarProgram(programId: string) {
 const load = async () => {
   loading.value = true
   try {
-    data.value = (await $api.get<AcademicAdministrationWorkspace>('/academic/administration')).data
+    data.value = (await $api.get<AcademicAdministrationWorkspace>('/academic/administration', { params: { includeAll: 'true' } })).data
     const firstProgram = data.value.programs.find(item => item.active && !item.deletedAt)?.id || ''
     const firstPeriod = data.value.periods.find(item => item.active && !item.deletedAt)?.id || ''
     if (!course.programStudyId) course.programStudyId = firstProgram
@@ -633,8 +633,8 @@ onMounted(load)
         </header>
 
         <template v-if="tab === 'program'">
-          <article v-for="item in filteredPrograms" :key="item.id" :class="{ editing: editingKey === item.id, deleted: Boolean(item.deletedAt) }">
-            <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }} · s.d. {{ item.accreditationExpiresAt.slice(0, 10) }}</small></div>
+          <article v-for="item in filteredPrograms" :key="item.id" :class="{ editing: editingKey === item.id, deleted: Boolean(item.deletedAt), inactive: !item.active && !item.deletedAt }">
+            <div><div class="row-title"><strong>{{ item.code }} · {{ item.name }}</strong><span v-if="!item.deletedAt" class="state-pill" :class="item.active ? 'state-pill--active' : 'state-pill--inactive'">{{ item.active ? 'Aktif' : 'Nonaktif' }}</span></div><small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }} · s.d. {{ item.accreditationExpiresAt.slice(0, 10) }}</small></div>
             <div class="row-actions">
               <template v-if="listMode === 'trash'">
                 <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('program', item.id, `${item.code} · ${item.name}`)"><i class="uil uil-history me-1" />Pulihkan</button>
@@ -649,8 +649,8 @@ onMounted(load)
         </template>
 
         <template v-else-if="tab === 'period'">
-          <article v-for="item in filteredPeriods" :key="item.id" :class="{ editing: editingKey === item.id, deleted: Boolean(item.deletedAt) }">
-            <div><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><small>{{ krsStatusLabel(item.krsStatus) }} · {{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small></div>
+          <article v-for="item in filteredPeriods" :key="item.id" :class="{ editing: editingKey === item.id, deleted: Boolean(item.deletedAt), inactive: !item.active && !item.deletedAt }">
+            <div><div class="row-title"><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><span v-if="!item.deletedAt" class="state-pill" :class="item.active ? 'state-pill--active' : 'state-pill--inactive'">{{ item.active ? 'Aktif' : 'Nonaktif' }}</span></div><small>{{ krsStatusLabel(item.krsStatus) }} · {{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small></div>
             <div class="row-actions">
               <template v-if="listMode === 'trash'">
                 <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('period', item.id, `${item.academicYear} · ${termLabel(item.term)}`)"><i class="uil uil-history me-1" />Pulihkan</button>
@@ -665,8 +665,8 @@ onMounted(load)
         </template>
 
         <template v-else-if="tab === 'course'">
-          <article v-for="item in filteredCourses" :key="item.id" :class="{ editing: editingKey === item.courseId, deleted: Boolean(item.deletedAt) }">
-            <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · {{ courseStatusLabel(item.status) }}</small></div>
+          <article v-for="item in filteredCourses" :key="item.id" :class="{ editing: editingKey === item.courseId, deleted: Boolean(item.deletedAt), inactive: item.status !== 'ACTIVE' && !item.deletedAt }">
+            <div><div class="row-title"><strong>{{ item.code }} · {{ item.name }}</strong><span v-if="!item.deletedAt" class="state-pill" :class="item.status === 'ACTIVE' ? 'state-pill--active' : 'state-pill--inactive'">{{ courseStatusLabel(item.status) }}</span></div><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS</small></div>
             <div class="row-actions">
               <template v-if="listMode === 'trash'">
                 <button class="btn btn-sm btn-primary" type="button" :disabled="working" @click="restoreMaster('course', item.courseId, `${item.code} · ${item.name}`)"><i class="uil uil-history me-1" />Pulihkan</button>
@@ -738,6 +738,11 @@ onMounted(load)
 .form-head,.inventory-head{display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;margin-bottom:.9rem;padding-bottom:.75rem;border-bottom:1px solid #ece6dd}
 .inventory-head input{max-width:210px}
 .surface-card header span{color:#775a83;font-size:.66rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.row-title{display:flex;align-items:center;flex-wrap:wrap;gap:.4rem}
+.state-pill{display:inline-flex;align-items:center;padding:.1rem .45rem;border-radius:999px;font-size:.62rem;font-weight:700}
+.state-pill--active{background:#e7f6ee;color:#1b6b42}
+.state-pill--inactive{background:#f3ece2;color:#7a5628}
+.inventory article.inactive{background:#faf8f5;border-style:dashed}
 .surface-card h2{margin:.18rem 0;color:#1e1e1e;font-size:.98rem}
 .surface-card header p{margin:0;color:#6c6865;font-size:.72rem}
 .form-card form{display:grid;gap:.75rem}

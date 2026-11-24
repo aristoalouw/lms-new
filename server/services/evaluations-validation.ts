@@ -7,7 +7,7 @@ import {
   type EvaluationQuestionType,
 } from '../types/evaluations'
 import { CampusError, forbidden, invalidInput } from '../utils/errors'
-import { can } from '../utils/rbac'
+import { can, hasProgramAccess } from '../utils/rbac'
 
 const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/
 
@@ -116,7 +116,7 @@ export function requireEvaluationReportAccess(
   lecturerId?: string,
 ): void {
   if (context.roles.includes('leader')) return
-  if (context.roles.includes('academic_staff') && context.scope.programStudyIds.includes(programStudyId)) return
+  if (context.roles.includes('academic_staff') && hasProgramAccess(context, programStudyId)) return
   if (context.roles.includes('lecturer') && lecturerId === context.uid) return
   if (context.roles.includes('advisor') && context.scope.programStudyIds.includes(programStudyId)) return
   forbidden('Laporan evaluasi berada di luar lingkup akses Anda.')

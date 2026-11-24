@@ -315,12 +315,17 @@ async function loadPeriod(periodId: string) {
   }
 }
 
-onMounted(async () => {
+const activeRole = computed(() => user.value?.activeRole || user.value?.roles[0] || '')
+
+const initializeKrs = async () => {
+  loading.value = true
+  setupMessage.value = ''
+  errorMessage.value = ''
   if (config.public.demoMode) {
     loading.value = false
     return
   }
-  if (!user.value?.roles.includes('student')) {
+  if (activeRole.value !== 'student') {
     setupMessage.value = 'Halaman ini khusus pengisian KRS mahasiswa. Untuk menyetujui KRS atau mengelola kelas, gunakan menu Administrasi Akademik atau Kelas & Peserta.'
     loading.value = false
     return
@@ -328,8 +333,8 @@ onMounted(async () => {
   try {
     const { data } = await $api.get<AcademicAdministrationWorkspace>('/academic/administration')
     if (!data.profile) throw new Error('Profil akademik mahasiswa belum tersedia.')
-    periods.value = data.periods.filter(item => item.active)
-    programs.value = data.programs
+    periods.value = data.periods.filter(item => item.active && !item.deletedAt)
+    programs.value = data.programs.filter(item => !item.deletedAt)
     const periodId = data.profile.currentPeriodId || periods.value[0]?.id
     if (!periodId) throw new Error('Periode akademik aktif belum tersedia.')
     selectedPeriodId.value = periodId
@@ -342,7 +347,10 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-})
+}
+
+watch(activeRole, () => { initializeKrs() })
+onMounted(initializeKrs)
 </script>
 
 <template>

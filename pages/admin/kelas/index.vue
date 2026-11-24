@@ -74,11 +74,13 @@ const messageFor = (error: unknown) => {
 }
 const termLabel = (term: string) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
 const periodLabel = (periodId: string) => {
-  const match = catalog.value.periods.find(item => item.id === periodId)
+  const pool = [...(catalog.value.allPeriods ?? catalog.value.periods), ...(catalog.value.deleted?.periods ?? [])]
+  const match = pool.find(item => item.id === periodId)
   return match ? `${match.academicYear} · ${termLabel(match.term)}` : periodId
 }
 const programLabel = (programId: string) => {
-  const match = catalog.value.programs.find(item => item.id === programId)
+  const pool = [...(catalog.value.allPrograms ?? catalog.value.programs), ...(catalog.value.deleted?.programs ?? [])]
+  const match = pool.find(item => item.id === programId)
   return match ? match.name : programId
 }
 const schedulePreview = (item: AcademicClassRecord) => {
@@ -244,7 +246,7 @@ onMounted(() => load())
           <i class="uil uil-plus-circle" />Buat kelas baru
         </button>
         <button type="button" :class="{ active: activePanel === 'catalog' }" @click="activePanel = 'catalog'">
-          <i class="uil uil-book-open" />Katalog prodi &amp; mata kuliah <span class="tab-count">{{ catalog.courses.length }}</span>
+          <i class="uil uil-book-open" />Katalog prodi &amp; mata kuliah <span class="tab-count">{{ (catalog.allCourses ?? catalog.courses).length }}</span>
         </button>
         <button type="button" :class="{ active: activePanel === 'trash' }" @click="activePanel = 'trash'">
           <i class="uil uil-trash-alt" />Sampah <span class="tab-count">{{ deletedClasses.length }}</span>

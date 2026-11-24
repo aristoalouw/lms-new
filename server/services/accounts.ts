@@ -724,7 +724,7 @@ async function validateAccountReferences(account: AccountRecord, requireActivePr
   const programSnapshots = await Promise.all(account.scope.programStudyIds.map(programStudyId =>
     db.collection('academicProgramStudies').doc(programStudyId).get()))
   const missingProgramIndex = programSnapshots.findIndex(snapshot =>
-    !snapshot.exists || (requireActivePrograms && snapshot.data()?.active === false))
+    !snapshot.exists || Boolean(snapshot.data()?.deletedAt) || (requireActivePrograms && snapshot.data()?.active === false))
   if (missingProgramIndex >= 0) {
     invalidInput(`Program studi ${account.scope.programStudyIds[missingProgramIndex]} tidak tersedia atau tidak aktif.`)
   }

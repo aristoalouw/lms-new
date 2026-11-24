@@ -35,8 +35,9 @@ const responseDrafts = reactive<Record<string, string>>({})
 const ruleDrafts = reactive<Record<string, string>>({})
 const issuanceDrafts = reactive<Record<string, EvidenceRef>>({})
 
-const isStudent = computed(() => user.value?.roles.includes('student') ?? false)
-const canManage = computed(() => user.value?.roles.includes('student_affairs_staff') ?? false)
+const activeRole = computed(() => user.value?.activeRole || user.value?.roles[0] || '')
+const isStudent = computed(() => activeRole.value === 'student')
+const canManage = computed(() => activeRole.value === 'student_affairs_staff')
 const ownStudentId = computed(() => user.value?.studentId || user.value?.id || '')
 const tabs = [
   { id: 'portfolio', label: 'Portofolio', icon: 'uil-award' },
@@ -213,6 +214,7 @@ const downloadLetter = async (item: LetterRequest) => {
 }
 
 watch(selectedStudentId, loadLedger)
+watch(activeRole, () => { loadAll() })
 onMounted(loadAll)
 </script>
 

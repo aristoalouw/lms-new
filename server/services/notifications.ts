@@ -15,7 +15,7 @@ import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, isCampusError, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { FIRESTORE_TTL_RETENTION_MS, firestorePurgeAfter } from '../utils/firestore-ttl'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { listActiveAccountsByIds } from './accounts'
 import { BUILT_IN_ACADEMIC_NOTIFICATION_TEMPLATES, BUILT_IN_LMS_NOTIFICATION_TEMPLATES, BUILT_IN_SERVICE_NOTIFICATION_TEMPLATES, notificationModuleState } from './notifications-state'
@@ -187,7 +187,7 @@ export function nextEmailDeliveryAt(preferences: NotificationPreferences, now = 
 function canEnqueue(context: AuthContext, template: NotificationTemplate, programStudyId?: string): boolean {
   if (hasRole(context, 'administrator')) return true
   if (!CATEGORY_ROLES[template.category].some(role => hasRole(context, role))) return false
-  return !programStudyId || context.scope.programStudyIds.includes(programStudyId)
+  return !programStudyId || hasProgramAccess(context, programStudyId)
 }
 
 async function templateByKey(key: string): Promise<NotificationTemplate> {

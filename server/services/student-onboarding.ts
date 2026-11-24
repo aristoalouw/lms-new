@@ -157,9 +157,9 @@ function validateMaster(
   period: AcademicPeriodDefinition | undefined,
   curriculum: CurriculumVersion | undefined,
 ): asserts program is AcademicProgramStudy {
-  if (!program || !program.active) conflict('PROGRAM_STUDY_NOT_ACTIVE', 'Program studi onboarding tidak tersedia atau tidak aktif.')
-  if (!period || !period.active) conflict('ACADEMIC_PERIOD_NOT_ACTIVE', 'Periode akademik onboarding tidak tersedia atau tidak aktif.')
-  if (!curriculum || curriculum.status !== 'ACTIVE' || curriculum.programStudyId !== input.programStudyId) conflict('CURRICULUM_NOT_ACTIVE', 'Versi kurikulum aktif untuk program studi belum tersedia.')
+  if (!program || !program.active || program.deletedAt) conflict('PROGRAM_STUDY_NOT_ACTIVE', 'Program studi onboarding tidak tersedia atau tidak aktif.')
+  if (!period || !period.active || period.deletedAt) conflict('ACADEMIC_PERIOD_NOT_ACTIVE', 'Periode akademik onboarding tidak tersedia atau tidak aktif.')
+  if (!curriculum || curriculum.deletedAt || curriculum.status !== 'ACTIVE' || curriculum.programStudyId !== input.programStudyId) conflict('CURRICULUM_NOT_ACTIVE', 'Versi kurikulum aktif untuk program studi belum tersedia.')
   if (input.cohortYear < curriculum.effectiveCohortFrom || input.cohortYear > curriculum.effectiveCohortTo) conflict('CURRICULUM_COHORT_MISMATCH', 'Angkatan mahasiswa berada di luar rentang kurikulum.')
   validateStudentAccount(studentAccount, input, program.facultyId)
   validateAdvisorAccount(advisorAccount, input.programStudyId)

@@ -14,7 +14,7 @@ async function liveDashboardSnapshot(
   programStudyId?: string,
 ): Promise<DashboardSnapshot> {
   const periodSnapshot = await db.collection('academicPeriodDefinitions').doc(periodId).get()
-  if (!periodSnapshot.exists) notFound('Periode akademik')
+  if (!periodSnapshot.exists || periodSnapshot.data()?.deletedAt) notFound('Periode akademik')
   const academicYear = String(periodSnapshot.data()?.academicYear || '')
 
   let studentQuery: FirebaseFirestore.Query = db.collection('academicStudentProfiles').where('status', '==', 'ACTIVE')
@@ -44,8 +44,9 @@ async function liveDashboardSnapshot(
     tracerRecipientQuery.limit(5_000).get(), tracerResponseQuery.limit(5_000).get(), programQuery.limit(100).get(),
   ])
 
-  const classRecords = classes.docs.map(document => document.data() as { totalScheduledMeetings?: number; realizedMeetingCount?: number })
-  const attendanceCounts = await Promise.all(classes.docs.map(async document => {
+  const activeClassDocs = classes.docs.filter(document => !document.data()?.deletedAt)
+  const classRecords = activeClassDocs.map(document => document.data() as { totalScheduledMeetings?: number; realizedMeetingCount?: number })
+  const attendanceCounts = await Promise.all(activeClassDocs.map(async document => {
     const attendance = document.ref.collection('attendance')
     const [total, attended] = await Promise.all([
       attendance.count().get(),
@@ -64,7 +65,7 @@ async function liveDashboardSnapshot(
   const sourceRows = sources.docs.map(document => document.data() as { eligible?: boolean; blockers?: unknown[] })
   const jobRows = jobs.docs.map(document => document.data() as { status?: string; entityIds?: unknown[]; updatedAt?: string })
   const responseRows = responses.docs.map(document => document.data() as { career?: { employmentStatus?: string; waitMonths?: number } })
-  const programRows = programs.docs.map(document => document.data() as { accreditationStatus?: string; accreditationExpiresAt?: string })
+  const programRows = programs.docs.filter(document => !document.data()?.deletedAt).map(document => document.data() as { accreditationStatus?: string; accreditationExpiresAt?: string })
   const expiryDates = programRows.map(item => item.accreditationExpiresAt || '').filter(Boolean).sort()
   const riskBoundary = Date.now() + 365 * 86_400_000
 
@@ -73,7 +74,7 @@ async function liveDashboardSnapshot(
     updatedAt: new Date().toISOString(),
     academic: {
       activeStudents: studentCount.data().count,
-      classesRunning: classes.size,
+      classesRunning: activeClassDocs.length,
       averageAttendancePercent: attendanceTotal ? Math.round(attendancePresent * 10_000 / attendanceTotal) / 100 : 0,
       lecturesRealizedPercent: scheduledMeetings ? Math.round(realizedMeetings * 10_000 / scheduledMeetings) / 100 : 0,
     },
@@ -133,9 +134,10 @@ export async function dashboardSummary(
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan dashboard tidak tersedia.')
     if (!periodId) {
-      const activePeriod = await db.collection('academicPeriodDefinitions').where('active', '==', true).orderBy('startsAt', 'desc').limit(1).get()
-      if (activePeriod.empty) notFound('Periode akademik aktif')
-      periodId = activePeriod.docs[0]!.id
+      const activePeriod = await db.collection('academicPeriodDefinitions').where('active', '==', true).orderBy('startsAt', 'desc').limit(20).get()
+      const usablePeriod = activePeriod.docs.find(doc => !doc.data()?.deletedAt)
+      if (!usablePeriod) notFound('Periode akademik aktif')
+      periodId = usablePeriod.id
     }
     const suffix = programStudyId ? `__${programStudyId}` : ''
     const reference = db.collection('dashboardSnapshots').doc(`${periodId}${suffix}`)

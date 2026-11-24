@@ -36,7 +36,8 @@ const depositAccount = ref<DepositAccount | null>(null)
 const refunds = ref<BillingRefundRequest[]>([])
 const refundDraft = reactive({ amountIdr: 0, reason: '' })
 
-const isFinance = computed(() => user.value?.roles.includes('finance_staff') || false)
+const activeRole = computed(() => user.value?.activeRole || user.value?.roles[0] || '')
+const isFinance = computed(() => activeRole.value === 'finance_staff')
 const selected = computed(() => invoices.value.find(item => item.id === selectedId.value) || invoices.value[0])
 const rupiah = (value: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value)
 const dateLabel = (value: string) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'medium', timeZone: 'Asia/Jakarta' }).format(new Date(`${value}T00:00:00+07:00`))
@@ -157,6 +158,7 @@ function reviewProof(proof: PaymentProof, status: 'VERIFIED' | 'REJECTED') {
   return execute(() => $api.post(`/billing/proofs/${proof.id}/review`, { status, reviewNote, expectedVersion: proof.version }), `Bukti ditandai ${status}.`)
 }
 
+watch(activeRole, () => { loadBilling() })
 onMounted(() => {
   const now = new Date(); proofDraft.paidAt = now.toISOString().slice(0, 16); issueDraft.dueDate = new Date(now.getTime() + 30 * 86_400_000).toISOString().slice(0, 10)
   loadBilling()

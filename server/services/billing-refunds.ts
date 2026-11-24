@@ -56,7 +56,7 @@ export async function getDepositAccount(context: AuthContext, studentIdValue: st
   const ownsProfile = hasRole(context, 'student')
     && (profile.studentUid === context.uid || context.scope.studentIds.includes(studentId))
   const managesProfile = hasRole(context, 'finance_staff')
-    && context.scope.programStudyIds.includes(profile.programStudyId)
+    && hasProgramAccess(context, profile.programStudyId)
   if (!ownsProfile && !managesProfile) forbidden('Saldo deposit berada di luar lingkup akses Anda.')
 
   if (dataMode() === 'mock') {

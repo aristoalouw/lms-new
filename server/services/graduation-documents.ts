@@ -14,7 +14,7 @@ import { GRADUATION_DOCUMENT_TYPES } from '../types/graduation'
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole, requirePermission } from '../utils/rbac'
+import { hasProgramAccess, hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { graduationModuleState } from './graduation-state'
 
@@ -63,7 +63,7 @@ function isDocumentStaff(context: AuthContext): boolean {
 }
 
 function isProgramScoped(context: AuthContext, programStudyId: string): boolean {
-  return context.scope.programStudyIds.includes(programStudyId)
+  return hasProgramAccess(context, programStudyId)
 }
 
 function requireDocumentIssuer(context: AuthContext, programStudyId: string): void {
@@ -300,7 +300,7 @@ function ensureIssuable(application: GraduationApplication): void {
 export async function listGraduationTemplates(context: AuthContext): Promise<GraduationDocumentTemplate[]> {
   if (!hasRole(context, 'academic_staff', 'administrator')) forbidden()
   const visible = (template: GraduationDocumentTemplate) => hasRole(context, 'administrator')
-    || !template.programStudyId || context.scope.programStudyIds.includes(template.programStudyId)
+    || !template.programStudyId || hasProgramAccess(context, template.programStudyId)
   if (dataMode() === 'mock') {
     return [...graduationModuleState().templates.values()]
       .map(template => structuredClone(template))

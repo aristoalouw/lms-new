@@ -98,7 +98,7 @@ function validateSelection(
     invalidInput('Daftar kelas mengandung duplikasi atau kelas yang tidak ditemukan.')
   }
   for (const record of classes) {
-    if (record.status !== 'ACTIVE' || record.periodId !== periodId || record.programStudyId !== student.programStudyId) {
+    if (record.status !== 'ACTIVE' || record.deletedAt || record.periodId !== periodId || record.programStudyId !== student.programStudyId) {
       conflict('CLASS_NOT_ELIGIBLE', 'Kelas tidak aktif atau berada di luar periode/program studi mahasiswa.', { classId: record.id })
     }
     if (!Number.isInteger(record.credits) || record.credits < 1 || record.credits > 12) {
@@ -226,7 +226,7 @@ export async function listKrsCatalog(
   if (dataMode() === 'mock') {
     period = mockPeriod(periodId)
     student = mockStudent(studentId)
-    classes = [...krsModuleState().classes.values()].filter(record => record.periodId === periodId && record.programStudyId === student.programStudyId)
+    classes = [...krsModuleState().classes.values()].filter(record => !record.deletedAt && record.status === 'ACTIVE' && record.periodId === periodId && record.programStudyId === student.programStudyId)
   } else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan KRS tidak tersedia.')
@@ -241,7 +241,7 @@ export async function listKrsCatalog(
     student = { id: studentSnapshot.id, ...studentSnapshot.data() } as KrsStudentAcademicState
     classes = classSnapshot.docs
       .map(document => ({ id: document.id, ...document.data() }) as AcademicClassRecord)
-      .filter(record => record.programStudyId === student.programStudyId && record.status === 'ACTIVE')
+      .filter(record => !record.deletedAt && record.programStudyId === student.programStudyId && record.status === 'ACTIVE')
   }
   assertStudentOwnership(context, student)
   const completed = new Set(student.completedCourseCodes)

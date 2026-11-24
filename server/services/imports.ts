@@ -15,7 +15,7 @@ import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { parseImportSource } from '../utils/import-parser'
-import { filterProgramScope, hasRole } from '../utils/rbac'
+import { filterProgramScope, hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 
 const MAPPING_VERSION = 'campus-import-v1'
@@ -92,7 +92,7 @@ function scopedProgram(context: AuthContext, requested: string): string {
 }
 
 function requireRunScope(context: AuthContext, run: ImportRun): void {
-  if (!context.scope.programStudyIds.includes(run.programStudyId)) forbidden('Impor berada di luar lingkup program studi Anda.')
+  if (!hasProgramAccess(context, run.programStudyId)) forbidden('Impor berada di luar lingkup program studi Anda.')
 }
 
 function sanitizeSourceName(value: string, format: 'csv' | 'tsv'): string {

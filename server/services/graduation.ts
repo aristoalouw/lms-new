@@ -15,7 +15,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole, requirePermission } from '../utils/rbac'
+import { hasProgramAccess, hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { graduationModuleState } from './graduation-state'
 
@@ -53,7 +53,7 @@ function isStaff(context: AuthContext): boolean {
 }
 
 function programScoped(context: AuthContext, programStudyId: string): boolean {
-  return context.scope.programStudyIds.includes(programStudyId)
+  return hasProgramAccess(context, programStudyId)
 }
 
 function requireStaffScope(context: AuthContext, programStudyId: string): void {

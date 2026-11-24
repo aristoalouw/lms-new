@@ -36,12 +36,13 @@ const mbkmForm = reactive({ periodId: '', scheme: 'INTERNSHIP' as MbkmActivity['
 const logForm = reactive({ occurredOn: '', activity: '', hours: 8, evidenceFileId: '' })
 const evaluationForm = reactive({ score: 80, note: '', courseCode: '', credits: 3, gradeLetter: 'A' })
 
-const roles = computed(() => user.value?.roles || [])
-const isStudent = computed(() => roles.value.includes('student'))
-const isStaff = computed(() => roles.value.includes('academic_staff'))
-const canGuide = computed(() => roles.value.some(role => ['academic_staff', 'advisor', 'lecturer'].includes(role)))
+const activeRole = computed(() => user.value?.activeRole || user.value?.roles[0] || '')
+const isStudent = computed(() => activeRole.value === 'student')
+const isStaff = computed(() => activeRole.value === 'academic_staff')
+const canGuide = computed(() => ['academic_staff', 'advisor', 'lecturer'].includes(activeRole.value))
 const profile = computed(() => workspace.value?.profile)
-const activePeriod = computed(() => workspace.value?.periods.find(item => item.id === profile.value?.currentPeriodId) || workspace.value?.periods[0])
+const activePeriods = computed(() => (workspace.value?.periods || []).filter(item => !item.deletedAt && item.active))
+const activePeriod = computed(() => activePeriods.value.find(item => item.id === profile.value?.currentPeriodId) || activePeriods.value[0])
 const thesis = computed(() => workspace.value?.theses[0])
 const mbkm = computed(() => workspace.value?.mbkmActivities[0])
 const tabs = computed(() => [
@@ -79,7 +80,7 @@ const defaults = () => {
   leaveForm.periodId ||= periodId
   rpsForm.periodId ||= periodId
   mbkmForm.periodId ||= periodId
-  rpsForm.courseVersionId ||= workspace.value?.courses[0]?.id || ''
+  rpsForm.courseVersionId ||= (workspace.value?.courses || []).find(item => !item.deletedAt && item.status === 'ACTIVE')?.id || ''
   advisingForm.requestedAt ||= new Date(Date.now() + 86_400_000).toISOString().slice(0, 16)
   guidanceForm.occurredAt ||= new Date().toISOString().slice(0, 16)
 }
@@ -189,6 +190,7 @@ const evaluate = (item: MbkmActivity) => run(async () => {
   await $api.post(`/academic/mbkm/${encodeURIComponent(item.id)}/evaluation`, { score: Number(evaluationForm.score), note: evaluationForm.note, conversions: evaluationForm.courseCode ? [{ courseCode: evaluationForm.courseCode.toUpperCase(), credits: Number(evaluationForm.credits), gradeLetter: evaluationForm.gradeLetter.toUpperCase() }] : [], expectedVersion: item.version })
 }, 'Evaluasi dan konversi MBKM berhasil disimpan.')
 
+watch(activeRole, () => { load() })
 onMounted(load)
 </script>
 

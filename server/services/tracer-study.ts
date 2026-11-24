@@ -28,7 +28,7 @@ import {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { can, hasRole, requirePermission } from '../utils/rbac'
+import { can, hasProgramAccess, hasRole, requirePermission } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { graduationModuleState } from './graduation-state'
 import { tracerStudyMockState } from './tracer-study-mock'
@@ -126,7 +126,7 @@ function uniqueIds(values: string[], label: string): string[] {
 function requireTracerManager(context: AuthContext, programStudyIds: string[]): void {
   requirePermission(context, 'tracer.manage')
   if (!hasRole(context, 'student_affairs_staff') || !programStudyIds.length
-    || programStudyIds.some(id => !context.scope.programStudyIds.includes(id))) {
+    || programStudyIds.some(id => !hasProgramAccess(context, id))) {
     forbidden('Tracer study berada di luar lingkup program studi Anda.')
   }
 }
@@ -892,7 +892,7 @@ function maskEmail(email: string): string {
 export async function listTracerRespondents(context: AuthContext, periodId: string): Promise<TracerRespondentMonitorItem[]> {
   if (!hasRole(context, 'student_affairs_staff')) forbidden('Monitoring responden hanya tersedia untuk staf tracer study.')
   const period = await loadTracerPeriod(periodId)
-  requireTracerManager(context, period.programStudyIds.filter(id => context.scope.programStudyIds.includes(id)))
+  requireTracerManager(context, period.programStudyIds.filter(id => hasProgramAccess(context, id)))
   let recipients: TracerRecipient[]
   if (dataMode() === 'mock') recipients = [...tracerStudyMockState().recipients.values()].filter(item => item.periodId === period.id).map(item => structuredClone(item))
   else {
@@ -901,7 +901,7 @@ export async function listTracerRespondents(context: AuthContext, periodId: stri
     const snapshot = await db.collection('tracerRecipients').where('periodId', '==', period.id).limit(2_500).get()
     recipients = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }) as TracerRecipient)
   }
-  const allowed = recipients.filter(recipient => context.scope.programStudyIds.includes(recipient.programStudyId))
+  const allowed = recipients.filter(recipient => hasProgramAccess(context, recipient.programStudyId))
   const result: TracerRespondentMonitorItem[] = []
   for (const recipient of allowed) {
     const profile = await loadAlumniProfile(recipient.alumniProfileId)

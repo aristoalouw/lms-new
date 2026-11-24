@@ -14,7 +14,7 @@ import { findPaymentByExternalReference, recordPayment, reversePayment } from '.
 import { CampusError, conflict, forbidden, invalidInput, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { cloneValue, mockState } from '../utils/mock-store'
-import { filterProgramScope, hasRole } from '../utils/rbac'
+import { filterProgramScope, hasCampusWideProgramScope, hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { normalizeIsoInstant, requirePositiveNumber, requireRecord, requireString } from '../utils/validation'
 
@@ -236,8 +236,9 @@ function requireReconciliationRole(context: AuthContext): void {
 }
 
 function visibleForContext(context: AuthContext, record: PaymentGatewayEventRecord, programStudyId?: string): boolean {
+  if (!programStudyId && hasCampusWideProgramScope(context)) return true
   const scoped = programStudyId || (context.scope.programStudyIds.length === 1 ? context.scope.programStudyIds[0] : undefined)
-  return Boolean(scoped && record.programStudyId === scoped && context.scope.programStudyIds.includes(scoped))
+  return Boolean(scoped && record.programStudyId === scoped && hasProgramAccess(context, scoped))
 }
 
 export async function listGatewayEvents(

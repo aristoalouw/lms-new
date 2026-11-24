@@ -57,6 +57,9 @@ export interface LmsAcademicCatalog {
   programs: AcademicProgramStudy[]
   periods: AcademicPeriodDefinition[]
   courses: AcademicCourseVersion[]
+  allPrograms?: AcademicProgramStudy[]
+  allPeriods?: AcademicPeriodDefinition[]
+  allCourses?: AcademicCourseVersion[]
   deleted?: {
     programs: AcademicProgramStudy[]
     periods: AcademicPeriodDefinition[]

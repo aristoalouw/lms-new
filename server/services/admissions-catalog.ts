@@ -102,7 +102,7 @@ export async function admissionCatalog(options: { includeInactive?: boolean } = 
       db.collection('admissionWaves').orderBy('opensAt', 'desc').limit(100).get(),
       db.collection('admissionPathPolicies').limit(20).get(),
     ])
-    programs = programSnapshot.docs.map(document => asProgram(document.id, document.data()))
+    programs = programSnapshot.docs.filter(document => !document.data()?.deletedAt).map(document => asProgram(document.id, document.data()))
     waves = waveSnapshot.docs.map(document => asWave(document.id, document.data()))
     const configured = new Map(pathSnapshot.docs.map(document => [document.id, asPathPolicy(document.id, document.data())]))
     pathPolicies = DEMO_ADMISSION_PATH_POLICIES.map(policy => structuredClone(configured.get(policy.id) || { ...policy, programStudyIds: [] }))
@@ -144,7 +144,7 @@ export async function admissionProgramById(idValue: string): Promise<AdmissionPr
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan katalog PMB tidak tersedia.')
     const snapshot = await db.collection('academicProgramStudies').doc(id).get()
-    if (snapshot.exists) program = asProgram(snapshot.id, snapshot.data() || {})
+    if (snapshot.exists && !snapshot.data()?.deletedAt) program = asProgram(snapshot.id, snapshot.data() || {})
   }
   if (!program || !program.active || !program.code || !program.name || !program.unitId) invalidInput('Program studi PMB tidak valid atau tidak aktif.')
   return structuredClone(program)

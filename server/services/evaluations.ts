@@ -16,6 +16,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { CampusError, conflict, forbidden, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
+import { hasProgramAccess } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import {
   cloneEvaluationValue,
@@ -599,7 +600,7 @@ export async function listEvaluationPeriods(context: AuthContext, programStudyId
   const privileged = context.roles.some(role => role === 'administrator' || role === 'leader')
   const allowDeleted = includeDeleted && (context.roles.includes('administrator') || context.roles.includes('academic_staff'))
   if (requestedProgram) {
-    if (!privileged && !(context.roles.includes('academic_staff') && context.scope.programStudyIds.includes(requestedProgram))) forbidden()
+    if (!privileged && !(context.roles.includes('academic_staff') && hasProgramAccess(context, requestedProgram))) forbidden()
   } else if (!privileged) {
     if (context.roles.includes('academic_staff') && context.scope.programStudyIds.length === 1) return listEvaluationPeriods(context, context.scope.programStudyIds[0], includeDeleted)
     if (context.roles.includes('lecturer')) return listEvaluationPeriodsForLecturer(context)
@@ -700,15 +701,18 @@ async function listEvaluationPeriodsForLecturer(context: AuthContext): Promise<E
   if (!context.roles.includes('lecturer')) forbidden()
   if (dataMode() === 'mock') {
     const programIds = new Set([...evaluationMockState().enrollments.values()].filter(item => item.lecturerId === context.uid).map(item => item.programStudyId))
-    return [...evaluationMockState().periods.values()].filter(period => programIds.has(period.programStudyId)).map(cloneEvaluationValue)
+    return [...evaluationMockState().periods.values()].filter(period => !period.deletedAt && programIds.has(period.programStudyId)).map(cloneEvaluationValue)
   }
   const db = firestoreAdmin()
   if (!db) serviceUnavailable('Penyimpanan evaluasi tidak tersedia.')
   const classes = await db.collection('academicClasses').where('lecturerIds', 'array-contains', context.uid).limit(500).get()
-  const programIds = [...new Set(classes.docs.map(doc => String(doc.data().programStudyId)).filter(Boolean))]
+  const programIds = [...new Set(classes.docs.filter(doc => !doc.data().deletedAt).map(doc => String(doc.data().programStudyId)).filter(Boolean))]
   if (!programIds.length) return []
   const periods = await db.collection('evaluationPeriods').where('programStudyId', 'in', programIds.slice(0, 30)).limit(100).get()
-  return periods.docs.map(doc => ({ ...doc.data(), id: doc.id } as EvaluationPeriodRecord)).sort((a, b) => b.opensAt.localeCompare(a.opensAt))
+  return periods.docs
+    .map(doc => ({ ...doc.data(), id: doc.id } as EvaluationPeriodRecord))
+    .filter(period => !period.deletedAt)
+    .sort((a, b) => b.opensAt.localeCompare(a.opensAt))
 }
 
 function evaluationTargetId(enrollmentId: string, lecturerId: string): string {
@@ -762,7 +766,7 @@ async function canonicalEvaluationTargets(snapshot: FirebaseFirestore.QuerySnaps
   return snapshot.docs.flatMap(document => {
     const value = document.data() as unknown as ClassEnrollment
     const classRecord = classes.get(value.classId)
-    if (!classRecord || classRecord.status !== 'ACTIVE') return []
+    if (!classRecord || classRecord.status !== 'ACTIVE' || classRecord.deletedAt) return []
     return classRecord.lecturerIds.map(lecturerId => canonicalEvaluationEnrollment(document.id, document.data(), classRecord, lecturerId))
   })
 }
@@ -783,6 +787,7 @@ async function getEnrollment(enrollmentId: string): Promise<EvaluationEnrollment
   const classSnapshot = await db.collection('academicClasses').doc(classId).get()
   if (!classSnapshot.exists) notFound('Kelas akademik')
   const classRecord = { ...classSnapshot.data(), id: classSnapshot.id } as AcademicClassRecord
+  if (classRecord.deletedAt) notFound('Kelas akademik')
   return canonicalEvaluationEnrollment(snapshot.id, snapshot.data() || {}, classRecord, target.lecturerId)
 }
 
@@ -812,7 +817,7 @@ export async function listStudentEvaluationAssignments(
     enrollments = [...evaluationMockState().enrollments.values()]
       .filter(item => item.studentUid === context.uid && item.status === 'ENROLLED')
       .map(cloneEvaluationValue)
-    periods = [...evaluationMockState().periods.values()].map(cloneEvaluationValue)
+    periods = [...evaluationMockState().periods.values()].filter(period => !period.deletedAt).map(cloneEvaluationValue)
   } else {
     const db = firestoreAdmin()
     if (!db) serviceUnavailable('Penyimpanan evaluasi tidak tersedia.')
@@ -825,7 +830,7 @@ export async function listStudentEvaluationAssignments(
     if (!enrollments.length) return []
     const academicPeriodIds = [...new Set(enrollments.map(item => item.academicPeriodId))].slice(0, 30)
     const periodSnapshot = await db.collection('evaluationPeriods').where('academicPeriodId', 'in', academicPeriodIds).limit(100).get()
-    periods = periodSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as EvaluationPeriodRecord))
+    periods = periodSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as EvaluationPeriodRecord)).filter(period => !period.deletedAt)
   }
 
   const assignments: EvaluationAssignment[] = []

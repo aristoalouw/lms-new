@@ -25,7 +25,10 @@ const manualCourseId = ref(false)
 const showTrash = ref(false)
 const pendingDelete = ref<{ resource: 'program' | 'period' | 'course'; id: string; label: string } | null>(null)
 
-const defaultFaculty = computed(() => props.catalog.programs[0]?.facultyId || 'stt-saint-paul')
+const managedPrograms = computed(() => props.catalog.allPrograms ?? props.catalog.programs)
+const managedPeriods = computed(() => props.catalog.allPeriods ?? props.catalog.periods)
+const managedCourses = computed(() => props.catalog.allCourses ?? props.catalog.courses)
+const defaultFaculty = computed(() => managedPrograms.value[0]?.facultyId || 'stt-saint-paul')
 
 const program = reactive({
   id: '',
@@ -33,6 +36,7 @@ const program = reactive({
   code: '',
   name: '',
   level: 'S1' as 'D3' | 'S1' | 'S2',
+  active: true,
   accreditationStatus: 'Baik Sekali',
   accreditationExpiresAt: `${year + 5}-12-31`,
 })
@@ -44,6 +48,9 @@ const period = reactive({
   endsAt: `${year + 1}-01-31`,
   krsOpensAt: `${year}-07-01`,
   krsClosesAt: `${year}-08-15`,
+  krsRevisionClosesAt: `${year}-08-31`,
+  krsStatus: 'KRS_OPEN' as 'DRAFT' | 'KRS_OPEN' | 'KRS_CLOSED' | 'CLOSED',
+  active: true,
 })
 const course = reactive({
   courseId: '',
@@ -52,6 +59,9 @@ const course = reactive({
   programStudyId: '',
   credits: 3,
   semesterRecommendation: 1,
+  status: 'ACTIVE' as 'DRAFT' | 'ACTIVE' | 'RETIRED',
+  prerequisiteCourseCodes: [] as string[],
+  equivalentCourseCodes: [] as string[],
 })
 
 const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -68,19 +78,21 @@ watch(() => course.code, () => {
     course.courseId = base ? `course-${base}` : ''
   }
 })
-watch(() => props.catalog.programs, (programs) => {
-  if (!course.programStudyId && programs.length) course.programStudyId = programs[0]!.id
+watch(managedPrograms, (programs) => {
+  if (!course.programStudyId && programs.length) {
+    course.programStudyId = programs.find(item => item.active)?.id || programs[0]!.id
+  }
   if (!editingProgramId.value && !program.facultyId) program.facultyId = defaultFaculty.value
 }, { immediate: true })
 
 const latestCourseVersion = computed(() => Math.max(
   0,
-  ...props.catalog.courses
+  ...[...props.catalog.courses, ...managedCourses.value]
     .filter(item => item.courseId === course.courseId.trim())
     .map(item => item.version),
 ))
-const existingPeriodVersion = computed(() => props.catalog.periods.find(item => item.id === period.id.trim())?.version ?? 0)
-const existingProgramVersion = computed(() => props.catalog.programs.find(item => item.id === program.id.trim())?.version ?? 0)
+const existingPeriodVersion = computed(() => managedPeriods.value.find(item => item.id === period.id.trim())?.version ?? 0)
+const existingProgramVersion = computed(() => managedPrograms.value.find(item => item.id === program.id.trim())?.version ?? 0)
 
 const deletedPrograms = computed(() => props.catalog.deleted?.programs ?? [])
 const deletedPeriods = computed(() => props.catalog.deleted?.periods ?? [])
@@ -89,7 +101,9 @@ const currentTrashCount = computed(() => (
   subTab.value === 'course' ? deletedCourses.value.length : subTab.value === 'program' ? deletedPrograms.value.length : deletedPeriods.value.length
 ))
 const termLabel = (term: string) => ({ ODD: 'Gasal', EVEN: 'Genap', SHORT: 'Pendek' })[term] || term
-const programName = (id: string) => props.catalog.programs.find(item => item.id === id)?.name || id
+const krsStatusLabel = (status: string) => ({ DRAFT: 'Draf', KRS_OPEN: 'KRS dibuka', KRS_CLOSED: 'KRS ditutup', CLOSED: 'Selesai' })[status] || status
+const courseStatusLabel = (status: string) => ({ ACTIVE: 'Aktif', DRAFT: 'Draf', RETIRED: 'Nonaktif' })[status] || status
+const programName = (id: string) => managedPrograms.value.find(item => item.id === id)?.name || deletedPrograms.value.find(item => item.id === id)?.name || id
 const requestKey = (purpose: string) => `${purpose}-${globalThis.crypto.randomUUID()}`
 const instant = (date: string, end = false) => new Date(`${date}T${end ? '23:59:59' : '00:00:00'}+07:00`).toISOString()
 const messageFor = (error: unknown) => {
@@ -106,6 +120,7 @@ function resetProgram() {
     code: '',
     name: '',
     level: 'S1',
+    active: true,
     accreditationStatus: 'Baik Sekali',
     accreditationExpiresAt: `${year + 5}-12-31`,
   })
@@ -121,6 +136,7 @@ function editProgram(item: AcademicProgramStudy) {
     code: item.code,
     name: item.name,
     level: item.level,
+    active: item.active,
     accreditationStatus: item.accreditationStatus,
     accreditationExpiresAt: item.accreditationExpiresAt.slice(0, 10),
   })
@@ -133,9 +149,12 @@ function resetCourse() {
     courseId: '',
     code: '',
     name: '',
-    programStudyId: props.catalog.programs[0]?.id || '',
+    programStudyId: managedPrograms.value.find(item => item.active)?.id || managedPrograms.value[0]?.id || '',
     credits: 3,
     semesterRecommendation: 1,
+    status: 'ACTIVE',
+    prerequisiteCourseCodes: [],
+    equivalentCourseCodes: [],
   })
 }
 
@@ -150,6 +169,9 @@ function editCourse(item: AcademicCourseVersion) {
     programStudyId: item.programStudyId,
     credits: item.credits,
     semesterRecommendation: item.semesterRecommendation,
+    status: item.status,
+    prerequisiteCourseCodes: [...(item.prerequisiteCourseCodes || [])],
+    equivalentCourseCodes: [...(item.equivalentCourseCodes || [])],
   })
 }
 
@@ -163,6 +185,9 @@ function resetPeriod() {
     endsAt: `${year + 1}-01-31`,
     krsOpensAt: `${year}-07-01`,
     krsClosesAt: `${year}-08-15`,
+    krsRevisionClosesAt: `${year}-08-31`,
+    krsStatus: 'KRS_OPEN',
+    active: true,
   })
 }
 
@@ -177,6 +202,9 @@ function editPeriod(item: AcademicPeriodDefinition) {
     endsAt: item.endsAt.slice(0, 10),
     krsOpensAt: item.krsOpensAt.slice(0, 10),
     krsClosesAt: item.krsClosesAt.slice(0, 10),
+    krsRevisionClosesAt: (item.krsRevisionClosesAt || item.endsAt).slice(0, 10),
+    krsStatus: item.krsStatus,
+    active: item.active,
   })
 }
 
@@ -185,13 +213,18 @@ async function savePeriod() {
   errorMessage.value = ''
   noticeMessage.value = ''
   try {
+    const safeKrsStatus = !period.active && period.krsStatus === 'KRS_OPEN' ? 'KRS_CLOSED' : period.krsStatus
     await $api.post('/academic/classes/catalog/periods', {
-      ...period,
+      id: period.id.trim(),
+      academicYear: period.academicYear.trim(),
+      term: period.term,
       startsAt: instant(period.startsAt),
       endsAt: instant(period.endsAt, true),
       krsOpensAt: instant(period.krsOpensAt),
       krsClosesAt: instant(period.krsClosesAt, true),
-      active: true,
+      krsRevisionClosesAt: instant(period.krsRevisionClosesAt || period.endsAt, true),
+      krsStatus: safeKrsStatus,
+      active: period.active,
       expectedVersion: existingPeriodVersion.value,
     }, { headers: { 'Idempotency-Key': requestKey('catalog-period') } })
     noticeMessage.value = editingPeriodId.value ? 'Periode akademik berhasil diperbarui.' : 'Periode akademik baru berhasil disimpan.'
@@ -210,13 +243,14 @@ async function saveProgram() {
   noticeMessage.value = ''
   try {
     await $api.post('/academic/classes/catalog/programs', {
-      ...program,
       id: program.id.trim(),
       facultyId: program.facultyId.trim(),
       code: program.code.trim().toUpperCase(),
       name: program.name.trim(),
+      level: program.level,
       accreditationStatus: program.accreditationStatus.trim(),
-      active: true,
+      accreditationExpiresAt: program.accreditationExpiresAt,
+      active: program.active,
       expectedVersion: existingProgramVersion.value,
     }, { headers: { 'Idempotency-Key': requestKey('catalog-program') } })
     noticeMessage.value = editingProgramId.value ? 'Program studi berhasil diperbarui.' : 'Program studi baru berhasil disimpan.'
@@ -268,13 +302,15 @@ async function saveCourse() {
   noticeMessage.value = ''
   try {
     await $api.post('/academic/classes/catalog/courses', {
-      ...course,
       courseId: course.courseId.trim(),
       code: course.code.trim().toUpperCase(),
       name: course.name.trim(),
-      prerequisiteCourseCodes: [],
-      equivalentCourseCodes: [],
-      status: 'ACTIVE',
+      programStudyId: course.programStudyId,
+      credits: course.credits,
+      semesterRecommendation: course.semesterRecommendation,
+      prerequisiteCourseCodes: course.prerequisiteCourseCodes,
+      equivalentCourseCodes: course.equivalentCourseCodes,
+      status: course.status,
       expectedCurrentVersion: latestCourseVersion.value,
     }, { headers: { 'Idempotency-Key': requestKey('catalog-course') } })
     noticeMessage.value = editingCourseId.value ? 'Revisi mata kuliah berhasil disimpan dan aktif.' : 'Mata kuliah baru berhasil disimpan dan siap dipakai membuat kelas.'
@@ -303,9 +339,9 @@ async function saveCourse() {
     <div v-if="errorMessage" class="alert alert-danger py-2 mb-0" role="alert">{{ errorMessage }}</div>
 
     <nav class="sub-tabs" aria-label="Kategori katalog">
-      <button type="button" :class="{ active: subTab === 'course' }" @click="subTab = 'course'">Mata kuliah ({{ catalog.courses.length }})</button>
-      <button type="button" :class="{ active: subTab === 'program' }" @click="subTab = 'program'">Program studi ({{ catalog.programs.length }})</button>
-      <button type="button" :class="{ active: subTab === 'period' }" @click="subTab = 'period'">Periode ({{ catalog.periods.length }})</button>
+      <button type="button" :class="{ active: subTab === 'course' }" @click="subTab = 'course'">Mata kuliah ({{ managedCourses.length }})</button>
+      <button type="button" :class="{ active: subTab === 'program' }" @click="subTab = 'program'">Program studi ({{ managedPrograms.length }})</button>
+      <button type="button" :class="{ active: subTab === 'period' }" @click="subTab = 'period'">Periode ({{ managedPeriods.length }})</button>
     </nav>
 
     <div class="catalog-split">
@@ -317,16 +353,16 @@ async function saveCourse() {
           </div>
           <form class="catalog-form" @submit.prevent="saveCourse">
             <label><span>Kode mata kuliah</span><input v-model="course.code" class="form-control text-uppercase" maxlength="30" placeholder="TEO101" required></label>
-            <label><span>Program studi</span><select v-model="course.programStudyId" class="form-select" required><option value="" disabled>Pilih program studi</option><option v-for="prog in catalog.programs" :key="prog.id" :value="prog.id">{{ prog.code }} · {{ prog.name }}</option></select></label>
+            <label><span>Program studi</span><select v-model="course.programStudyId" class="form-select" required><option value="" disabled>Pilih program studi</option><option v-for="prog in managedPrograms" :key="prog.id" :value="prog.id">{{ prog.code }} · {{ prog.name }}{{ prog.active ? '' : ' (Nonaktif)' }}</option></select></label>
             <label class="wide"><span>Nama mata kuliah</span><input v-model="course.name" class="form-control" maxlength="180" placeholder="Pengantar Teologi Sistematika" required></label>
             <label><span>Jumlah SKS</span><input v-model.number="course.credits" class="form-control" type="number" min="1" max="12" required></label>
             <label><span>Rekomendasi semester</span><input v-model.number="course.semesterRecommendation" class="form-control" type="number" min="1" max="14" required></label>
-            <label class="wide">
+            <label><span>Status mata kuliah</span><select v-model="course.status" class="form-select"><option value="ACTIVE">Aktif (tersedia untuk kelas)</option><option value="DRAFT">Draf</option><option value="RETIRED">Nonaktif</option></select></label>
+            <label>
               <span>Kode referensi sistem</span>
               <input v-model="course.courseId" class="form-control" maxlength="128" placeholder="Otomatis dari kode mata kuliah" :readonly="Boolean(editingCourseId)" required @input="manualCourseId = true">
-              <small>{{ editingCourseId ? 'Revisi baru akan disimpan tanpa menghapus arsip kelas semester sebelumnya.' : 'Terisi otomatis dari kode mata kuliah.' }}</small>
             </label>
-            <button class="btn btn-primary wide" type="submit" :disabled="busy || !catalog.programs.length">
+            <button class="btn btn-primary wide" type="submit" :disabled="busy || !managedPrograms.length">
               <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
               {{ editingCourseId ? 'Simpan perubahan mata kuliah' : 'Simpan mata kuliah baru' }}
             </button>
@@ -346,6 +382,7 @@ async function saveCourse() {
             <label><span>Akreditasi berlaku sampai</span><input v-model="program.accreditationExpiresAt" class="form-control" type="date" required></label>
             <label><span>Unit / Fakultas</span><input v-model="program.facultyId" class="form-control" maxlength="128" placeholder="stt-saint-paul" required></label>
             <label><span>ID program studi</span><input v-model="program.id" class="form-control" maxlength="128" placeholder="teologi-s1" :readonly="Boolean(editingProgramId)" required @input="manualProgramId = true"></label>
+            <label class="check-row wide"><input v-model="program.active" class="form-check-input" type="checkbox"><span>Program studi aktif (tersedia untuk kelas &amp; KRS)</span></label>
             <button class="btn btn-primary wide" type="submit" :disabled="busy">
               <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
               {{ editingProgramId ? 'Simpan perubahan prodi' : 'Simpan program studi' }}
@@ -361,14 +398,17 @@ async function saveCourse() {
           <form class="catalog-form" @submit.prevent="savePeriod">
             <label><span>Tahun akademik</span><input v-model="period.academicYear" class="form-control" pattern="\d{4}[/-]\d{4}" placeholder="2026/2027" required></label>
             <label><span>Semester</span><select v-model="period.term" class="form-select"><option value="ODD">Gasal</option><option value="EVEN">Genap</option><option value="SHORT">Pendek</option></select></label>
-            <label class="wide"><span>ID periode</span><input v-model="period.id" class="form-control" maxlength="128" :readonly="Boolean(editingPeriodId)" required></label>
+            <label><span>ID periode</span><input v-model="period.id" class="form-control" maxlength="128" :readonly="Boolean(editingPeriodId)" required></label>
+            <label><span>Status pengisian KRS</span><select v-model="period.krsStatus" class="form-select"><option value="DRAFT">Draf</option><option value="KRS_OPEN">KRS dibuka</option><option value="KRS_CLOSED">Pengisian ditutup</option><option value="CLOSED">Periode selesai</option></select></label>
             <label><span>Mulai kuliah</span><input v-model="period.startsAt" class="form-control" type="date" required></label>
             <label><span>Akhir kuliah</span><input v-model="period.endsAt" class="form-control" type="date" required></label>
             <label><span>KRS dibuka</span><input v-model="period.krsOpensAt" class="form-control" type="date" required></label>
             <label><span>KRS ditutup</span><input v-model="period.krsClosesAt" class="form-control" type="date" required></label>
+            <label class="wide"><span>Batas revisi KRS</span><input v-model="period.krsRevisionClosesAt" class="form-control" type="date" required></label>
+            <label class="check-row wide"><input v-model="period.active" class="form-check-input" type="checkbox"><span>Periode aktif (tersedia untuk kelas &amp; KRS)</span></label>
             <button class="btn btn-primary wide" type="submit" :disabled="busy">
               <span v-if="busy" class="spinner-border spinner-border-sm me-2" />
-              {{ editingPeriodId ? 'Simpan perubahan periode' : 'Simpan periode aktif' }}
+              {{ editingPeriodId ? 'Simpan perubahan periode' : 'Simpan periode akademik' }}
             </button>
           </form>
         </template>
@@ -376,7 +416,7 @@ async function saveCourse() {
 
       <section class="list-box">
         <div class="list-box-head">
-          <h3>{{ showTrash ? 'Sampah (dapat dipulihkan)' : subTab === 'course' ? 'Mata kuliah aktif' : subTab === 'program' ? 'Program studi aktif' : 'Periode akademik' }}</h3>
+          <h3>{{ showTrash ? 'Sampah (dapat dipulihkan)' : subTab === 'course' ? 'Daftar mata kuliah' : subTab === 'program' ? 'Daftar program studi' : 'Daftar periode akademik' }}</h3>
           <button class="btn btn-sm" :class="showTrash ? 'btn-primary' : 'btn-outline-secondary'" type="button" @click="showTrash = !showTrash">
             <i class="uil me-1" :class="showTrash ? 'uil-list-ul' : 'uil-trash-alt'" />{{ showTrash ? 'Lihat aktif' : `Sampah (${currentTrashCount})` }}
           </button>
@@ -408,34 +448,43 @@ async function saveCourse() {
 
         <template v-else>
           <div v-if="subTab === 'course'" class="item-list">
-            <div v-for="item in catalog.courses" :key="item.id" class="item-row" :class="{ active: editingCourseId === item.courseId }">
-              <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · Sem {{ item.semesterRecommendation }}</small></div>
+            <div v-for="item in managedCourses" :key="item.id" class="item-row" :class="{ active: editingCourseId === item.courseId, inactive: item.status !== 'ACTIVE' }">
+              <div>
+                <div class="item-title-line"><strong>{{ item.code }} · {{ item.name }}</strong><span class="state-pill" :class="item.status === 'ACTIVE' ? 'state-pill--active' : 'state-pill--inactive'">{{ courseStatusLabel(item.status) }}</span></div>
+                <small>{{ programName(item.programStudyId) }} · {{ item.credits }} SKS · Sem {{ item.semesterRecommendation }}</small>
+              </div>
               <div class="row-actions">
                 <button class="btn btn-sm btn-outline-primary" type="button" @click="editCourse(item)">Sunting</button>
                 <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy" @click="pendingDelete = { resource: 'course', id: item.courseId, label: `${item.code} · ${item.name}` }">Hapus</button>
               </div>
             </div>
-            <p v-if="!catalog.courses.length" class="empty-note">Belum ada mata kuliah aktif.</p>
+            <p v-if="!managedCourses.length" class="empty-note">Belum ada mata kuliah di daftar.</p>
           </div>
           <div v-else-if="subTab === 'program'" class="item-list">
-            <div v-for="item in catalog.programs" :key="item.id" class="item-row" :class="{ active: editingProgramId === item.id }">
-              <div><strong>{{ item.code }} · {{ item.name }}</strong><small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }}</small></div>
+            <div v-for="item in managedPrograms" :key="item.id" class="item-row" :class="{ active: editingProgramId === item.id, inactive: !item.active }">
+              <div>
+                <div class="item-title-line"><strong>{{ item.code }} · {{ item.name }}</strong><span class="state-pill" :class="item.active ? 'state-pill--active' : 'state-pill--inactive'">{{ item.active ? 'Aktif' : 'Nonaktif' }}</span></div>
+                <small>{{ item.level }} · Akreditasi {{ item.accreditationStatus }}</small>
+              </div>
               <div class="row-actions">
                 <button class="btn btn-sm btn-outline-primary" type="button" @click="editProgram(item)">Sunting</button>
                 <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy" @click="pendingDelete = { resource: 'program', id: item.id, label: `${item.code} · ${item.name}` }">Hapus</button>
               </div>
             </div>
-            <p v-if="!catalog.programs.length" class="empty-note">Belum ada program studi aktif.</p>
+            <p v-if="!managedPrograms.length" class="empty-note">Belum ada program studi di daftar.</p>
           </div>
           <div v-else class="item-list">
-            <div v-for="item in catalog.periods" :key="item.id" class="item-row" :class="{ active: editingPeriodId === item.id }">
-              <div><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><small>{{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small></div>
+            <div v-for="item in managedPeriods" :key="item.id" class="item-row" :class="{ active: editingPeriodId === item.id, inactive: !item.active }">
+              <div>
+                <div class="item-title-line"><strong>{{ item.academicYear }} · {{ termLabel(item.term) }}</strong><span class="state-pill" :class="item.active ? 'state-pill--active' : 'state-pill--inactive'">{{ item.active ? 'Aktif' : 'Nonaktif' }}</span></div>
+                <small>{{ krsStatusLabel(item.krsStatus) }} · {{ item.startsAt.slice(0, 10) }} s.d. {{ item.endsAt.slice(0, 10) }}</small>
+              </div>
               <div class="row-actions">
                 <button class="btn btn-sm btn-outline-primary" type="button" @click="editPeriod(item)">Sunting</button>
                 <button class="btn btn-sm btn-outline-danger" type="button" :disabled="busy" @click="pendingDelete = { resource: 'period', id: item.id, label: `${item.academicYear} · ${termLabel(item.term)}` }">Hapus</button>
               </div>
             </div>
-            <p v-if="!catalog.periods.length" class="empty-note">Belum ada periode akademik.</p>
+            <p v-if="!managedPeriods.length" class="empty-note">Belum ada periode akademik di daftar.</p>
           </div>
         </template>
       </section>
@@ -483,6 +532,13 @@ async function saveCourse() {
 .list-box-head h3{margin:0}
 .row-actions{display:flex;gap:.35rem;flex-shrink:0}
 .item-row--deleted{background:#fffaf8;border-color:#efd6d2}
+.item-row.inactive{background:#faf8f5;border-style:dashed}
+.item-title-line{display:flex;align-items:center;flex-wrap:wrap;gap:.4rem}
+.state-pill{display:inline-flex;align-items:center;padding:.1rem .45rem;border-radius:999px;font-size:.62rem;font-weight:700}
+.state-pill--active{background:#e7f6ee;color:#1b6b42}
+.state-pill--inactive{background:#f3ece2;color:#7a5628}
+.check-row{display:flex;align-items:center;gap:.45rem;cursor:pointer}
+.check-row>span{margin:0!important;font-weight:600!important;color:#1e1e1e!important}
 .confirm-overlay{position:fixed;inset:0;z-index:1080;display:grid;place-items:center;padding:1rem;background:rgba(30,20,34,.55);backdrop-filter:blur(4px)}
 .confirm-dialog{width:min(100%,440px);padding:1.25rem;border-radius:1rem;background:#fff;box-shadow:0 24px 70px rgba(30,20,34,.28)}
 .confirm-dialog h3{margin:.2rem 0 .4rem;color:#1e1e1e;font-size:.98rem}

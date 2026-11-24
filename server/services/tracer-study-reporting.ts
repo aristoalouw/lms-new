@@ -11,7 +11,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { forbidden, invalidInput, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { loadTracerPeriod, requireAggregateReader } from './tracer-study'
 import { tracerStudyMockState } from './tracer-study-mock'
 
@@ -82,12 +82,12 @@ export async function generateTracerOutcomeReport(
   const requestedProgram = filter.programStudyId ? cleanId(filter.programStudyId, 'Program studi') : undefined
   if (requestedProgram && !period.programStudyIds.includes(requestedProgram)) invalidInput('Program studi tidak termasuk periode.')
   if (!hasRole(context, 'leader')) {
-    if (requestedProgram && !context.scope.programStudyIds.includes(requestedProgram)) forbidden('Program studi berada di luar lingkup akses Anda.')
-    if (!period.programStudyIds.some(id => context.scope.programStudyIds.includes(id))) forbidden('Periode berada di luar lingkup akses Anda.')
+    if (requestedProgram && !hasProgramAccess(context, requestedProgram)) forbidden('Program studi berada di luar lingkup akses Anda.')
+    if (!period.programStudyIds.some(id => hasProgramAccess(context, id))) forbidden('Periode berada di luar lingkup akses Anda.')
   }
   if (filter.graduationYear !== undefined && (!Number.isInteger(filter.graduationYear)
     || filter.graduationYear < period.graduationYearFrom || filter.graduationYear > period.graduationYearTo)) invalidInput('Tahun lulus tidak valid.')
-  const allowedPrograms = hasRole(context, 'leader') ? period.programStudyIds : period.programStudyIds.filter(id => context.scope.programStudyIds.includes(id))
+  const allowedPrograms = hasRole(context, 'leader') ? period.programStudyIds : period.programStudyIds.filter(id => hasProgramAccess(context, id))
   const responses = (await periodResponses(period.id)).filter(response => response.status === 'SUBMITTED' && Boolean(response.career)
     && allowedPrograms.includes(response.programStudyId)
     && (!requestedProgram || response.programStudyId === requestedProgram)

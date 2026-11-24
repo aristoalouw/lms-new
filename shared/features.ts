@@ -105,6 +105,8 @@ export const MVP_ALLOWED_API_ROUTES = [
   'POST /api/academic/classes/catalog/periods',
   'GET /api/academic/classes/:id',
   'PATCH /api/academic/classes/:id',
+  'POST /api/academic/classes/:id/delete',
+  'POST /api/academic/classes/:id/restore',
   'GET /api/academic/classes/:id/attendance',
   'GET /api/academic/classes/:id/export',
   'POST /api/academic/classes/:id/attendance/challenges',

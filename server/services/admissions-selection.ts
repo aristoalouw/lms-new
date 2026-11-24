@@ -15,7 +15,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireString } from '../utils/validation'
 import { admissionProgramById, admissionWaveById } from './admissions-catalog'
@@ -58,7 +58,7 @@ function cleanText(value: string, label: string, max: number): string {
 }
 
 function staffProgramScope(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(programStudyId)
+  return hasRole(context, 'admissions_staff') && hasProgramAccess(context, programStudyId)
 }
 
 function requireStaffProgramScope(context: AuthContext, programStudyId: string): void {
@@ -66,7 +66,7 @@ function requireStaffProgramScope(context: AuthContext, programStudyId: string):
 }
 
 function canReadProgram(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(programStudyId)
+  return hasRole(context, 'admissions_staff') && hasProgramAccess(context, programStudyId)
 }
 
 function overlap(left: { startsAt: string; endsAt: string }, right: { startsAt: string; endsAt: string }): boolean {

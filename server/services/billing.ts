@@ -34,7 +34,7 @@ import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { mockState } from '../utils/mock-store'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { normalizeIsoInstant, optionalString, requireInteger, requireRecord, requireString } from '../utils/validation'
 import { getPrivateFileDetail } from './files'
@@ -116,7 +116,7 @@ function studentCandidates(context: AuthContext): string[] {
 }
 
 function isScopedFinance(context: AuthContext, programStudyId: string): boolean {
-  return hasRole(context, 'finance_staff') && context.scope.programStudyIds.includes(programStudyId)
+  return hasRole(context, 'finance_staff') && hasProgramAccess(context, programStudyId)
 }
 
 function requireFinanceManage(context: AuthContext, programStudyId: string): void {

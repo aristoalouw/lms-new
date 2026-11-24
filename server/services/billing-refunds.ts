@@ -10,7 +10,7 @@ import type {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireRecord, requireString } from '../utils/validation'
 import { billingIdempotencyRecord, billingModuleState, saveBillingReplay } from './billing-state'
@@ -25,7 +25,7 @@ function clone<T>(value: T): T {
 
 function requireFinanceScope(context: AuthContext, programStudyId: string): void {
   if (!hasRole(context, 'finance_staff')) forbidden('Tindakan refund hanya tersedia untuk pengelola keuangan.')
-  if (!context.scope.programStudyIds.includes(programStudyId)) forbidden('Refund berada di luar lingkup program studi Anda.')
+  if (!hasProgramAccess(context, programStudyId)) forbidden('Refund berada di luar lingkup program studi Anda.')
 }
 
 function safeId(value: unknown, label: string): string {

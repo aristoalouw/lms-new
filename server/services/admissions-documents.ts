@@ -13,7 +13,7 @@ import {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireRecord, requireString } from '../utils/validation'
 import { admissionModuleState } from './admissions-state'
@@ -44,14 +44,14 @@ async function loadApplication(id: string): Promise<AdmissionApplicationRecord> 
 
 function canRead(context: AuthContext, application: AdmissionApplicationRecord): boolean {
   if (application.applicantUid === context.uid || (hasRole(context, 'applicant') && context.email?.toLowerCase() === application.email)) return true
-  return hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(application.programStudyId)
+  return hasRole(context, 'admissions_staff') && hasProgramAccess(context, application.programStudyId)
 }
 function requireApplicant(context: AuthContext, application: AdmissionApplicationRecord): void {
   if (!hasRole(context, 'applicant') || application.applicantUid !== context.uid) forbidden('Dokumen hanya dapat dikirim oleh akun applicant yang tertaut.')
   if (['ENROLLMENT_PENDING_IDENTITY', 'ENROLLED'].includes(application.status)) conflict('APPLICATION_DOCUMENTS_CLOSED', 'Dokumen pendaftaran sudah ditutup setelah konversi mahasiswa.')
 }
 function requireReviewer(context: AuthContext, application: AdmissionApplicationRecord): void {
-  if (!hasRole(context, 'admissions_staff') || !context.scope.programStudyIds.includes(application.programStudyId)) forbidden('Dokumen berada di luar lingkup verifikasi PMB Anda.')
+  if (!hasRole(context, 'admissions_staff') || !hasProgramAccess(context, application.programStudyId)) forbidden('Dokumen berada di luar lingkup verifikasi PMB Anda.')
 }
 
 async function documentsFor(applicationId: string): Promise<AdmissionDocumentRecord[]> {

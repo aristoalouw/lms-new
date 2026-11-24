@@ -30,8 +30,16 @@ export function requirePermission(context: AuthContext, permission: Permission):
   if (!can(context, permission)) forbidden()
 }
 
+export function hasCampusWideProgramScope(context: AuthContext): boolean {
+  return hasRole(context, 'administrator') && context.scope.programStudyIds.length === 0
+}
+
+export function hasProgramAccess(context: AuthContext, programStudyId: string): boolean {
+  return context.scope.programStudyIds.includes(programStudyId) || hasCampusWideProgramScope(context)
+}
+
 function hasProgramScope(context: AuthContext, programStudyId: string): boolean {
-  return context.scope.programStudyIds.length > 0 && context.scope.programStudyIds.includes(programStudyId)
+  return hasProgramAccess(context, programStudyId)
 }
 
 function isPaymentGatewayActor(context: AuthContext): boolean {

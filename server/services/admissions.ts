@@ -21,7 +21,7 @@ import {
 import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { requireInteger, requireRecord, requireString } from '../utils/validation'
 import { promoteApplicantAccount } from './accounts'
@@ -283,7 +283,7 @@ function requireStaffRead(context: AuthContext): void {
 }
 
 function requireProgramScope(context: AuthContext, programStudyId: string): void {
-  if (!hasRole(context, 'admissions_staff', 'finance_staff') || !context.scope.programStudyIds.includes(programStudyId)) {
+  if (!hasRole(context, 'admissions_staff', 'finance_staff') || !hasProgramAccess(context, programStudyId)) {
     forbidden('Pendaftaran berada di luar lingkup program studi Anda.')
   }
 }
@@ -375,7 +375,7 @@ async function loadApplication(id: string): Promise<AdmissionApplicationRecord> 
 function canViewApplication(context: AuthContext, record: AdmissionApplicationRecord): boolean {
   if (record.applicantUid === context.uid || (context.roles.includes('applicant') && context.email?.toLowerCase() === record.email)) return true
   if (!staffCanRead(context)) return false
-  return hasRole(context, 'admissions_staff') && context.scope.programStudyIds.includes(record.programStudyId)
+  return hasRole(context, 'admissions_staff') && hasProgramAccess(context, record.programStudyId)
 }
 
 export async function getAdmissionApplication(context: AuthContext, id: string): Promise<AdmissionApplicationView> {

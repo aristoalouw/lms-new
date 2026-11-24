@@ -46,7 +46,7 @@ function rejectUnknown(body: Record<string, unknown>, allowed: readonly string[]
 function studentCandidates(context: AuthContext): string[] { return [...new Set([context.uid, ...context.scope.studentIds])] }
 function financeHoldActive(studentId: string): boolean { return krsModuleState().students.get(studentId)?.holds.some(item => item.type === 'FINANCE' && item.active) || false }
 function canProgram(context: AuthContext, programStudyId: string): boolean { return hasRole(context, 'administrator', 'leader') || context.scope.programStudyIds.includes(programStudyId) }
-function requireAcademicStaff(context: AuthContext, programStudyId: string): void { if (!(hasRole(context, 'academic_staff') && context.scope.programStudyIds.includes(programStudyId))) forbidden('Data akademik berada di luar lingkup staf.') }
+function requireAcademicStaff(context: AuthContext, programStudyId: string): void { if (!(hasRole(context, 'academic_staff') && canProgram(context, programStudyId))) forbidden('Data akademik berada di luar lingkup staf.') }
 
 async function all<T>(collection: string, mockValues: () => T[]): Promise<T[]> {
   if (dataMode() === 'mock') return mockValues().map(clone)
@@ -138,7 +138,7 @@ async function ownProfile(context: AuthContext): Promise<StudentAcademicProfileR
 
 function canReadProfile(context: AuthContext, profile: StudentAcademicProfileRecord): boolean {
   return (hasRole(context, 'student', 'guardian') && studentCandidates(context).includes(profile.studentId))
-    || (hasRole(context, 'advisor') && profile.advisorId === context.uid) || (hasRole(context, 'academic_staff') && context.scope.programStudyIds.includes(profile.programStudyId))
+    || (hasRole(context, 'advisor') && profile.advisorId === context.uid) || (hasRole(context, 'academic_staff') && canProgram(context, profile.programStudyId))
 }
 
 async function visibleProfile(context: AuthContext, requested?: string): Promise<StudentAcademicProfileRecord | undefined> {

@@ -9,7 +9,7 @@ import { appendAudit } from '../utils/audit'
 import { conflict, forbidden, invalidInput, notFound, serviceUnavailable } from '../utils/errors'
 import { dataMode, firestoreAdmin } from '../utils/firebase-admin'
 import { withFirestorePurgeAfter } from '../utils/firestore-ttl'
-import { hasRole } from '../utils/rbac'
+import { hasProgramAccess, hasRole } from '../utils/rbac'
 import { opaqueId, requestHash } from '../utils/security'
 import { optionalString, requireInteger, requireRecord, requireString } from '../utils/validation'
 import { accountRuntimeForTests, findActiveAccountByEmail, type AccountRecord } from './accounts'
@@ -53,7 +53,7 @@ function requireKey(value: string): string { if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{1
 
 function requireOnboardingStaff(context: AuthContext, programStudyId?: string): void {
   if (!hasRole(context, 'academic_staff')) forbidden('Onboarding akademik hanya dapat dikelola staf akademik.')
-  if (programStudyId && !context.scope.programStudyIds.includes(programStudyId)) forbidden('Mahasiswa berada di luar lingkup program studi Anda.')
+  if (programStudyId && !hasProgramAccess(context, programStudyId)) forbidden('Mahasiswa berada di luar lingkup program studi Anda.')
 }
 
 function validNumber(value: unknown, label: string, min: number, max: number): number {

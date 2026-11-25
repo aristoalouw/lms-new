@@ -20,8 +20,9 @@ const resetEmail = ref('')
 const resetPending = ref(false)
 const resetMessage = ref('')
 const resetError = ref('')
-const appName = computed(() => String(config.public.appName || 'Nusa Campus').trim())
-const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'N')
+const currentYear = new Date().getFullYear()
+const appName = computed(() => String(config.public.appName || 'LMS STT Saint Paul').trim())
+const appInitial = computed(() => appName.value.charAt(0).toUpperCase() || 'S')
 const supportEmail = computed(() => String(config.public.supportEmail || '').trim())
 const supportPhone = computed(() => String(config.public.supportPhone || '').trim())
 const supportPhoneHref = computed(() => {
@@ -99,43 +100,22 @@ onMounted(() => {
   <main class="login-page">
     <a class="visually-hidden-focusable skip-link" href="#login-form">Lewati ke formulir masuk</a>
 
-    <section class="login-story" aria-labelledby="welcome-title">
-      <div class="login-story__content">
+    <section class="login-brand" aria-labelledby="campus-title">
+      <div class="login-brand__top">
         <NuxtLink class="brand-lockup" to="/" :aria-label="`${appName}, beranda`">
           <span class="brand-lockup__mark" aria-hidden="true">{{ appInitial }}</span>
-          <span>
-            <strong>{{ appName }}</strong>
-            <small>Dimuridkan Untuk Memuridkan</small>
-          </span>
+          <strong>{{ appName }}</strong>
         </NuxtLink>
-
-        <div class="login-story__copy">
-          <span class="eyebrow-pill">Portal Akademik Terpadu</span>
-          <h1 id="welcome-title">Ruang pembelajaran dan layanan akademik STT Saint Paul Bandung.</h1>
-          <p>
-            Akses KRS, ruang kelas, bimbingan perwalian, keuangan, dan administrasi akademik dalam satu portal yang tertib dan aman.
-          </p>
-        </div>
-
-        <div class="trust-grid" aria-label="Prinsip layanan portal">
-          <article>
-            <strong>Akademik terpadu</strong>
-            <p>KRS, kelas, materi, tugas, dan presensi terhubung untuk mahasiswa dan dosen.</p>
-          </article>
-          <article>
-            <strong>Akses sesuai peran</strong>
-            <p>Setiap menu dan data ditampilkan sesuai kewenangan peran aktif Anda.</p>
-          </article>
-          <article>
-            <strong>Tertib dan tercatat</strong>
-            <p>Perubahan data penting disimpan beserta riwayat audit untuk akuntabilitas kampus.</p>
-          </article>
-        </div>
       </div>
 
-      <div class="login-story__footer">
-        <span>Portal resmi</span>
-        <strong><i aria-hidden="true" /> Sekolah Tinggi Teologi Saint Paul Bandung</strong>
+      <div class="login-brand__center">
+        <div class="login-brand__rule" aria-hidden="true" />
+        <h1 id="campus-title">Sekolah Tinggi Teologi Saint Paul Bandung</h1>
+        <p>Sistem Informasi Akademik</p>
+      </div>
+
+      <div class="login-brand__footer">
+        <span>© {{ currentYear }} STT Saint Paul Bandung</span>
       </div>
     </section>
 
@@ -147,9 +127,8 @@ onMounted(() => {
         </div>
 
         <div class="login-card__heading">
-          <span class="eyebrow-text">Selamat datang kembali</span>
-          <h2 id="login-title">Masuk ke akun Anda</h2>
-          <p>Gunakan akun kampus yang telah terdaftar.</p>
+          <h2 id="login-title">Masuk</h2>
+          <p>Gunakan email kampus dan kata sandi Anda.</p>
         </div>
 
         <div v-if="localError || authError" class="alert alert-danger d-flex align-items-start gap-2" role="alert">
@@ -169,7 +148,7 @@ onMounted(() => {
                 type="email"
                 inputmode="email"
                 autocomplete="username"
-                placeholder="nama@kampus.ac.id"
+                placeholder="nama@sttsaintpaul.ac.id"
                 required
               >
             </div>
@@ -212,35 +191,47 @@ onMounted(() => {
 
           <button class="btn btn-primary login-submit" type="submit" :disabled="pending">
             <span v-if="pending" class="spinner-border spinner-border-sm" aria-hidden="true" />
-            <span>{{ pending ? 'Memeriksa akun…' : `Masuk ke ${appName}` }}</span>
+            <span>{{ pending ? 'Memeriksa akun…' : 'Masuk' }}</span>
             <i v-if="!pending" class="uil uil-arrow-right" aria-hidden="true" />
           </button>
         </form>
 
         <form v-if="showReset" class="reset-panel" aria-labelledby="reset-title" @submit.prevent="submitReset">
-          <div class="reset-panel__heading"><div><span class="eyebrow-text">Pemulihan akun</span><h3 id="reset-title">Atur ulang kata sandi</h3></div><button type="button" aria-label="Tutup formulir pemulihan" @click="showReset = false"><i class="uil uil-times" aria-hidden="true" /></button></div>
+          <div class="reset-panel__heading">
+            <div>
+              <h3 id="reset-title">Atur ulang kata sandi</h3>
+            </div>
+            <button type="button" aria-label="Tutup formulir pemulihan" @click="showReset = false">
+              <i class="uil uil-times" aria-hidden="true" />
+            </button>
+          </div>
           <p>Masukkan email kampus Anda. Tautan pengaturan ulang kata sandi akan dikirim melalui {{ passwordResetDeliveryLabel }}.</p>
           <div v-if="resetMessage" class="alert alert-success py-2" role="status">{{ resetMessage }}</div>
           <div v-if="resetError" class="alert alert-danger py-2" role="alert">{{ resetError }}</div>
           <label class="form-label" for="reset-email">Email akun</label>
-          <div class="input-shell"><i class="uil uil-envelope" aria-hidden="true" /><input id="reset-email" v-model="resetEmail" class="form-control" type="email" autocomplete="email" required placeholder="nama@kampus.ac.id"></div>
-          <button class="btn btn-outline-primary w-100 mt-3" type="submit" :disabled="resetPending"><span v-if="resetPending" class="spinner-border spinner-border-sm me-2" aria-hidden="true" />Kirim petunjuk pemulihan</button>
+          <div class="input-shell">
+            <i class="uil uil-envelope" aria-hidden="true" />
+            <input id="reset-email" v-model="resetEmail" class="form-control" type="email" autocomplete="email" required placeholder="nama@sttsaintpaul.ac.id">
+          </div>
+          <button class="btn btn-outline-primary w-100 mt-3" type="submit" :disabled="resetPending">
+            <span v-if="resetPending" class="spinner-border spinner-border-sm me-2" aria-hidden="true" />Kirim petunjuk pemulihan
+          </button>
         </form>
 
         <div v-if="enabled('admissions')" class="candidate-note">
           <span>Calon mahasiswa?</span>
-          <NuxtLink to="/pmb/informasi">Lihat informasi PMB</NuxtLink>
+          <NuxtLink to="/pmb/informasi">Informasi PMB</NuxtLink>
           <span aria-hidden="true">·</span>
-          <NuxtLink to="/pmb/daftar">Mulai daftar</NuxtLink>
+          <NuxtLink to="/pmb/daftar">Daftar</NuxtLink>
         </div>
 
         <div v-if="config.public.demoMode" class="demo-note">
           <i class="uil uil-info-circle" aria-hidden="true" />
-          <p><strong>Mode demonstrasi</strong><br>Email dan kata sandi di atas sudah diisi untuk melihat prototipe.</p>
+          <p><strong>Mode demonstrasi</strong><br>Email dan kata sandi di atas sudah diisi untuk pengujian.</p>
         </div>
 
         <footer v-if="supportEmail || supportPhoneHref" class="login-card__footer">
-          <span>Butuh bantuan?</span>
+          <span>Bantuan:</span>
           <a v-if="supportEmail" :href="`mailto:${supportEmail}`">{{ supportEmail }}</a>
           <span v-if="supportEmail && supportPhoneHref" aria-hidden="true">•</span>
           <a v-if="supportPhoneHref" :href="supportPhoneHref">{{ supportPhone }}</a>
@@ -270,7 +261,7 @@ onMounted(() => {
   color: #593660;
 }
 
-.login-story {
+.login-brand {
   position: relative;
   min-height: 100vh;
   display: flex;
@@ -281,8 +272,6 @@ onMounted(() => {
   background: #593660;
   border-right: 4px solid #fbf0de;
 }
-
-.login-story__content { max-width: 680px; }
 
 .brand-lockup {
   display: inline-flex;
@@ -295,92 +284,55 @@ onMounted(() => {
 .brand-lockup__mark {
   display: grid;
   place-items: center;
-  width: 2.8rem;
-  height: 2.8rem;
-  border: 1px solid rgba(255,255,255,.44);
+  width: 2.65rem;
+  height: 2.65rem;
+  border: 1px solid rgba(255, 255, 255, .36);
   border-radius: 6px;
   color: #593660;
   background: #fbf0de;
   font-weight: 800;
-  font-size: 1.35rem;
-  box-shadow: none;
+  font-size: 1.25rem;
 }
 
-.brand-lockup strong,
-.brand-lockup small { display: block; }
-.brand-lockup strong { font-size: 1.06rem; letter-spacing: -.01em; }
-.brand-lockup small { margin-top: .1rem; color: rgba(255,255,255,.62); font-size: .72rem; }
+.brand-lockup strong {
+  font-size: 1.02rem;
+  letter-spacing: -.01em;
+}
 
-.login-story__copy { margin-top: clamp(5rem, 12vh, 10rem); }
+.login-brand__center {
+  max-width: 520px;
+}
 
-.eyebrow-pill {
-  display: inline-flex;
-  padding: .48rem .8rem;
-  border: 1px solid rgba(251, 240, 222, .45);
-  border-radius: 999px;
-  color: #fbf0de;
-  background: rgba(251, 240, 222, .1);
-  font-size: .78rem;
+.login-brand__rule {
+  width: 3rem;
+  height: 2px;
+  margin-bottom: 1.5rem;
+  background: #fbf0de;
+  opacity: .7;
+}
+
+.login-brand__center h1 {
+  margin: 0;
+  font-size: clamp(1.85rem, 3.1vw, 2.85rem);
   font-weight: 700;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-}
-
-.login-story h1 {
-  max-width: 710px;
-  margin: 1.3rem 0 1.25rem;
-  font-size: clamp(2.3rem, 4.2vw, 4.7rem);
-  line-height: 1.02;
-  letter-spacing: -.055em;
+  line-height: 1.18;
+  letter-spacing: -.03em;
   text-wrap: balance;
 }
 
-.login-story__copy > p {
-  max-width: 650px;
-  margin: 0;
-  color: rgba(255, 255, 255, .84);
-  font-size: clamp(1rem, 1.5vw, 1.17rem);
-  line-height: 1.75;
+.login-brand__center p {
+  margin: .9rem 0 0;
+  color: rgba(251, 240, 222, .78);
+  font-size: .98rem;
+  font-weight: 500;
 }
 
-.trust-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-  margin-top: clamp(3rem, 7vh, 5.5rem);
-}
-
-.trust-grid article {
-  padding-top: 1.15rem;
-  border-top: 1px solid rgba(255,255,255,.16);
-}
-
-.trust-grid__number {
-  display: block;
-  margin-bottom: 1.2rem;
-  color: #a8cf91;
-  font-size: .72rem;
-  font-weight: 800;
-  letter-spacing: .12em;
-}
-
-.trust-grid strong { display: block; font-size: .9rem; }
-.trust-grid p { margin: .45rem 0 0; color: rgba(251, 240, 222, .8); font-size: .78rem; line-height: 1.55; }
-
-.login-story__footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-top: 3rem;
+.login-brand__footer {
   padding-top: 1.25rem;
-  border-top: 1px solid rgba(255,255,255,.11);
-  color: rgba(251, 240, 222, .76);
-  font-size: .76rem;
+  border-top: 1px solid rgba(255, 255, 255, .14);
+  color: rgba(251, 240, 222, .72);
+  font-size: .78rem;
 }
-
-.login-story__footer strong { color: rgba(255,255,255,.78); font-weight: 600; }
-.login-story__footer i { display: inline-block; width: .48rem; height: .48rem; margin-right: .5rem; border-radius: 50%; background: #fbf0de; box-shadow: 0 0 0 .22rem rgba(251, 240, 222, .22); }
 
 .login-panel {
   display: grid;
@@ -388,18 +340,32 @@ onMounted(() => {
   padding: clamp(2rem, 6vw, 7rem);
 }
 
-.login-card { width: min(100%, 460px); }
+.login-card { width: min(100%, 440px); }
 .login-card__mobile-brand { display: none; }
 
-.login-card__heading { margin-bottom: 2rem; }
-.eyebrow-text { color: #775a83; font-size: .76rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.login-card h2 { margin: .65rem 0 .55rem; color: #1e1e1e; font-size: clamp(2rem, 3vw, 2.55rem); line-height: 1.1; letter-spacing: -.04em; }
-.login-card__heading p { margin: 0; color: #6c6865; }
+.login-card__heading { margin-bottom: 1.85rem; }
+.login-card h2 {
+  margin: 0 0 .45rem;
+  color: #1e1e1e;
+  font-size: clamp(1.85rem, 2.8vw, 2.25rem);
+  line-height: 1.15;
+  letter-spacing: -.03em;
+}
+.login-card__heading p { margin: 0; color: #6c6865; font-size: .92rem; }
 
 .login-form { display: grid; gap: 1.2rem; }
 
-.candidate-note { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; justify-content: center; margin-top: 1rem; color: #6c6865; font-size: .67rem; }
-.candidate-note a { color: #593660; font-weight: 800; text-decoration: none; }
+.candidate-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .4rem;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1.15rem;
+  color: #6c6865;
+  font-size: .74rem;
+}
+.candidate-note a { color: #593660; font-weight: 700; text-decoration: none; }
 .candidate-note a:hover { text-decoration: underline; }
 .form-label { margin-bottom: .48rem; color: #1e1e1e; font-size: .84rem; font-weight: 700; }
 
@@ -422,7 +388,7 @@ onMounted(() => {
   border-radius: 6px;
   color: #1e1e1e;
   background: #fff;
-  box-shadow: 0 1px 1px rgba(20,55,46,.02);
+  box-shadow: 0 1px 1px rgba(20, 55, 46, .02);
 }
 
 .input-shell .form-control:focus {
@@ -460,10 +426,10 @@ onMounted(() => {
 
 .reset-panel { margin-top: 1.1rem; padding: 1rem; border: 1px solid #d9e5df; border-radius: 6px; background: #f7faf8; }
 .reset-panel__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
-.reset-panel__heading h3 { margin: .2rem 0 0; color: #593660; font-size: 1rem; }
+.reset-panel__heading h3 { margin: 0; color: #593660; font-size: 1rem; }
 .reset-panel__heading button { display: grid; place-items: center; width: 2rem; height: 2rem; border: 0; border-radius: .55rem; color: #593660; background: #efe9f2; }
-.reset-panel > p { margin: .65rem 0 .9rem; color: #6c6865; font-size: .72rem; line-height: 1.5; }
-.reset-panel .alert { font-size: .72rem; }
+.reset-panel > p { margin: .65rem 0 .9rem; color: #6c6865; font-size: .74rem; line-height: 1.5; }
+.reset-panel .alert { font-size: .74rem; }
 
 .form-check-label { color: #4e5462; font-size: .82rem; }
 .form-check-input:checked { border-color: #593660; background-color: #593660; }
@@ -517,17 +483,13 @@ onMounted(() => {
 
 @media (max-width: 1050px) {
   .login-page { grid-template-columns: minmax(0, .9fr) minmax(430px, 1fr); }
-  .trust-grid { grid-template-columns: 1fr; gap: .65rem; }
-  .trust-grid article { display: grid; grid-template-columns: 2rem 1fr; column-gap: .5rem; }
-  .trust-grid__number { grid-row: 1 / 3; margin: .15rem 0 0; }
-  .trust-grid p { margin-top: .2rem; }
 }
 
 @media (max-width: 820px) {
   .login-page { display: block; background: #faf6ef; }
-  .login-story { display: none; }
+  .login-brand { display: none; }
   .login-panel { min-height: 100vh; padding: 2rem 1.25rem; }
-  .login-card__mobile-brand { display: flex; align-items: center; gap: .75rem; margin-bottom: 4rem; }
+  .login-card__mobile-brand { display: flex; align-items: center; gap: .75rem; margin-bottom: 3rem; }
   .login-card__mobile-brand .brand-lockup__mark { color: #593660; border-color: #ada098; }
   .login-card__mobile-brand strong { color: #1e1e1e; }
 }

@@ -12,8 +12,6 @@ interface CatalogRow {
   name: string
   class: string
   semester?: number
-  semesterParity?: 'ODD' | 'EVEN'
-  semesterTrack: 'CURRENT' | 'LOWER' | 'UPPER' | 'UNSPECIFIED'
   eligibleBySemester: boolean
   semesterBlockReason?: string
   schedule: string
@@ -30,14 +28,14 @@ definePageMeta({ middleware: 'auth' })
 useHead({ title: 'Kartu Rencana Studi' })
 
 const selectedPeriodId = ref('2026-2027-1')
-const courseFilter = ref<'ELIGIBLE' | 'CURRENT' | 'LOWER' | 'UPPER' | 'SELECTED' | 'ALL'>('ELIGIBLE')
+const selectedSemesterCategory = ref<string>('ALL')
 const showScheduleView = ref(false)
 const config = useRuntimeConfig()
 const { $api } = useNuxtApp()
 const { user, can, switchRole } = useAuth()
 
 const courseCatalog = ref<CatalogRow[]>(config.public.demoMode
-  ? demoKrsCourses.map(course => ({ ...course, id: course.code, semesterTrack: 'CURRENT' as const, eligibleBySemester: true, dayName: 'Senin', startMinutes: null, endMinutes: null }))
+  ? demoKrsCourses.map(course => ({ ...course, id: course.code, eligibleBySemester: true, dayName: 'Senin', startMinutes: null, endMinutes: null }))
   : [])
 const selectedClassIdList = ref<string[]>(courseCatalog.value.filter(course => course.status === 'Terpilih').map(course => course.id))
 const recordStatus = ref<KrsStatus>('DRAFT')
@@ -59,15 +57,19 @@ const setupMessage = ref('')
 const courseColumns = [
   { key: 'selection', label: 'Pilih', sortable: false, align: 'center' as const, width: '64px' },
   { key: 'name', label: 'Mata kuliah', sortable: true },
-  { key: 'semester', label: 'Semester', align: 'center' as const, width: '135px' },
+  { key: 'semester', label: 'Semester', align: 'center' as const, width: '120px' },
   { key: 'schedule', label: 'Jadwal' },
   { key: 'lecturer', label: 'Dosen pengampu' },
   { key: 'credits', label: 'SKS', align: 'center' as const, width: '64px' },
   { key: 'capacity', label: 'Kursi', align: 'center' as const, width: '84px' },
-  { key: 'status', label: 'Status', width: '150px' },
+  { key: 'status', label: 'Status', width: '140px' },
 ]
 
-const selectedCourses = computed(() => courseCatalog.value.filter(course => selectedClassIdList.value.includes(course.id)))
+const selectedCourses = computed(() => courseCatalog.value
+  .filter(course => selectedClassIdList.value.includes(course.id))
+  .sort((a, b) => (a.semester ?? 99) - (b.semester ?? 99) || a.code.localeCompare(b.code, 'id')))
+const selectedCourseCodes = computed(() => new Set(selectedCourses.value.map(course => course.code)))
+const completedCourseCodes = computed(() => new Set(studentState.value?.completedCourseCodes ?? []))
 const selectedCredits = computed(() => selectedCourses.value.reduce((total, course) => total + course.credits, 0))
 const selectedCount = computed(() => selectedCourses.value.length)
 const maximumCredits = computed(() => studentState.value?.maximumCredits ?? 24)
@@ -82,36 +84,47 @@ const canSubmit = computed(() => krsReady.value
 
 const studentSemester = computed(() => studentIdentity.value?.currentSemester ?? 1)
 const studentSemesterParity = computed<'ODD' | 'EVEN'>(() => (studentSemester.value % 2 === 1 ? 'ODD' : 'EVEN'))
-const selectedPeriodMeta = computed(() => periods.value.find(item => item.id === selectedPeriodId.value))
-const activePeriodTerm = computed<'ODD' | 'EVEN' | 'SHORT' | undefined>(() => periodPolicy.value?.term || selectedPeriodMeta.value?.term)
-const periodParityMismatchWarning = computed(() => {
-  if (!activePeriodTerm.value || activePeriodTerm.value === 'SHORT') return ''
-  if (activePeriodTerm.value !== studentSemesterParity.value) {
-    const periodWord = activePeriodTerm.value === 'ODD' ? 'Ganjil' : 'Genap'
-    const studentWord = studentSemesterParity.value === 'ODD' ? 'Ganjil' : 'Genap'
-    return `Data mahasiswa tercatat di Semester ${studentSemester.value} (${studentWord}), sedangkan periode aktif adalah ${periodWord}. Hubungi bagian akademik bila semester mahasiswa perlu diperbarui.`
-  }
-  return ''
-})
-const eligibleCourseCount = computed(() => courseCatalog.value.filter(course => course.eligibleBySemester).length)
-const currentSemCourseCount = computed(() => courseCatalog.value.filter(course => course.eligibleBySemester && course.semesterTrack === 'CURRENT').length)
-const lowerSemCourseCount = computed(() => courseCatalog.value.filter(course => course.eligibleBySemester && course.semesterTrack === 'LOWER').length)
-const upperSemCourseCount = computed(() => courseCatalog.value.filter(course => course.eligibleBySemester && course.semesterTrack === 'UPPER').length)
 
-const courseRows = computed(() => courseCatalog.value
+const eligibleCatalog = computed(() => courseCatalog.value
+  .filter(course => course.eligibleBySemester && !completedCourseCodes.value.has(course.code))
+  .sort((a, b) => (a.semester ?? 99) - (b.semester ?? 99) || a.code.localeCompare(b.code, 'id')))
+
+const availableCatalog = computed(() => eligibleCatalog.value
+  .filter(course => !selectedClassIdList.value.includes(course.id) && !selectedCourseCodes.value.has(course.code)))
+
+const semesterCategories = computed(() => {
+  const counts = new Map<number, number>()
+  let unspecifiedCount = 0
+  for (const course of eligibleCatalog.value) {
+    const isAvailable = !selectedClassIdList.value.includes(course.id) && !selectedCourseCodes.value.has(course.code)
+    if (typeof course.semester === 'number' && Number.isFinite(course.semester)) {
+      counts.set(course.semester, (counts.get(course.semester) || 0) + (isAvailable ? 1 : 0))
+    } else {
+      unspecifiedCount += isAvailable ? 1 : 0
+    }
+  }
+  const ordered = [...counts.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([semester, count]) => ({
+      value: String(semester),
+      label: `Semester ${semester}`,
+      count,
+    }))
+  if (unspecifiedCount > 0) {
+    ordered.push({ value: 'UNSPECIFIED', label: 'Lainnya', count: unspecifiedCount })
+  }
+  return ordered
+})
+
+const courseRows = computed(() => availableCatalog.value
   .filter(course => {
-    if (courseFilter.value === 'ALL') return true
-    if (courseFilter.value === 'SELECTED') return selectedClassIdList.value.includes(course.id)
-    if (courseFilter.value === 'ELIGIBLE') return course.eligibleBySemester || selectedClassIdList.value.includes(course.id)
-    if (courseFilter.value === 'CURRENT') return course.eligibleBySemester && course.semesterTrack === 'CURRENT'
-    if (courseFilter.value === 'LOWER') return course.eligibleBySemester && course.semesterTrack === 'LOWER'
-    if (courseFilter.value === 'UPPER') return course.eligibleBySemester && course.semesterTrack === 'UPPER'
-    return true
+    if (selectedSemesterCategory.value === 'ALL') return true
+    if (selectedSemesterCategory.value === 'UNSPECIFIED') return course.semester === undefined
+    return String(course.semester) === selectedSemesterCategory.value
   })
   .map(course => ({
     ...course,
     selection: course.id,
-    status: selectedClassIdList.value.includes(course.id) ? 'Terpilih' : course.status,
   })))
 
 const dayOrder = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu']
@@ -154,7 +167,6 @@ const weeklySchedule = computed(() => {
 })
 
 const termLabel = (term?: AcademicPeriodDefinition['term']) => (term ? ({ ODD: 'Ganjil', EVEN: 'Genap', SHORT: 'Pendek' })[term] : '—')
-const trackLabel = (track: CatalogRow['semesterTrack']) => ({ CURRENT: 'Semester Anda', LOWER: 'Tingkat bawah', UPPER: 'Tingkat atas', UNSPECIFIED: '' })[track]
 const programLabel = computed(() => {
   const id = studentState.value?.programStudyId
   if (!id) return ''
@@ -183,6 +195,7 @@ const toggleCourse = (classId: string) => {
   if (!course || !isEditable.value) return
   if (selectedClassIdList.value.includes(classId)) {
     selectedClassIdList.value = selectedClassIdList.value.filter(id => id !== classId)
+    errorMessage.value = ''
     return
   }
   if (!course.eligibleBySemester) {
@@ -295,6 +308,7 @@ async function loadPeriod(periodId: string) {
   loading.value = true
   errorMessage.value = ''
   setupMessage.value = ''
+  selectedSemesterCategory.value = 'ALL'
   try {
     const [catalogResponse, planResponse] = await Promise.all([
       $api.get<{ period: KrsPeriodPolicy; student: KrsStudentAcademicState; classes: KrsCatalogEntry[] }>('/krs/catalog', { params: { periodId } }),
@@ -305,21 +319,17 @@ async function loadPeriod(periodId: string) {
     courseCatalog.value = catalogResponse.data.classes.map(entry => {
       const schedule = parseMeeting(entry)
       const eligibleBySemester = entry.eligibleBySemester !== false
-      const status = !eligibleBySemester
-        ? (entry.semesterParity === 'ODD' ? 'Khusus Ganjil' : entry.semesterParity === 'EVEN' ? 'Khusus Genap' : 'Tidak sesuai semester')
-        : entry.availableSeats === 0
-          ? 'Kelas penuh'
-          : !entry.eligibleByPrerequisite
-            ? 'Prasyarat belum terpenuhi'
-            : 'Tersedia'
+      const status = entry.availableSeats === 0
+        ? 'Kelas penuh'
+        : !entry.eligibleByPrerequisite
+          ? 'Prasyarat belum terpenuhi'
+          : 'Tersedia'
       return {
         id: entry.classRecord.id,
         code: entry.classRecord.courseCode,
         name: entry.classRecord.courseName,
         class: `Kelas ${entry.classRecord.section}`,
         semester: entry.semesterRecommendation ?? entry.classRecord.semesterRecommendation,
-        semesterParity: entry.semesterParity,
-        semesterTrack: entry.semesterTrack ?? 'UNSPECIFIED',
         eligibleBySemester,
         semesterBlockReason: entry.semesterBlockReason,
         schedule: schedule.label,
@@ -436,7 +446,7 @@ onMounted(initializeKrs)
       <template #actions>
         <button class="btn btn-outline-secondary" type="button" :disabled="!krsReady" @click="printDraft"><i class="uil uil-print me-1" aria-hidden="true" />Cetak</button>
         <NuxtLink v-if="recordStatus === 'APPROVED'" class="btn btn-primary" to="/pembelajaran"><i class="uil uil-book-open me-1" />Buka ruang belajar</NuxtLink>
-        <button v-else class="btn btn-primary" type="button" :disabled="!canSubmit" @click="openConfirmation">
+        <button v-else-if="isEditable" class="btn btn-primary" type="button" :disabled="!canSubmit" @click="openConfirmation">
           <i class="uil uil-message me-1" aria-hidden="true" />Ajukan KRS
         </button>
       </template>
@@ -466,7 +476,7 @@ onMounted(initializeKrs)
             </div>
           </div>
           <div class="krs-filters">
-            <label><span>Semester</span>
+            <label><span>Periode</span>
               <select v-model="selectedPeriodId" class="form-select form-select-sm" :disabled="config.public.demoMode || periods.length < 2" @change="loadPeriod(selectedPeriodId)">
                 <option v-if="config.public.demoMode" value="2026-2027-1">2026/2027 Gasal</option>
                 <option v-for="period in periods" :key="period.id" :value="period.id">{{ period.academicYear }} {{ termLabel(period.term) }}</option>
@@ -488,10 +498,6 @@ onMounted(initializeKrs)
               <i class="uil uil-layers" />
               Semester {{ studentSemester }} ({{ studentSemesterParity === 'ODD' ? 'Ganjil' : 'Genap' }})
             </span>
-            <span v-if="activePeriodTerm" class="info-pill">
-              <i class="uil uil-calendar-alt" />
-              Periode {{ termLabel(activePeriodTerm) }}
-            </span>
             <span class="info-pill" :class="{ warn: activeHolds.length > 0 }">
               <i class="uil" :class="activeHolds.length ? 'uil-exclamation-triangle' : 'uil-check-circle'" />
               {{ activeHolds.length ? `${activeHolds.length} pencekalan aktif` : 'Bebas pencekalan' }}
@@ -499,17 +505,6 @@ onMounted(initializeKrs)
             <span v-if="scheduleConflicts.size > 0" class="info-pill warn">
               <i class="uil uil-clock-nine" /> Ada bentrok jadwal
             </span>
-          </div>
-        </div>
-
-        <div v-if="activePeriodTerm" class="krs-banner krs-banner--rule" role="note">
-          <i class="uil uil-info-circle" />
-          <div>
-            <strong>Aturan KRS Periode {{ termLabel(activePeriodTerm) }}</strong>
-            <span v-if="activePeriodTerm === 'ODD'">Anda dapat mengambil mata kuliah <strong>Semester {{ studentSemester }}</strong> serta mata kuliah tingkat bawah atau atas yang berstatus <strong>Ganjil (Sem 1, 3, 5, 7, ...)</strong> selama prasyarat dan batas SKS terpenuhi. Mata kuliah Genap dikunci.</span>
-            <span v-else-if="activePeriodTerm === 'EVEN'">Anda dapat mengambil mata kuliah <strong>Semester {{ studentSemester }}</strong> serta mata kuliah tingkat bawah atau atas yang berstatus <strong>Genap (Sem 2, 4, 6, 8, ...)</strong> selama prasyarat dan batas SKS terpenuhi. Mata kuliah Ganjil dikunci.</span>
-            <span v-else>Pada Semester Pendek Anda dapat mengambil mata kuliah Semester 1–{{ studentSemester }} untuk perbaikan atau pengulangan.</span>
-            <span v-if="periodParityMismatchWarning" class="rule-warn">{{ periodParityMismatchWarning }}</span>
           </div>
         </div>
 
@@ -527,24 +522,22 @@ onMounted(initializeKrs)
         </div>
       </section>
 
-      <section class="workflow-surface">
+      <section v-if="isEditable" class="workflow-surface">
         <header class="workflow-surface__header">
           <div>
             <span class="section-kicker">Daftar kelas semester</span>
             <h2>{{ showScheduleView ? 'Jadwal mingguan terpilih' : 'Pilih mata kuliah & kelas' }}</h2>
           </div>
           <div class="catalog-tools">
-            <select v-if="!showScheduleView" v-model="courseFilter" class="form-select form-select-sm" aria-label="Filter tampilan">
-              <option value="ELIGIBLE">Sesuai periode {{ termLabel(activePeriodTerm) }} ({{ eligibleCourseCount }})</option>
-              <option value="CURRENT">Semester Anda · Sem {{ studentSemester }} ({{ currentSemCourseCount }})</option>
-              <option value="LOWER">Tingkat bawah / mengulang ({{ lowerSemCourseCount }})</option>
-              <option value="UPPER">Tingkat atas ({{ upperSemCourseCount }})</option>
-              <option value="SELECTED">Terpilih ({{ selectedCount }})</option>
-              <option value="ALL">Semua kelas ({{ courseCatalog.length }})</option>
+            <select v-if="!showScheduleView" v-model="selectedSemesterCategory" class="form-select form-select-sm" aria-label="Kategori semester">
+              <option value="ALL">Semua semester ({{ availableCatalog.length }})</option>
+              <option v-for="category in semesterCategories" :key="category.value" :value="category.value">
+                {{ category.label }} ({{ category.count }})
+              </option>
             </select>
             <button class="btn btn-sm" :class="showScheduleView ? 'btn-primary' : 'btn-outline-secondary'" type="button" @click="showScheduleView = !showScheduleView">
               <i class="uil me-1" :class="showScheduleView ? 'uil-list-ul' : 'uil-calendar-alt'" aria-hidden="true" />
-              {{ showScheduleView ? 'Kembali ke daftar kelas' : 'Lihat jadwal mingguan' }}
+              {{ showScheduleView ? 'Kembali ke pilihan kelas' : 'Lihat jadwal mingguan' }}
             </button>
           </div>
         </header>
@@ -570,16 +563,15 @@ onMounted(initializeKrs)
           :rows="courseRows"
           :page-size="10"
           search-placeholder="Cari kode, mata kuliah, atau dosen…"
-          empty-title="Kelas tidak ditemukan"
-          empty-description="Ubah filter atau kata kunci pencarian."
+          empty-title="Tidak ada mata kuliah tersisa pada kategori ini"
+          empty-description="Mata kuliah pada kategori ini sudah dipilih di KRS Anda, atau ubah kategori semester di atas."
         >
           <template #cell-selection="{ row }">
             <input
               class="form-check-input course-checkbox"
               type="checkbox"
-              :checked="selectedClassIdList.includes(String(row.id))"
-              :disabled="((!row.eligibleBySemester || ['Kelas penuh', 'Prasyarat belum terpenuhi'].includes(String(row.status))) && !selectedClassIdList.includes(String(row.id))) || !isEditable"
-              :title="row.semesterBlockReason ? String(row.semesterBlockReason) : undefined"
+              :checked="false"
+              :disabled="['Kelas penuh', 'Prasyarat belum terpenuhi'].includes(String(row.status))"
               :aria-label="`Pilih ${String(row.name)}`"
               @change="toggleCourse(String(row.id))"
             >
@@ -591,28 +583,60 @@ onMounted(initializeKrs)
             </div>
           </template>
           <template #cell-semester="{ row }">
-            <div class="sem-cell">
-              <strong>{{ row.semester ? `Sem ${row.semester} (${row.semesterParity === 'ODD' ? 'Ganjil' : 'Genap'})` : '—' }}</strong>
-              <span v-if="row.eligibleBySemester && trackLabel(row.semesterTrack as CatalogRow['semesterTrack'])" class="track-pill" :class="`track-pill--${String(row.semesterTrack).toLowerCase()}`">
-                {{ trackLabel(row.semesterTrack as CatalogRow['semesterTrack']) }}
-              </span>
-              <span v-else-if="!row.eligibleBySemester" class="track-pill track-pill--blocked">Beda periode</span>
-            </div>
+            <span class="sem-label">{{ row.semester ? `Semester ${row.semester}` : '—' }}</span>
           </template>
           <template #cell-status="{ value }">
-            <StatusBadge :status="String(value) === 'Terpilih' ? 'active' : String(value) === 'Tersedia' ? 'verified' : 'blocked'" :label="String(value)" />
+            <StatusBadge :status="String(value) === 'Tersedia' ? 'verified' : 'blocked'" :label="String(value)" />
           </template>
         </DataTable>
 
-        <div v-if="isEditable" class="action-dock">
-          <div class="action-dock__summary">
-            <strong>{{ selectedCount }} mata kuliah · {{ selectedCredits }} / {{ maximumCredits }} SKS</strong>
-            <small>{{ currentVersion ? 'Draf tersimpan di sistem' : 'Belum disimpan sebagai draf' }}</small>
+        <div class="action-dock">
+          <div class="action-dock__left">
+            <div class="action-dock__summary">
+              <strong>{{ selectedCount }} mata kuliah · {{ selectedCredits }} / {{ maximumCredits }} SKS</strong>
+              <small>{{ currentVersion ? 'Draf tersimpan di sistem' : 'Belum disimpan sebagai draf' }}</small>
+            </div>
+            <div v-if="selectedCourses.length" class="selected-chips" aria-label="Mata kuliah terpilih">
+              <button
+                v-for="course in selectedCourses"
+                :key="course.id"
+                type="button"
+                class="selected-chip"
+                :title="`Hapus ${course.name} dari pilihan`"
+                @click="toggleCourse(course.id)"
+              >
+                <span>{{ course.code }} · {{ course.credits }} SKS</span>
+                <i class="uil uil-times" aria-hidden="true" />
+              </button>
+            </div>
           </div>
           <div class="action-dock__buttons">
-            <button class="btn btn-outline-secondary" type="button" :disabled="mutating || !krsReady" @click="saveDraft">Simpan draf</button>
+            <button class="btn btn-outline-secondary" type="button" :disabled="mutating || !krsReady || selectedCount === 0" @click="saveDraft">Simpan draf</button>
             <button class="btn btn-primary" type="button" :disabled="mutating || !canSubmit" @click="openConfirmation">Ajukan ke dosen wali</button>
           </div>
+        </div>
+      </section>
+
+      <section v-else class="workflow-surface">
+        <header class="workflow-surface__header">
+          <div>
+            <span class="section-kicker">Rencana studi aktif</span>
+            <h2>Jadwal perkuliahan terpilih</h2>
+          </div>
+        </header>
+        <div class="schedule-grid">
+          <EmptyState v-if="!weeklySchedule.length" icon="uil-calendar-slash" title="Belum ada jadwal kelas" description="Jadwal perkuliahan akan tampil sesuai kelas yang telah Anda ajukan." />
+          <article v-for="group in weeklySchedule" :key="group.day" class="schedule-day">
+            <h3>{{ group.day }}</h3>
+            <ul>
+              <li v-for="item in group.items" :key="item.id" :class="{ conflict: scheduleConflicts.has(item.id) }">
+                <strong>{{ item.code }} · {{ item.name }}</strong>
+                <small>{{ item.class }} · {{ item.schedule }} · {{ item.credits }} SKS</small>
+                <small>{{ item.lecturer }}</small>
+                <span v-if="scheduleConflicts.has(item.id)" class="conflict-tag">Bentrok waktu</span>
+              </li>
+            </ul>
+          </article>
         </div>
       </section>
 
@@ -669,18 +693,14 @@ onMounted(initializeKrs)
 .krs-banner--success{background:#eef6f0;color:#27533b;border:1px solid #cde2d3}
 .krs-banner--info{background:#f5eff7;color:#3e2344;border:1px solid #dfd3e4}
 .krs-banner--warn{background:#fff5e6;color:#7a4a0c;border:1px solid #f0d7b4}
-.krs-banner--rule{background:#f7f3f9;border:1px solid #dfd1e6;color:#4a2b52}
-.rule-warn{display:block;margin-top:.25rem;color:#8a4f13;font-weight:700}
 .info-pill--plum{background:#f5eff7;border:1px solid #dfd1e6;color:#593660}
-.sem-cell{display:grid;justify-items:center;gap:.2rem}
-.sem-cell strong{font-size:.7rem;color:#1e1e1e;white-space:nowrap}
-.track-pill{display:inline-flex;align-items:center;padding:.1rem .45rem;border-radius:999px;font-size:.6rem;font-weight:700;white-space:nowrap}
-.track-pill--current{background:#e7f6ee;color:#1b6b42}
-.track-pill--lower{background:#eef4fb;color:#27538a}
-.track-pill--upper{background:#fdf3e3;color:#8c5414}
-.track-pill--blocked{background:#fdecea;color:#9b2c2c}
+.sem-label{font-size:.74rem;font-weight:600;color:#1e1e1e;white-space:nowrap}
 .catalog-tools{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
-.catalog-tools select{min-width:165px}
+.catalog-tools select{min-width:175px}
+.action-dock__left{display:grid;gap:.5rem;flex:1;min-width:220px}
+.selected-chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.selected-chip{display:inline-flex;align-items:center;gap:.3rem;padding:.24rem .55rem;border:1px solid #dfd1e6;border-radius:999px;background:#f5eff7;color:#593660;font-size:.68rem;font-weight:700;cursor:pointer;transition:background-color .15s ease,border-color .15s ease}
+.selected-chip:hover{background:#ede0f2;border-color:#593660}
 .schedule-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.85rem;padding:1rem}
 .schedule-day{padding:.9rem;border:1px solid #e6dfd6;border-radius:.85rem;background:#faf6ef}
 .schedule-day h3{margin:0 0 .65rem;color:#593660;font-size:.84rem;font-weight:800}
